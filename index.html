@@ -9,7 +9,6 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Artist Binder</title>
 
-  <!-- Tailwind Play CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -25,14 +24,9 @@
     };
   </script>
 
-  <!-- React 18 UMD -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
-  <!-- Babel standalone (JSX in browser) -->
   <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
-
-  <!-- PapaParse (CSV parsing) -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
   <style>
@@ -70,8 +64,8 @@
     }
     @keyframes spin   { to { transform: rotate(360deg); } }
     @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-    .spinner { animation: spin 0.8s linear infinite; }
-    .fade-up { animation: fadeUp 0.2s ease forwards; }
+    .spinner  { animation: spin 0.8s linear infinite; }
+    .fade-up  { animation: fadeUp 0.2s ease forwards; }
     .prog-fill { transition: width 0.7s ease; }
     .modal-bg { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
     input:focus, select:focus { outline: none; border-color: #8b6cd8 !important; }
@@ -97,7 +91,7 @@
     const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
     // ════════════════════════════════════════════════════════════
-    // CONFIG  — add/remove artists here
+    // CONFIG
     // ════════════════════════════════════════════════════════════
     const API_BASE  = "https://api.pokemontcg.io/v2";
     const CACHE_TTL = 24 * 60 * 60 * 1000;
@@ -136,8 +130,24 @@
     // ════════════════════════════════════════════════════════════
     // HELPERS
     // ════════════════════════════════════════════════════════════
-    const toSlug   = s  => s.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-    const normName = s  => (s || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
+    const toSlug   = s => s.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+    const normName = s => (s || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
+
+    // Normalise set names so Collectr and pokemontcg.io names match
+    // e.g. "Scarlet & Violet" == "Scarlet and Violet", "Promos" == "Promo"
+    const normSet = s => (s || "")
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[^a-z0-9\s]/g, "")
+      .replace(/\bpromos\b/g, "promo")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Ownership key: "normName:::normSet"
+    // Matching by name + set prevents false positives when different artists
+    // have drawn the same Pokémon in different sets.
+    const ownedKey = (cardName, setName) => normName(cardName) + ":::" + normSet(setName);
+
     const fmt$     = n  => (n != null && !isNaN(n)) ? `$${Number(n).toFixed(2)}` : "—";
     const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -149,6 +159,57 @@
       const first = Object.keys(p)[0];
       if (first && p[first] && p[first].market != null) return { amount: p[first].market, variant: first, prices: p[first] };
       return null;
+    };
+
+    // Sort a card array given the current sortBy mode and owned key set
+    const sortCards = function(arr, sortBy, ownedKeys) {
+      if (!arr || !arr.length) return arr;
+      const a2 = arr.slice();
+      const priceOf = function(c) { const p = getBestPrice(c); return p ? p.amount : null; };
+      const isOwned = function(c) { return ownedKeys.has(ownedKey(c.name, c.set && c.set.name || "")); };
+      const byName  = function(a, b) { return (a.name || "").localeCompare(b.name || ""); };
+      const byDate  = function(a, b) {
+        const da = a.set && a.set.releaseDate || "";
+        const db = b.set && b.set.releaseDate || "";
+        return da === db ? byName(a, b) : da.localeCompare(db);
+      };
+
+      switch (sortBy) {
+        case "price-desc":
+          return a2.sort(function(a, b) {
+            const pa = priceOf(a), pb = priceOf(b);
+            if (pa === null && pb === null) return byName(a, b);
+            if (pa === null) return 1;
+            if (pb === null) return -1;
+            return pb - pa || byName(a, b);
+          });
+        case "price-asc":
+          return a2.sort(function(a, b) {
+            const pa = priceOf(a), pb = priceOf(b);
+            if (pa === null && pb === null) return byName(a, b);
+            if (pa === null) return 1;
+            if (pb === null) return -1;
+            return pa - pb || byName(a, b);
+          });
+        case "missing":
+          return a2.sort(function(a, b) {
+            const ao = isOwned(a), bo = isOwned(b);
+            if (ao !== bo) return ao ? 1 : -1;
+            return byName(a, b);
+          });
+        case "owned":
+          return a2.sort(function(a, b) {
+            const ao = isOwned(a), bo = isOwned(b);
+            if (ao !== bo) return ao ? -1 : 1;
+            return byName(a, b);
+          });
+        case "date-desc":
+          return a2.sort(function(a, b) { return byDate(b, a); });
+        case "date-asc":
+          return a2.sort(byDate);
+        default: // "name" — API already returns name-sorted
+          return a2;
+      }
     };
 
     // ════════════════════════════════════════════════════════════
@@ -250,7 +311,7 @@
     });
 
     // ════════════════════════════════════════════════════════════
-    // PRICE SPARKLINE  (no external library needed)
+    // PRICE SPARKLINE
     // ════════════════════════════════════════════════════════════
     function PriceChart({ cardId }) {
       const all  = lsGet("pb2_price_history") || {};
@@ -259,7 +320,7 @@
       if (hist.length < 2) {
         return (
           <div style={{ textAlign:"center", color:"#6b6b90", fontSize:"0.75rem", padding:"1.25rem 0", lineHeight:1.6 }}>
-            Price history builds over time as you open the app.<br />
+            Price history builds over time as you open cards.<br />
             {hist.length === 1 ? "1 point recorded — check back tomorrow!" : "No history yet for this card."}
           </div>
         );
@@ -270,27 +331,20 @@
       const minP   = Math.min.apply(null, prices);
       const maxP   = Math.max.apply(null, prices);
       const range  = maxP - minP || 1;
-
-      const W=340, H=80, PX=8, PY=12;
-      const W2=W-2*PX, H2=H-2*PY;
+      const W=340, H=80, PX=8, PY=12, W2=W-2*PX, H2=H-2*PY;
 
       const pts = prices.map(function(p, i) {
-        var x = PX + (prices.length > 1 ? (i / (prices.length - 1)) * W2 : W2/2);
-        var y = PY + H2 - ((p - minP) / range) * H2;
-        return [x, y];
+        return [
+          PX + (prices.length > 1 ? (i / (prices.length - 1)) * W2 : W2/2),
+          PY + H2 - ((p - minP) / range) * H2
+        ];
       });
-
-      const poly = pts.map(function(pt) { return pt[0]+","+pt[1]; }).join(" ");
-      const last = pts[pts.length - 1];
+      const poly  = pts.map(function(pt) { return pt[0]+","+pt[1]; }).join(" ");
+      const last  = pts[pts.length - 1];
       const first = pts[0];
-
-      const areaD = [
-        "M "+first[0]+","+(H-PY),
-        pts.map(function(pt) { return "L "+pt[0]+","+pt[1]; }).join(" "),
-        "L "+last[0]+","+(H-PY),
-        "Z"
-      ].join(" ");
-
+      const areaD = ["M "+first[0]+","+(H-PY)]
+        .concat(pts.map(function(pt) { return "L "+pt[0]+","+pt[1]; }))
+        .concat(["L "+last[0]+","+(H-PY),"Z"]).join(" ");
       const gradId = "g"+cardId.replace(/[^a-z0-9]/gi,"");
 
       return (
@@ -310,7 +364,7 @@
           <text x={W-PX} y={PY-2} textAnchor="end" fontSize="8" fill="#6b6b90">{fmt$(maxP)}</text>
           <text x={W-PX} y={H-1} textAnchor="end" fontSize="8" fill="#6b6b90">{fmt$(minP)}</text>
           <text x={PX} y={H-1} fontSize="8" fill="#6b6b90">{dates[0]}</text>
-          <text x={(W/2)} y={H-1} textAnchor="middle" fontSize="8" fill="#6b6b90">{dates[Math.floor(dates.length/2)]}</text>
+          <text x={W/2} y={H-1} textAnchor="middle" fontSize="8" fill="#6b6b90">{dates[Math.floor(dates.length/2)]}</text>
         </svg>
       );
     }
@@ -358,7 +412,6 @@
             maxWidth:460, width:"100%", maxHeight:"90dvh", overflowY:"auto",
             padding:"1.25rem",
           }}>
-            {/* Title */}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"1rem" }}>
               <div>
                 <h2 style={{ fontWeight:700, fontSize:"1.05rem", color:"#e8e8f4" }}>{card.name}</h2>
@@ -371,7 +424,6 @@
               </button>
             </div>
 
-            {/* Image + stats */}
             <div style={{ display:"flex", gap:"1rem", marginBottom:"1.25rem" }}>
               <div style={{ flexShrink:0, width:128 }}>
                 {card.images && card.images.large
@@ -410,7 +462,6 @@
               </div>
             </div>
 
-            {/* Variants */}
             {Object.keys(allVariants).length > 1 && (
               <div style={{ marginBottom:"1rem" }}>
                 <div style={{ fontSize:"0.68rem", color:"#6b6b90", marginBottom:"0.4rem" }}>All Variants</div>
@@ -429,7 +480,6 @@
               </div>
             )}
 
-            {/* Price history sparkline */}
             <div style={{ marginBottom:"0.75rem" }}>
               <div style={{ fontSize:"0.68rem", color:"#6b6b90", marginBottom:"0.4rem" }}>Price History</div>
               <PriceChart cardId={card.id}/>
@@ -453,28 +503,34 @@
     // ════════════════════════════════════════════════════════════
     // ARTIST SECTION
     // ════════════════════════════════════════════════════════════
-    function ArtistSection({ entry, cards, ownedNames, onCardClick, searchQuery }) {
+    function ArtistSection({ entry, cards, ownedKeys, onCardClick, searchQuery, sortBy }) {
       const isSecondary = entry.tier === "secondary";
       const [open, setOpen] = useState(!isSecondary);
 
-      const filtered = useMemo(function() {
-        if (!searchQuery) return cards;
-        const q = searchQuery.toLowerCase();
-        return cards.filter(function(c) { return c.name.toLowerCase().indexOf(q) !== -1; });
-      }, [cards, searchQuery]);
+      // Filter by search, then sort
+      const displayCards = useMemo(function() {
+        let arr = cards;
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          arr = arr.filter(function(c) { return c.name.toLowerCase().indexOf(q) !== -1; });
+        }
+        return sortCards(arr, sortBy, ownedKeys);
+      }, [cards, searchQuery, sortBy, ownedKeys]);
 
       const ownedCount = useMemo(function() {
-        return cards.filter(function(c) { return ownedNames.has(normName(c.name)); }).length;
-      }, [cards, ownedNames]);
+        return cards.filter(function(c) {
+          return ownedKeys.has(ownedKey(c.name, c.set && c.set.name || ""));
+        }).length;
+      }, [cards, ownedKeys]);
 
       const pct      = cards.length ? Math.round((ownedCount / cards.length) * 100) : 0;
       const complete = pct === 100 && cards.length > 0;
 
       useEffect(function() {
-        if (searchQuery && filtered.length > 0) setOpen(true);
-      }, [searchQuery, filtered.length]);
+        if (searchQuery && displayCards.length > 0) setOpen(true);
+      }, [searchQuery, displayCards.length]);
 
-      if (searchQuery && filtered.length === 0) return null;
+      if (searchQuery && displayCards.length === 0) return null;
 
       return (
         <div style={{ marginBottom:"2rem" }}>
@@ -513,17 +569,13 @@
           </div>
 
           {open && (
-            <div style={{
-              display:"grid",
-              gridTemplateColumns:"repeat(auto-fill, minmax(76px, 1fr))",
-              gap:"6px",
-            }}>
-              {filtered.map(function(card) {
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(76px, 1fr))", gap:"6px" }}>
+              {displayCards.map(function(card) {
                 return (
                   <CardTile
                     key={card.id}
                     card={card}
-                    owned={ownedNames.has(normName(card.name))}
+                    owned={ownedKeys.has(ownedKey(card.name, card.set && card.set.name || ""))}
                     onClick={onCardClick}
                   />
                 );
@@ -539,7 +591,6 @@
     // ════════════════════════════════════════════════════════════
     function SettingsPanel({ onClose, onClearCache }) {
       const [key, setKey] = useState(function() { return lsGet("pb2_api_key") || ""; });
-
       const save = function() { lsSet("pb2_api_key", key.trim()); onClose(); };
 
       useEffect(function() {
@@ -577,12 +628,8 @@
             </a>
 
             <div style={{ display:"flex", gap:"0.5rem", marginBottom:"1.5rem" }}>
-              <button onClick={save} style={{ flex:1, background:"#8b6cd8", color:"white", border:"none", borderRadius:8, padding:"0.55rem", cursor:"pointer", fontWeight:600, fontSize:"0.875rem" }}>
-                Save
-              </button>
-              <button onClick={onClose} style={{ flex:1, background:"#1e1e35", color:"#e8e8f4", border:"none", borderRadius:8, padding:"0.55rem", cursor:"pointer", fontSize:"0.875rem" }}>
-                Cancel
-              </button>
+              <button onClick={save} style={{ flex:1, background:"#8b6cd8", color:"white", border:"none", borderRadius:8, padding:"0.55rem", cursor:"pointer", fontWeight:600, fontSize:"0.875rem" }}>Save</button>
+              <button onClick={onClose} style={{ flex:1, background:"#1e1e35", color:"#e8e8f4", border:"none", borderRadius:8, padding:"0.55rem", cursor:"pointer", fontSize:"0.875rem" }}>Cancel</button>
             </div>
 
             <div style={{ borderTop:"1px solid #1e1e35", paddingTop:"1rem" }}>
@@ -612,10 +659,11 @@
       const [cardData,     setCardData]     = useState({});
       const [loadingSet,   setLoadingSet]   = useState(new Set());
       const [errors,       setErrors]       = useState({});
-      const [ownedNames,   setOwnedNames]   = useState(new Set());
+      const [ownedKeys,    setOwnedKeys]    = useState(new Set()); // "normName:::normSet" keys
       const [selectedCard, setSelectedCard] = useState(null);
       const [search,       setSearch]       = useState("");
       const [filterSlug,   setFilterSlug]   = useState("all");
+      const [sortBy,       setSortBy]       = useState("name");
       const [showSettings, setShowSettings] = useState(false);
       const [csvStatus,    setCsvStatus]    = useState(null);
       const fileRef   = useRef(null);
@@ -623,16 +671,15 @@
 
       const getApiKey = function() { return lsGet("pb2_api_key") || ""; };
 
-      // Hide splash screen
       useEffect(function() {
         const el = document.getElementById("splash");
         if (el) { el.style.opacity = "0"; setTimeout(function() { el.remove(); }, 350); }
       }, []);
 
-      // Restore owned from storage
+      // Restore owned keys from storage (v2 format: name:::set)
       useEffect(function() {
-        const saved = lsGet("pb2_owned") || [];
-        setOwnedNames(new Set(saved));
+        const saved = lsGet("pb2_owned_v2") || [];
+        setOwnedKeys(new Set(saved));
       }, []);
 
       const loadEntry = useCallback(async function(entry) {
@@ -658,12 +705,16 @@
           skipEmptyLines: true,
           complete: function(result) {
             const pokemon = result.data.filter(function(r) { return (r["Category"] || "").trim() === "Pokemon"; });
-            const names = new Set(
-              pokemon.map(function(r) { return normName(r["Product Name"] || ""); }).filter(Boolean)
+            // Build "normName:::normSet" keys so matching is per-artist, not just per-name.
+            // This prevents a Suicune you own from marking every artist's Suicune as owned.
+            const keys = new Set(
+              pokemon.map(function(r) {
+                return ownedKey(r["Product Name"] || "", r["Set"] || "");
+              }).filter(function(k) { return k !== ":::"; })
             );
-            setOwnedNames(names);
-            lsSet("pb2_owned", Array.from(names));
-            setCsvStatus({ count: names.size });
+            setOwnedKeys(keys);
+            lsSet("pb2_owned_v2", Array.from(keys));
+            setCsvStatus({ count: pokemon.length });
             setTimeout(function() { setCsvStatus(null); }, 5000);
           },
           error: function() {
@@ -694,9 +745,11 @@
 
       const totalOwned = useMemo(function() {
         return Object.values(cardData).reduce(function(s, cards) {
-          return s + cards.filter(function(c) { return ownedNames.has(normName(c.name)); }).length;
+          return s + cards.filter(function(c) {
+            return ownedKeys.has(ownedKey(c.name, c.set && c.set.name || ""));
+          }).length;
         }, 0);
-      }, [cardData, ownedNames]);
+      }, [cardData, ownedKeys]);
 
       const totalPct = totalCards ? Math.round((totalOwned / totalCards) * 100) : 0;
 
@@ -708,10 +761,14 @@
           })
         : true;
 
+      const selectStyle = {
+        background:"#0f0f1c", border:"1px solid #1e1e35", borderRadius:8,
+        color:"#e8e8f4", padding:"0.4rem 0.6rem", fontSize:"0.76rem",
+      };
+
       return (
         <div style={{ minHeight:"100dvh", background:"#07070f" }}>
 
-          {/* HEADER */}
           <header style={{
             position:"sticky", top:0, zIndex:100,
             background:"rgba(7,7,15,0.97)",
@@ -720,6 +777,7 @@
           }}>
             <div style={{ maxWidth:860, margin:"0 auto", padding:"0.7rem 1rem" }}>
 
+              {/* Row 1: title + actions */}
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"0.6rem" }}>
                 <div style={{ display:"flex", alignItems:"baseline", gap:"0.6rem" }}>
                   <h1 style={{ fontSize:"1rem", fontWeight:800, color:"#e8e8f4", letterSpacing:"-0.02em" }}>
@@ -731,7 +789,6 @@
                     </span>
                   )}
                 </div>
-
                 <div style={{ display:"flex", gap:"0.4rem", alignItems:"center" }}>
                   {csvStatus === "loading" && (
                     <span style={{ fontSize:"0.7rem", color:"#6b6b90", display:"flex", alignItems:"center", gap:4 }}>
@@ -739,7 +796,7 @@
                     </span>
                   )}
                   {csvStatus && csvStatus.count && (
-                    <span style={{ fontSize:"0.7rem", color:"#22c55e" }}>✓ {csvStatus.count} cards</span>
+                    <span style={{ fontSize:"0.7rem", color:"#22c55e" }}>✓ {csvStatus.count} Pokémon loaded</span>
                   )}
                   <button onClick={function() { fileRef.current && fileRef.current.click(); }} style={{
                     display:"flex", alignItems:"center", gap:"0.35rem",
@@ -759,19 +816,16 @@
                 </div>
               </div>
 
-              <div style={{ display:"flex", gap:"0.5rem" }}>
-                <div style={{ flex:1, position:"relative" }}>
+              {/* Row 2: search + artist filter + sort */}
+              <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
+                <div style={{ flex:"1 1 160px", position:"relative", minWidth:0 }}>
                   <span style={{ position:"absolute", left:"0.6rem", top:"50%", transform:"translateY(-50%)", color:"#6b6b90", display:"flex", pointerEvents:"none" }}>
                     <IcoSearch/>
                   </span>
                   <input
                     ref={searchRef} type="search" placeholder="Search cards…" value={search}
                     onChange={function(e) { setSearch(e.target.value); }}
-                    style={{
-                      width:"100%", background:"#0f0f1c", border:"1px solid #1e1e35",
-                      borderRadius:8, color:"#e8e8f4",
-                      padding:"0.4rem 2rem 0.4rem 2rem", fontSize:"0.85rem",
-                    }}
+                    style={Object.assign({}, selectStyle, { width:"100%", padding:"0.4rem 2rem 0.4rem 2rem", fontSize:"0.85rem" })}
                   />
                   {search && (
                     <button onClick={function() { setSearch(""); searchRef.current && searchRef.current.focus(); }} style={{
@@ -782,10 +836,8 @@
                     </button>
                   )}
                 </div>
-                <select value={filterSlug} onChange={function(e) { setFilterSlug(e.target.value); }} style={{
-                  background:"#0f0f1c", border:"1px solid #1e1e35", borderRadius:8,
-                  color:"#e8e8f4", padding:"0.4rem 0.6rem", fontSize:"0.76rem", maxWidth:148,
-                }}>
+
+                <select value={filterSlug} onChange={function(e) { setFilterSlug(e.target.value); }} style={Object.assign({}, selectStyle, { maxWidth:148 })}>
                   <option value="all">All Artists</option>
                   <optgroup label="Main">
                     {ARTISTS.filter(function(a) { return a.tier==="main"; }).map(function(a) {
@@ -803,11 +855,20 @@
                     })}
                   </optgroup>
                 </select>
+
+                <select value={sortBy} onChange={function(e) { setSortBy(e.target.value); }} style={Object.assign({}, selectStyle, { maxWidth:148 })}>
+                  <option value="name">Name A–Z</option>
+                  <option value="missing">Missing first</option>
+                  <option value="owned">Owned first</option>
+                  <option value="price-desc">Price: High → Low</option>
+                  <option value="price-asc">Price: Low → High</option>
+                  <option value="date-desc">Newest first</option>
+                  <option value="date-asc">Oldest first</option>
+                </select>
               </div>
             </div>
           </header>
 
-          {/* MAIN */}
           <main style={{ maxWidth:860, margin:"0 auto", padding:"1rem" }}>
 
             {totalCards > 0 && (
@@ -817,10 +878,10 @@
             )}
 
             {visibleArtists.map(function(entry) {
-              const slug  = toSlug(entry.name);
-              const cards = cardData[slug] || [];
+              const slug      = toSlug(entry.name);
+              const cards     = cardData[slug] || [];
               const isLoading = loadingSet.has(slug);
-              const err   = errors[slug];
+              const err       = errors[slug];
 
               if (isLoading && !cards.length) {
                 return (
@@ -846,9 +907,10 @@
                   key={entry.name}
                   entry={entry}
                   cards={cards}
-                  ownedNames={ownedNames}
+                  ownedKeys={ownedKeys}
                   onCardClick={setSelectedCard}
                   searchQuery={search}
+                  sortBy={sortBy}
                 />
               );
             })}
@@ -867,7 +929,7 @@
           {selectedCard && (
             <CardModal
               card={selectedCard}
-              owned={ownedNames.has(normName(selectedCard.name))}
+              owned={ownedKeys.has(ownedKey(selectedCard.name, selectedCard.set && selectedCard.set.name || ""))}
               onClose={function() { setSelectedCard(null); }}
             />
           )}
