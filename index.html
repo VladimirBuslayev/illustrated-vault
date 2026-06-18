@@ -1,823 +1,817 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#07070f" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Artist Binder</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+  <meta name="theme-color" content="#07070f"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <title>Artist Binder 🔥</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            bg: '#07070f', surface: '#0f0f1c', card: '#141425',
-            border: '#1e1e35', accent: '#8b6cd8', text: '#e8e8f4',
-            muted: '#6b6b90', ok: '#22c55e', err: '#f87171',
-          }
-        }
-      }
-    };
-  </script>
+  <script>tailwind.config={theme:{extend:{colors:{bg:'#07070f',surface:'#0f0f1c',card:'#141425',border:'#1e1e35',accent:'#8b6cd8',text:'#e8e8f4',muted:'#6b6b90',ok:'#22c55e',err:'#f87171'}}}};</script>
 
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body, #root { min-height: 100%; }
-    body {
-      background: #07070f; color: #e8e8f4;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      -webkit-text-size-adjust: 100%; overscroll-behavior: none;
-    }
-    ::-webkit-scrollbar { width: 5px; }
-    ::-webkit-scrollbar-track { background: #07070f; }
-    ::-webkit-scrollbar-thumb { background: #2a2a45; border-radius: 3px; }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html,body,#root{min-height:100%;}
+    body{background:#07070f;color:#e8e8f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;-webkit-text-size-adjust:100%;overscroll-behavior:none;}
+    ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-track{background:#07070f;} ::-webkit-scrollbar-thumb{background:#2a2a45;border-radius:3px;}
 
-    .card-tile { position: relative; cursor: pointer; border-radius: 6px; overflow: hidden; }
-    .card-tile img {
-      display: block; width: 100%; height: auto; border-radius: 6px;
-      transition: transform 0.15s ease, filter 0.15s ease;
-    }
-    .card-tile.missing img { filter: grayscale(1) brightness(0.3); }
-    .card-tile.owned   img { filter: none; }
-    .card-tile:hover   img { transform: translateY(-2px) scale(1.03); }
-    .card-tile.missing:hover img { filter: grayscale(0.5) brightness(0.5); }
+    .card-tile{position:relative;cursor:pointer;border-radius:6px;overflow:hidden;}
+    .card-tile img{display:block;width:100%;height:auto;border-radius:6px;transition:transform .15s ease,filter .15s ease;}
+    .card-tile.missing img{filter:grayscale(1) brightness(0.3);}
+    .card-tile.owned   img{filter:none;}
+    .card-tile:hover   img{transform:translateY(-2px) scale(1.03);}
+    .card-tile.missing:hover img{filter:grayscale(0.5) brightness(0.5);}
+    .card-blank{width:100%;padding-bottom:139.7%;background:#141425;border-radius:6px;position:relative;border:1px solid #1e1e35;}
+    .card-blank span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:5px;font-size:.58rem;color:#4a4a70;text-align:center;line-height:1.3;}
 
-    .card-blank {
-      width: 100%; padding-bottom: 139.7%;
-      background: #141425; border-radius: 6px;
-      position: relative; border: 1px solid #1e1e35;
-    }
-    .card-blank span {
-      position: absolute; inset: 0;
-      display: flex; align-items: center; justify-content: center;
-      padding: 5px; font-size: 0.58rem; color: #4a4a70;
-      text-align: center; line-height: 1.3;
-    }
-    @keyframes spin   { to { transform: rotate(360deg); } }
-    @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-    .spinner  { animation: spin 0.8s linear infinite; }
-    .fade-up  { animation: fadeUp 0.2s ease forwards; }
-    .prog-fill { transition: width 0.7s ease; }
-    .modal-bg { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
-    input:focus, select:focus { outline: none; border-color: #8b6cd8 !important; }
-    select { -webkit-appearance: none; appearance: none; cursor: pointer; }
-    input[type="search"]::-webkit-search-cancel-button { display: none; }
+    @keyframes spin{to{transform:rotate(360deg);}}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+    @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+    @keyframes flameFlicker{0%,100%{transform:scaleX(1) scaleY(1) skewX(0deg);}15%{transform:scaleX(.93) scaleY(1.07) skewX(2deg);}30%{transform:scaleX(1.06) scaleY(.96) skewX(-1deg);}50%{transform:scaleX(.97) scaleY(1.05) skewX(1.5deg);}70%{transform:scaleX(1.04) scaleY(.98) skewX(-2deg);}85%{transform:scaleX(.95) scaleY(1.03) skewX(1deg);}}
+    @keyframes flameFlicker2{0%,100%{transform:scaleX(1) scaleY(1);}25%{transform:scaleX(1.08) scaleY(.94);}50%{transform:scaleX(.92) scaleY(1.08);}75%{transform:scaleX(1.05) scaleY(.97);}}
+    @keyframes emberRise{0%{transform:translateY(0) scale(1);opacity:.9;}80%{opacity:.4;}100%{transform:translateY(-280px) scale(.1);opacity:0;}}
+    @keyframes glowPulse{0%,100%{opacity:.6;}50%{opacity:1;}}
+    @keyframes landingExit{from{opacity:1;transform:scale(1);}to{opacity:0;transform:scale(1.04);}}
+    @keyframes syncPop{0%{transform:scale(1);}50%{transform:scale(1.3);}100%{transform:scale(1);}}
+    .spinner{animation:spin .8s linear infinite;}
+    .fade-up{animation:fadeUp .2s ease forwards;}
+    .fade-in{animation:fadeIn .4s ease forwards;}
+    .prog-fill{transition:width .7s ease;}
+    .modal-bg{backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
+    .landing-exit{animation:landingExit .45s ease forwards;}
+    input:focus,select:focus{outline:none;border-color:#8b6cd8!important;}
+    select{-webkit-appearance:none;appearance:none;cursor:pointer;}
+    input[type="search"]::-webkit-search-cancel-button{display:none;}
   </style>
 </head>
 <body>
-  <div id="splash" style="
-    position:fixed; inset:0; background:#07070f; z-index:9999;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    gap:0.75rem; transition:opacity 0.3s;
-  ">
-    <div style="font-size:2.5rem">🎴</div>
-    <div style="font-size:0.825rem; color:#6b6b90">Loading binder…</div>
-  </div>
+<div id="root"></div>
+<script type="text/babel">
+/** @jsxRuntime classic */
+const {useState,useEffect,useCallback,useRef,useMemo}=React;
 
-  <div id="root"></div>
+// ── SUPABASE ─────────────────────────────────────────────────────────────────
+const SUPA_URL = "https://hbpjbefohkcnovlwvqhc.supabase.co";
+const SUPA_KEY = "sb_publishable_UM5rWTAunNLDNbIXmtL8MQ_I8yl0iIH";
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
-  <script type="text/babel">
-    /** @jsxRuntime classic */
+// ── CONFIG ───────────────────────────────────────────────────────────────────
+const API_BASE  = "https://api.pokemontcg.io/v2";
+const CACHE_TTL = 24*60*60*1000;
+const REDIRECT  = "https://vladimirbuslayev.github.io/fire-chicken/";
 
-    const { useState, useEffect, useCallback, useRef, useMemo } = React;
+const ARTISTS = [
+  {name:"Yuka Morii",      tier:"main",      isSet:false},
+  {name:"Asoka Ito",       tier:"main",      isSet:false},
+  {name:"Tomokazu Komiya", tier:"main",      isSet:false},
+  {name:"Shinji Kanda",    tier:"main",      isSet:false},
+  {name:"Atsuko Nishida",  tier:"main",      isSet:false},
+  {name:"Sowsow",          tier:"main",      isSet:false},
+  {name:"Shibuzoh",        tier:"main",      isSet:false},
+  {name:"Yukiko Baba",     tier:"main",      isSet:false},
+  {name:"sui",             tier:"main",      isSet:false},
+  {name:"akira egawa",     tier:"secondary", isSet:false},
+  {name:"saitou",          tier:"secondary", isSet:false},
+  {name:"tsuruta",         tier:"secondary", isSet:false},
+  {name:"okachege",        tier:"secondary", isSet:false},
+  {name:"0313",            tier:"secondary", isSet:false},
+  {name:"gossan",          tier:"secondary", isSet:false},
+  {name:"mizue",           tier:"secondary", isSet:false},
+  {name:"kayama",          tier:"secondary", isSet:false},
+  {name:"gapao",           tier:"secondary", isSet:false},
+  {name:"okubo",           tier:"secondary", isSet:false},
+  {name:"fukuda",          tier:"secondary", isSet:false},
+  {name:"Pokémon GO",      tier:"special",   isSet:true, query:"set.id:pgo"},
+];
 
-    // ════════════════════════════════════════════════════════════
-    // CONFIG
-    // ════════════════════════════════════════════════════════════
-    const API_BASE  = "https://api.pokemontcg.io/v2";
-    const CACHE_TTL = 24 * 60 * 60 * 1000;
+// ── LOCAL STORAGE (card cache + api key only — user data lives in Supabase) ──
+const lsGet = k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
+const lsSet = (k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
+const lsDel = k=>{try{localStorage.removeItem(k);}catch{}};
 
-    const ARTISTS = [
-      { name: "Yuka Morii",       tier: "main",      isSet: false },
-      { name: "Asoka Ito",        tier: "main",      isSet: false },
-      { name: "Tomokazu Komiya",  tier: "main",      isSet: false },
-      { name: "Shinji Kanda",     tier: "main",      isSet: false },
-      { name: "Atsuko Nishida",   tier: "main",      isSet: false },
-      { name: "Sowsow",           tier: "main",      isSet: false },
-      { name: "Shibuzoh",         tier: "main",      isSet: false },
-      { name: "Yukiko Baba",      tier: "main",      isSet: false },
-      { name: "sui",              tier: "main",      isSet: false },
-      { name: "akira egawa",      tier: "secondary", isSet: false },
-      { name: "saitou",           tier: "secondary", isSet: false },
-      { name: "tsuruta",          tier: "secondary", isSet: false },
-      { name: "okachege",         tier: "secondary", isSet: false },
-      { name: "0313",             tier: "secondary", isSet: false },
-      { name: "gossan",           tier: "secondary", isSet: false },
-      { name: "mizue",            tier: "secondary", isSet: false },
-      { name: "kayama",           tier: "secondary", isSet: false },
-      { name: "gapao",            tier: "secondary", isSet: false },
-      { name: "okubo",            tier: "secondary", isSet: false },
-      { name: "fukuda",           tier: "secondary", isSet: false },
-      { name: "Pokémon GO",       tier: "special",   isSet: true,  query: "set.id:pgo" },
-    ];
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+const toSlug   = s=>s.toLowerCase().replace(/[^a-z0-9]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"");
+const normName = s=>(s||"").toLowerCase().trim().replace(/[^a-z0-9\s]/g,"").replace(/\s+/g," ");
+const normNum  = n=>(n||"").toLowerCase().trim().replace(/\/.*$/,"").trim();
+const normSet  = s=>(s||"").toLowerCase().replace(/&/g,"and").replace(/[—–]/g," ").replace(/[^a-z0-9\s]/g,"").replace(/\bpromos?\b/g,"promo").replace(/\s+/g," ").trim();
+const fmt$     = n=>(n!=null&&!isNaN(n))?`$${Number(n).toFixed(2)}`:"—";
+const todayStr = ()=>new Date().toISOString().slice(0,10);
 
-    // ════════════════════════════════════════════════════════════
-    // STORAGE
-    // ════════════════════════════════════════════════════════════
-    const lsGet = k => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
-    const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
-    const lsDel = k => { try { localStorage.removeItem(k); } catch {} };
+const makeKeys=(cardName,cardNumber,setName)=>{
+  const n=normName(cardName);if(!n)return[];
+  const keys=[];
+  const num=normNum(cardNumber);if(num)keys.push(n+"::num::"+num);
+  const s=normSet(setName);if(s)keys.push(n+"::set::"+s);
+  return keys;
+};
 
-    // ════════════════════════════════════════════════════════════
-    // HELPERS & MATCHING
-    // ════════════════════════════════════════════════════════════
-    const toSlug   = s => s.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-    const normName = s => (s || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
-    const fmt$     = n => (n != null && !isNaN(n)) ? `$${Number(n).toFixed(2)}` : "—";
-    const todayStr = () => new Date().toISOString().slice(0, 10);
+const isCardOwned=(card,ownedKeySet,manualOwned,manualMissing)=>{
+  if(manualMissing.has(card.id))return false;
+  if(manualOwned.has(card.id))return true;
+  return makeKeys(card.name||"",card.number||"",card.set&&card.set.name||"").some(k=>ownedKeySet.has(k));
+};
 
-    // Normalise card number: strip "/total" suffix so "27/123" → "27", keep promos as-is.
-    const normNum = n => (n || "").toLowerCase().trim().replace(/\/.*$/, "").trim();
+const getBestPrice=card=>{
+  const p=card&&card.tcgplayer&&card.tcgplayer.prices?card.tcgplayer.prices:{};
+  for(const k of["holofoil","1stEditionHolofoil","unlimitedHolofoil","reverseHolofoil","normal","unlimited"])
+    if(p[k]&&p[k].market!=null)return{amount:p[k].market,variant:k,prices:p[k]};
+  const first=Object.keys(p)[0];
+  if(first&&p[first]&&p[first].market!=null)return{amount:p[first].market,variant:first,prices:p[first]};
+  return null;
+};
 
-    // Normalise set name (kept for fallback matching only).
-    const normSet = s => (s || "")
-      .toLowerCase()
-      .replace(/&/g, "and")
-      .replace(/[—–]/g, " ")
-      .replace(/[^a-z0-9\s]/g, "")
-      .replace(/\bpromos?\b/g, "promo")
-      .replace(/\s+/g, " ")
-      .trim();
+const sortCards=(arr,sortBy,checkOwned)=>{
+  if(!arr||!arr.length)return arr;
+  const a2=arr.slice();
+  const priceOf=c=>{const p=getBestPrice(c);return p?p.amount:null;};
+  const byName=(a,b)=>(a.name||"").localeCompare(b.name||"");
+  const byDate=(a,b)=>{const da=a.set&&a.set.releaseDate||"",db=b.set&&b.set.releaseDate||"";return da===db?byName(a,b):da.localeCompare(db);};
+  switch(sortBy){
+    case"price-desc":return a2.sort((a,b)=>{const pa=priceOf(a),pb=priceOf(b);if(pa===null&&pb===null)return byName(a,b);if(pa===null)return 1;if(pb===null)return-1;return pb-pa||byName(a,b);});
+    case"price-asc": return a2.sort((a,b)=>{const pa=priceOf(a),pb=priceOf(b);if(pa===null&&pb===null)return byName(a,b);if(pa===null)return 1;if(pb===null)return-1;return pa-pb||byName(a,b);});
+    case"missing":   return a2.sort((a,b)=>{const ao=checkOwned(a),bo=checkOwned(b);return ao!==bo?(ao?1:-1):byName(a,b);});
+    case"owned":     return a2.sort((a,b)=>{const ao=checkOwned(a),bo=checkOwned(b);return ao!==bo?(ao?-1:1):byName(a,b);});
+    case"date-desc": return a2.sort((a,b)=>byDate(b,a));
+    case"date-asc":  return a2.sort(byDate);
+    default:         return a2;
+  }
+};
 
-    // Build ownership keys for a card.
-    // PRIMARY key: name + card number  — precise, no set-name ambiguity.
-    // FALLBACK key: name + set         — catches cards with missing/mismatched numbers.
-    const makeKeys = function(cardName, cardNumber, setName) {
-      var n = normName(cardName);
-      if (!n) return [];
-      var keys = [];
-      var num = normNum(cardNumber);
-      if (num) keys.push(n + "::num::" + num);           // primary: name + number
-      var s = normSet(setName);
-      if (s) keys.push(n + "::set::" + s);               // fallback: name + set
-      return keys;
-    };
+// ── API (card data — still cached in localStorage, not user-specific) ─────────
+async function apiFetch(q,apiKey){
+  let all=[],page=1;
+  const headers=apiKey?{"X-Api-Key":apiKey}:{};
+  while(true){
+    const res=await fetch(`${API_BASE}/cards?q=${encodeURIComponent(q)}&pageSize=250&page=${page}&orderBy=name`,{headers});
+    if(!res.ok)throw new Error(`API error ${res.status}`);
+    const json=await res.json();
+    const data=json.data||[],total=json.totalCount||0;
+    all=all.concat(data);
+    if(all.length>=total||!data.length)break;
+    page++;
+  }
+  return all;
+}
+async function fetchArtistCards(entry,apiKey){
+  const ck=`pb2_cards_${toSlug(entry.name)}`;
+  const cached=lsGet(ck);
+  if(cached&&cached.ts&&Date.now()-cached.ts<CACHE_TTL)return cached.cards;
+  const q=entry.isSet?entry.query:`artist:"${entry.name}"`;
+  const cards=await apiFetch(q,apiKey);
+  lsSet(ck,{cards,ts:Date.now()});
+  return cards;
+}
 
-    // Check if a pokemontcg.io card is owned.
-    const isCardOwned = function(card, ownedKeySet) {
-      if (!ownedKeySet || !ownedKeySet.size) return false;
-      var keys = makeKeys(card.name || "", card.number || "", card.set && card.set.name || "");
-      for (var i = 0; i < keys.length; i++) {
-        if (ownedKeySet.has(keys[i])) return true;
-      }
-      return false;
-    };
+// ── SUPABASE DATA HELPERS ─────────────────────────────────────────────────────
+async function loadUserData(userId){
+  const[colRes,ovRes,phRes]=await Promise.all([
+    sb.from("user_collection").select("owned_keys").eq("user_id",userId).maybeSingle(),
+    sb.from("card_overrides").select("card_id,override_type").eq("user_id",userId),
+    sb.from("price_history").select("card_id,price,recorded_date").eq("user_id",userId).order("recorded_date"),
+  ]);
+  const ownedKeys=new Set(colRes.data?.owned_keys??[]);
+  const manualOwned=new Set(),manualMissing=new Set();
+  (ovRes.data??[]).forEach(r=>{r.override_type==="owned"?manualOwned.add(r.card_id):manualMissing.add(r.card_id);});
+  const priceHistory={};
+  (phRes.data??[]).forEach(r=>{
+    if(!priceHistory[r.card_id])priceHistory[r.card_id]=[];
+    priceHistory[r.card_id].push({date:r.recorded_date,price:Number(r.price)});
+  });
+  return{ownedKeys,manualOwned,manualMissing,priceHistory};
+}
 
-    const getBestPrice = card => {
-      const p = card && card.tcgplayer && card.tcgplayer.prices ? card.tcgplayer.prices : {};
-      for (const k of ["holofoil","1stEditionHolofoil","unlimitedHolofoil","reverseHolofoil","normal","unlimited"]) {
-        if (p[k] && p[k].market != null) return { amount: p[k].market, variant: k, prices: p[k] };
-      }
-      const first = Object.keys(p)[0];
-      if (first && p[first] && p[first].market != null) return { amount: p[first].market, variant: first, prices: p[first] };
-      return null;
-    };
+async function saveCollection(userId,ownedKeys){
+  return sb.from("user_collection").upsert({user_id:userId,owned_keys:Array.from(ownedKeys),updated_at:new Date().toISOString()},{onConflict:"user_id"});
+}
 
-    // Sort card array by the chosen mode
-    const sortCards = function(arr, sortBy, ownedKeySet) {
-      if (!arr || !arr.length) return arr;
-      const a2 = arr.slice();
-      const priceOf  = c => { const p = getBestPrice(c); return p ? p.amount : null; };
-      const owned    = c => isCardOwned(c, ownedKeySet);
-      const byName   = (a, b) => (a.name || "").localeCompare(b.name || "");
-      const byDate   = (a, b) => {
-        const da = a.set && a.set.releaseDate || "";
-        const db = b.set && b.set.releaseDate || "";
-        return da === db ? byName(a, b) : da.localeCompare(db);
-      };
-      switch (sortBy) {
-        case "price-desc":
-          return a2.sort(function(a, b) {
-            const pa = priceOf(a), pb = priceOf(b);
-            if (pa === null && pb === null) return byName(a, b);
-            if (pa === null) return 1; if (pb === null) return -1;
-            return pb - pa || byName(a, b);
-          });
-        case "price-asc":
-          return a2.sort(function(a, b) {
-            const pa = priceOf(a), pb = priceOf(b);
-            if (pa === null && pb === null) return byName(a, b);
-            if (pa === null) return 1; if (pb === null) return -1;
-            return pa - pb || byName(a, b);
-          });
-        case "missing":
-          return a2.sort(function(a, b) {
-            const ao = owned(a), bo = owned(b);
-            return ao !== bo ? (ao ? 1 : -1) : byName(a, b);
-          });
-        case "owned":
-          return a2.sort(function(a, b) {
-            const ao = owned(a), bo = owned(b);
-            return ao !== bo ? (ao ? -1 : 1) : byName(a, b);
-          });
-        case "date-desc": return a2.sort(function(a, b) { return byDate(b, a); });
-        case "date-asc":  return a2.sort(byDate);
-        default:          return a2; // "name" — already sorted by API
-      }
-    };
+async function saveOverride(userId,cardId,action){
+  if(action==="reset")return sb.from("card_overrides").delete().eq("user_id",userId).eq("card_id",cardId);
+  return sb.from("card_overrides").upsert({user_id:userId,card_id:cardId,override_type:action},{onConflict:"user_id,card_id"});
+}
 
-    // ════════════════════════════════════════════════════════════
-    // API
-    // ════════════════════════════════════════════════════════════
-    async function apiFetch(q, apiKey) {
-      let all = [], page = 1;
-      const headers = apiKey ? { "X-Api-Key": apiKey } : {};
-      while (true) {
-        const res = await fetch(
-          `${API_BASE}/cards?q=${encodeURIComponent(q)}&pageSize=250&page=${page}&orderBy=name`,
-          { headers }
-        );
-        if (!res.ok) throw new Error(`API error ${res.status}`);
-        const json = await res.json();
-        const data = json.data || [], total = json.totalCount || 0;
-        all = all.concat(data);
-        if (all.length >= total || !data.length) break;
-        page++;
-      }
-      return all;
-    }
+async function savePricePoint(userId,cardId,price,date){
+  return sb.from("price_history").upsert({user_id:userId,card_id:cardId,price,recorded_date:date},{onConflict:"user_id,card_id,recorded_date"});
+}
 
-    async function fetchArtistCards(entry, apiKey) {
-      const ck = `pb2_cards_${toSlug(entry.name)}`;
-      const cached = lsGet(ck);
-      if (cached && cached.ts && Date.now() - cached.ts < CACHE_TTL) return cached.cards;
-      const q = entry.isSet ? entry.query : `artist:"${entry.name}"`;
-      const cards = await apiFetch(q, apiKey);
-      lsSet(ck, { cards, ts: Date.now() });
-      return cards;
-    }
+// ── ICONS ─────────────────────────────────────────────────────────────────────
+const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
+const IcoSearch=()=><Ico><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Ico>;
+const IcoUpload=()=><Ico><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Ico>;
+const IcoX    =()=><Ico><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Ico>;
+const IcoGear =()=><Ico><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M17.66 6.34l-1.41 1.41M6.34 17.66l-1.41 1.41"/></Ico>;
+const IcoCheck=()=><Ico><polyline points="20 6 9 17 4 12"/></Ico>;
+const IcoRetry=()=><Ico><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></Ico>;
+const IcoEdit =()=><Ico><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></Ico>;
+const IcoCloud=()=><Ico><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></Ico>;
+const IcoSpin =()=><svg className="spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a10 10 0 0 1 0 20A10 10 0 0 1 12 2" strokeOpacity="0.2"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>;
+const IcoChev =({open})=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{transform:open?"rotate(0deg)":"rotate(-90deg)",transition:"transform .2s ease",flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>;
 
-    // ════════════════════════════════════════════════════════════
-    // ICONS
-    // ════════════════════════════════════════════════════════════
-    function Ico({ children, size }) {
-      return (
-        <svg width={size || 16} height={size || 16} viewBox="0 0 24 24"
-          fill="none" stroke="currentColor" strokeWidth="2"
-          strokeLinecap="round" strokeLinejoin="round">{children}</svg>
-      );
-    }
-    const IcoSearch = () => <Ico><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Ico>;
-    const IcoUpload = () => <Ico>
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-      <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-    </Ico>;
-    const IcoX     = () => <Ico><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Ico>;
-    const IcoGear  = () => <Ico>
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M17.66 6.34l-1.41 1.41M6.34 17.66l-1.41 1.41"/>
-    </Ico>;
-    const IcoCheck = () => <Ico><polyline points="20 6 9 17 4 12"/></Ico>;
-    const IcoRetry = () => <Ico><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></Ico>;
-    const IcoSpin  = () => (
-      <svg className="spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-        <path d="M12 2a10 10 0 0 1 0 20A10 10 0 0 1 12 2" strokeOpacity="0.2"/>
-        <path d="M12 2a10 10 0 0 1 10 10"/>
-      </svg>
-    );
-    const IcoChev = ({ open }) => (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
-        style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.2s ease", flexShrink: 0 }}>
-        <polyline points="6 9 12 15 18 9"/>
-      </svg>
-    );
+// ── FLAME BACKGROUND (shared by landing + loading screens) ───────────────────
+const FLAME_DEFS=[
+  {left:"8%", w:70, h:260,blur:14,delay:0,  dur:2.1,anim:"flameFlicker"},
+  {left:"18%",w:45, h:180,blur:10,delay:.4, dur:1.7,anim:"flameFlicker2"},
+  {left:"30%",w:90, h:310,blur:18,delay:.15,dur:2.4,anim:"flameFlicker"},
+  {left:"42%",w:55, h:220,blur:12,delay:.7, dur:1.9,anim:"flameFlicker2"},
+  {left:"54%",w:100,h:340,blur:20,delay:.05,dur:2.2,anim:"flameFlicker"},
+  {left:"66%",w:60, h:200,blur:11,delay:.55,dur:1.8,anim:"flameFlicker2"},
+  {left:"78%",w:80, h:280,blur:16,delay:.3, dur:2.0,anim:"flameFlicker"},
+  {left:"90%",w:50, h:170,blur:9, delay:.65,dur:1.6,anim:"flameFlicker2"},
+];
+const EMBER_DEFS=Array.from({length:22},(_,i)=>({left:(5+i*4.2+Math.sin(i*1.3)*8)%95+"%",size:3+(i%4),delay:(i*.37)%4,dur:2.2+(i%3)*.8}));
 
-    // ════════════════════════════════════════════════════════════
-    // CARD TILE
-    // ════════════════════════════════════════════════════════════
-    const CardTile = React.memo(function CardTile({ card, owned, onClick }) {
-      return (
-        <div className={`card-tile ${owned ? "owned" : "missing"}`}
-          onClick={() => onClick(card)}
-          title={`${card.name} — ${owned ? "✓ Owned" : "Missing"}`}>
-          {card.images && card.images.small
-            ? <img src={card.images.small} alt={card.name} loading="lazy" decoding="async" />
-            : <div className="card-blank"><span>{card.name}</span></div>
-          }
-          {owned && (
-            <div style={{
-              position:"absolute", top:3, right:3,
-              background:"rgba(34,197,94,0.92)", borderRadius:"50%",
-              width:14, height:14, display:"flex", alignItems:"center", justifyContent:"center"
-            }}>
-              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-            </div>
-          )}
-        </div>
-      );
-    });
+function FlameBackground({dim}){
+  return(
+    <>
+      <div style={{position:"absolute",bottom:0,left:0,right:0,height:"65%",overflow:"hidden",opacity:dim?.5:1}}>
+        {FLAME_DEFS.map((f,i)=>(
+          <div key={i} style={{position:"absolute",bottom:0,left:f.left,marginLeft:-f.w/2,width:f.w,height:f.h,
+            background:"linear-gradient(to top,#ff2200 0%,#ff6600 40%,#ffaa00 70%,#ffe066 90%,transparent 100%)",
+            borderRadius:"50% 50% 25% 25% / 55% 55% 45% 45%",filter:`blur(${f.blur}px)`,
+            transformOrigin:"bottom center",animation:`${f.anim} ${f.dur}s ${f.delay}s ease-in-out infinite`,opacity:.88}}/>
+        ))}
+      </div>
+      <div style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",opacity:dim?.4:1}}>
+        {EMBER_DEFS.map((e,i)=>(
+          <div key={i} style={{position:"absolute",bottom:"15%",left:e.left,width:e.size,height:e.size,borderRadius:"50%",
+            background:"#ff9900",boxShadow:`0 0 ${e.size*2}px #ff4400`,
+            animation:`emberRise ${e.dur}s ${e.delay}s ease-out infinite`,opacity:0}}/>
+        ))}
+      </div>
+      <div style={{position:"absolute",bottom:0,left:0,right:0,height:120,background:"linear-gradient(to top,rgba(255,60,0,0.35),transparent)",animation:"glowPulse 2.5s ease-in-out infinite",opacity:dim?.5:1}}/>
+    </>
+  );
+}
 
-    // ════════════════════════════════════════════════════════════
-    // PRICE SPARKLINE
-    // ════════════════════════════════════════════════════════════
-    function PriceChart({ cardId }) {
-      const all  = lsGet("pb2_price_history") || {};
-      const hist = (all[cardId] || []).slice(-90);
-      if (hist.length < 2) {
-        return (
-          <div style={{ textAlign:"center", color:"#6b6b90", fontSize:"0.75rem", padding:"1.25rem 0", lineHeight:1.6 }}>
-            Price history builds over time as you open cards.<br />
-            {hist.length === 1 ? "1 point recorded — check back tomorrow!" : "No history yet for this card."}
-          </div>
-        );
-      }
-      const prices = hist.map(h => h.price);
-      const dates  = hist.map(h => h.date.slice(5));
-      const minP   = Math.min.apply(null, prices), maxP = Math.max.apply(null, prices);
-      const range  = maxP - minP || 1;
-      const W=340, H=80, PX=8, PY=12, W2=W-2*PX, H2=H-2*PY;
-      const pts = prices.map(function(p, i) {
-        return [PX + (prices.length > 1 ? (i / (prices.length - 1)) * W2 : W2/2), PY + H2 - ((p - minP) / range) * H2];
-      });
-      const poly  = pts.map(pt => pt[0]+","+pt[1]).join(" ");
-      const last  = pts[pts.length - 1], first = pts[0];
-      const areaD = ["M "+first[0]+","+(H-PY)].concat(pts.map(pt => "L "+pt[0]+","+pt[1])).concat(["L "+last[0]+","+(H-PY),"Z"]).join(" ");
-      const gradId = "g"+cardId.replace(/[^a-z0-9]/gi,"");
-      return (
-        <svg viewBox={"0 0 "+W+" "+H} style={{ width:"100%", height:"auto", display:"block" }}>
-          <defs>
-            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#8b6cd8" stopOpacity="0.25"/>
-              <stop offset="100%" stopColor="#8b6cd8" stopOpacity="0.02"/>
-            </linearGradient>
-          </defs>
-          <line x1={PX} y1={PY} x2={W-PX} y2={PY} stroke="#1e1e35" strokeWidth="1"/>
-          <line x1={PX} y1={PY+H2/2} x2={W-PX} y2={PY+H2/2} stroke="#1e1e35" strokeWidth="1"/>
-          <line x1={PX} y1={H-PY} x2={W-PX} y2={H-PY} stroke="#1e1e35" strokeWidth="1"/>
-          <path d={areaD} fill={"url(#"+gradId+")"}/>
-          <polyline points={poly} fill="none" stroke="#8b6cd8" strokeWidth="2" strokeLinejoin="round"/>
-          <circle cx={last[0]} cy={last[1]} r="3" fill="#8b6cd8"/>
-          <text x={W-PX} y={PY-2} textAnchor="end" fontSize="8" fill="#6b6b90">{fmt$(maxP)}</text>
-          <text x={W-PX} y={H-1} textAnchor="end" fontSize="8" fill="#6b6b90">{fmt$(minP)}</text>
-          <text x={PX} y={H-1} fontSize="8" fill="#6b6b90">{dates[0]}</text>
-          <text x={W/2} y={H-1} textAnchor="middle" fontSize="8" fill="#6b6b90">{dates[Math.floor(dates.length/2)]}</text>
-        </svg>
-      );
-    }
+// ── LANDING / AUTH PAGE ───────────────────────────────────────────────────────
+function LandingPage({user,onEnter,onSendLink,onSignOut}){
+  const[email,setEmail]=useState("");
+  const[linkSent,setLinkSent]=useState(false);
+  const[sending,setSending]=useState(false);
+  const[error,setError]=useState("");
+  const[exiting,setExiting]=useState(false);
+  const emailRef=useRef(null);
+  const isLoggedIn=!!user;
 
-    // ════════════════════════════════════════════════════════════
-    // CARD MODAL
-    // ════════════════════════════════════════════════════════════
-    function CardModal({ card, owned, onClose }) {
-      const price       = getBestPrice(card);
-      const allVariants = card && card.tcgplayer && card.tcgplayer.prices ? card.tcgplayer.prices : {};
+  const enter=()=>{setExiting(true);setTimeout(onEnter,420);};
 
-      useEffect(function() {
-        if (!card || !price) return;
-        const all = lsGet("pb2_price_history") || {};
-        const hist = all[card.id] || [], td = todayStr();
-        if (!hist.find(h => h.date === td)) {
-          all[card.id] = hist.concat([{ date: td, price: price.amount }]).slice(-180);
-          lsSet("pb2_price_history", all);
-        }
-      }, [card && card.id]);
+  useEffect(()=>{
+    const fn=e=>{if(e.key==="Enter"&&isLoggedIn)enter();};
+    window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);
+  },[isLoggedIn]);
 
-      useEffect(function() {
-        const fn = e => { if (e.key === "Escape") onClose(); };
-        window.addEventListener("keydown", fn);
-        return () => window.removeEventListener("keydown", fn);
-      }, [onClose]);
+  const send=async()=>{
+    if(!email.trim())return;
+    setSending(true);setError("");
+    try{await onSendLink(email.trim());setLinkSent(true);}
+    catch(err){setError(err.message||"Failed to send. Try again.");}
+    finally{setSending(false);}
+  };
 
-      useEffect(function() {
-        document.body.style.overflow = "hidden";
-        return () => { document.body.style.overflow = ""; };
-      }, []);
+  const cardStyle={
+    background:"rgba(7,7,15,0.75)",border:"1px solid rgba(255,100,0,0.2)",
+    borderRadius:16,padding:"1.75rem",maxWidth:360,width:"100%",
+    backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",
+  };
+  const inputStyle={
+    width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,100,0,0.3)",
+    borderRadius:10,color:"#fff8f0",padding:".65rem 1rem",fontSize:"1rem",
+    marginBottom:".75rem",outline:"none",
+  };
+  const btnStyle={
+    width:"100%",background:"linear-gradient(135deg,#ff5500,#ff2200)",
+    color:"#fff8f0",border:"none",borderRadius:10,padding:".75rem",
+    fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".05em",
+    boxShadow:"0 0 30px rgba(255,60,0,0.4)",
+    opacity:sending?0.7:1,transition:"opacity .15s",
+  };
 
-      if (!card) return null;
-      return (
-        <div className="modal-bg" onClick={onClose} style={{
-          position:"fixed", inset:0, zIndex:200, background:"rgba(7,7,15,0.88)",
-          display:"flex", alignItems:"center", justifyContent:"center", padding:"1rem",
-        }}>
-          <div className="fade-up" onClick={e => e.stopPropagation()} style={{
-            background:"#141425", border:"1px solid #1e1e35", borderRadius:16,
-            maxWidth:460, width:"100%", maxHeight:"90dvh", overflowY:"auto", padding:"1.25rem",
-          }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"1rem" }}>
-              <div>
-                <h2 style={{ fontWeight:700, fontSize:"1.05rem", color:"#e8e8f4" }}>{card.name}</h2>
-                <div style={{ fontSize:"0.7rem", color:"#6b6b90", marginTop:2 }}>
-                  {card.set && card.set.name} · #{card.number} · {card.rarity}
-                </div>
-              </div>
-              <button onClick={onClose} style={{ background:"none", border:"none", color:"#6b6b90", cursor:"pointer", padding:4, display:"flex" }}>
-                <IcoX/>
+  return(
+    <div className={exiting?"landing-exit":""} onClick={isLoggedIn?enter:undefined}
+      style={{position:"fixed",inset:0,zIndex:9999,cursor:isLoggedIn?"pointer":"default",
+        background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#080200 70%,#030100 100%)",
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+
+      <FlameBackground/>
+
+      <div className="fade-in" style={{position:"relative",zIndex:10,textAlign:"center",padding:"1rem",width:"100%",maxWidth:400}}>
+        <div style={{fontSize:"3.5rem",marginBottom:".75rem",filter:"drop-shadow(0 0 20px rgba(255,150,0,0.8))"}}>🎴</div>
+        <h1 style={{fontSize:"clamp(2.2rem,9vw,4rem)",fontWeight:900,letterSpacing:"-.03em",color:"#fff8f0",lineHeight:1,
+          textShadow:"0 0 60px rgba(255,100,0,0.9),0 0 20px rgba(255,200,0,0.5)",marginBottom:".5rem"}}>
+          Artist Binder
+        </h1>
+
+        {isLoggedIn?(
+          <>
+            <p style={{fontSize:"clamp(.85rem,2.5vw,1rem)",color:"#ff9944",marginBottom:"2rem",letterSpacing:".02em",textShadow:"0 0 12px rgba(255,120,0,0.6)"}}>
+              Your collection. Your fire. 🔥
+            </p>
+            <button onClick={e=>{e.stopPropagation();enter();}} style={{
+              background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:50,
+              padding:".9rem 3rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".1em",
+              boxShadow:"0 0 40px rgba(255,60,0,0.6),0 0 80px rgba(255,60,0,0.3)",
+              transition:"transform .15s ease,box-shadow .15s ease",}}
+              onMouseEnter={e=>{e.currentTarget.style.transform="scale(1.06)";}}
+              onMouseLeave={e=>{e.currentTarget.style.transform="scale(1)";}}>
+              ENTER BINDER
+            </button>
+            <div style={{marginTop:"1.5rem",display:"flex",alignItems:"center",justifyContent:"center",gap:".75rem"}}>
+              <span style={{fontSize:".7rem",color:"#5a2a10"}}>{user.email}</span>
+              <button onClick={e=>{e.stopPropagation();onSignOut();}} style={{fontSize:".7rem",color:"#ff6633",background:"none",border:"1px solid rgba(255,100,50,0.2)",borderRadius:6,padding:"2px 8px",cursor:"pointer"}}>
+                Sign out
               </button>
             </div>
+            <p style={{marginTop:"1.5rem",fontSize:".6rem",color:"#5a2200",letterSpacing:".08em"}}>⚡ A TRIBUTE TO BLAZIKEN — THE GREATEST ⚡</p>
+          </>
+        ):linkSent?(
+          <div onClick={e=>e.stopPropagation()} style={cardStyle}>
+            <div style={{fontSize:"2rem",marginBottom:".75rem"}}>📬</div>
+            <h2 style={{fontSize:"1.1rem",fontWeight:700,color:"#fff8f0",marginBottom:".5rem"}}>Check your email!</h2>
+            <p style={{fontSize:".85rem",color:"#ff9944",marginBottom:"1.25rem",lineHeight:1.5}}>
+              We sent a magic link to <strong style={{color:"#fff8f0"}}>{email}</strong>.<br/>
+              Click the link to sign in — no password needed.
+            </p>
+            <button onClick={()=>setLinkSent(false)} style={{background:"none",border:"1px solid rgba(255,100,0,0.3)",color:"#ff9944",borderRadius:8,padding:".5rem 1rem",cursor:"pointer",fontSize:".8rem"}}>
+              Try a different email
+            </button>
+          </div>
+        ):(
+          <div onClick={e=>e.stopPropagation()} style={cardStyle}>
+            <p style={{fontSize:".85rem",color:"#ff9944",marginBottom:"1.25rem",lineHeight:1.5}}>
+              Sign in to sync your collection across all your devices.
+            </p>
+            <input ref={emailRef} type="email" placeholder="your@email.com" value={email}
+              onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
+              style={inputStyle} autoFocus/>
+            {error&&<p style={{fontSize:".75rem",color:"#f87171",marginBottom:".5rem"}}>{error}</p>}
+            <button onClick={send} disabled={sending||!email.trim()} style={{...btnStyle,opacity:(sending||!email.trim())?0.5:1}}>
+              {sending?"Sending link…":"Send Magic Link 🔥"}
+            </button>
+            <p style={{marginTop:".75rem",fontSize:".68rem",color:"#5a3020",lineHeight:1.4}}>
+              No password. We'll email you a one-click sign-in link.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
-            <div style={{ display:"flex", gap:"1rem", marginBottom:"1.25rem" }}>
-              <div style={{ flexShrink:0, width:128 }}>
-                {card.images && card.images.large
-                  ? <img src={card.images.large} alt={card.name} style={{ width:"100%", borderRadius:8, filter: owned ? "none" : "grayscale(1) brightness(0.45)" }}/>
-                  : <div style={{ width:"100%", paddingBottom:"139%", background:"#0f0f1c", borderRadius:8 }}/>
-                }
-              </div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ marginBottom:"0.75rem" }}>
-                  <span style={{
-                    display:"inline-flex", alignItems:"center", gap:4,
-                    padding:"2px 8px", borderRadius:4, fontSize:"0.7rem", fontWeight:600,
-                    background: owned ? "rgba(34,197,94,0.12)" : "rgba(107,107,144,0.15)",
-                    color: owned ? "#22c55e" : "#6b6b90",
-                  }}>
-                    {owned ? <span style={{display:"flex",alignItems:"center",gap:3}}><IcoCheck/> In Collection</span> : "Missing"}
-                  </span>
-                </div>
-                <div style={{ fontSize:"0.68rem", color:"#6b6b90" }}>Artist</div>
-                <div style={{ fontSize:"0.85rem", color:"#e8e8f4", marginBottom:"0.75rem", fontWeight:500 }}>{card.artist}</div>
-                {price ? (
-                  <div>
-                    <div style={{ fontSize:"0.68rem", color:"#6b6b90" }}>Market Price</div>
-                    <div style={{ fontSize:"1.5rem", fontWeight:800, color:"#8b6cd8", letterSpacing:"-0.02em", lineHeight:1.1, marginBottom:"0.3rem" }}>
-                      {fmt$(price.amount)}
-                    </div>
-                    <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem", fontSize:"0.68rem" }}>
-                      {price.prices && price.prices.low  != null && <span style={{color:"#6b6b90"}}>Low <span style={{color:"#9b9bc0"}}>{fmt$(price.prices.low)}</span></span>}
-                      {price.prices && price.prices.mid  != null && <span style={{color:"#6b6b90"}}>Mid <span style={{color:"#9b9bc0"}}>{fmt$(price.prices.mid)}</span></span>}
-                      {price.prices && price.prices.high != null && <span style={{color:"#6b6b90"}}>High <span style={{color:"#9b9bc0"}}>{fmt$(price.prices.high)}</span></span>}
-                    </div>
-                  </div>
-                ) : <div style={{ fontSize:"0.78rem", color:"#6b6b90" }}>No pricing data</div>}
-              </div>
+// ── CARD TILE ──────────────────────────────────────────────────────────────────
+const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissing,onClick}){
+  const isManualOwned  =manualOwned.has(card.id);
+  const isManualMissing=manualMissing.has(card.id);
+  const badgeColor=isManualOwned?"#60a5fa":isManualMissing?"#f87171":"#22c55e";
+  return(
+    <div className={`card-tile ${owned?"owned":"missing"}`} onClick={()=>onClick(card)} title={`${card.name} — ${owned?"✓ Owned":"Missing"}${isManualOwned?" (manual)":""}${isManualMissing?" (force missing)":""}`}>
+      {card.images&&card.images.small
+        ?<img src={card.images.small} alt={card.name} loading="lazy" decoding="async"/>
+        :<div className="card-blank"><span>{card.name}</span></div>
+      }
+      {(owned||isManualMissing)&&<div style={{position:"absolute",top:3,right:3,background:badgeColor,borderRadius:"50%",width:14,height:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700}}>{isManualMissing?"✕":"✓"}</div>}
+      {isManualOwned&&<div style={{position:"absolute",top:3,left:3,background:"rgba(96,165,250,0.9)",borderRadius:3,padding:"1px 4px",fontSize:".45rem",color:"white",fontWeight:700,letterSpacing:".05em"}}>M</div>}
+    </div>
+  );
+});
+
+// ── PRICE SPARKLINE ────────────────────────────────────────────────────────────
+function PriceChart({history}){
+  const hist=(history||[]).slice(-90);
+  if(hist.length<2)return <div style={{textAlign:"center",color:"#6b6b90",fontSize:".75rem",padding:"1.25rem 0",lineHeight:1.6}}>Price history builds over time as you open cards.<br/>{hist.length===1?"1 point recorded — check back tomorrow!":"No history yet."}</div>;
+  const prices=hist.map(h=>h.price),dates=hist.map(h=>h.date.slice(5));
+  const minP=Math.min(...prices),maxP=Math.max(...prices),range=maxP-minP||1;
+  const W=340,H=80,PX=8,PY=12,W2=W-2*PX,H2=H-2*PY;
+  const pts=prices.map((p,i)=>[PX+(prices.length>1?(i/(prices.length-1))*W2:W2/2),PY+H2-((p-minP)/range)*H2]);
+  const poly=pts.map(pt=>pt[0]+","+pt[1]).join(" ");
+  const last=pts[pts.length-1],first=pts[0];
+  const areaD=["M "+first[0]+","+(H-PY),...pts.map(pt=>"L "+pt[0]+","+pt[1]),"L "+last[0]+","+(H-PY),"Z"].join(" ");
+  const gid="g"+hist[0].date.replace(/\D/g,"");
+  return(
+    <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",height:"auto",display:"block"}}>
+      <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8b6cd8" stopOpacity="0.25"/><stop offset="100%" stopColor="#8b6cd8" stopOpacity="0.02"/></linearGradient></defs>
+      <line x1={PX} y1={PY} x2={W-PX} y2={PY} stroke="#1e1e35" strokeWidth="1"/>
+      <line x1={PX} y1={PY+H2/2} x2={W-PX} y2={PY+H2/2} stroke="#1e1e35" strokeWidth="1"/>
+      <line x1={PX} y1={H-PY} x2={W-PX} y2={H-PY} stroke="#1e1e35" strokeWidth="1"/>
+      <path d={areaD} fill={"url(#"+gid+")"}/>
+      <polyline points={poly} fill="none" stroke="#8b6cd8" strokeWidth="2" strokeLinejoin="round"/>
+      <circle cx={last[0]} cy={last[1]} r="3" fill="#8b6cd8"/>
+      <text x={W-PX} y={PY-2} textAnchor="end" fontSize="8" fill="#6b6b90">{fmt$(maxP)}</text>
+      <text x={W-PX} y={H-1} textAnchor="end" fontSize="8" fill="#6b6b90">{fmt$(minP)}</text>
+      <text x={PX} y={H-1} fontSize="8" fill="#6b6b90">{dates[0]}</text>
+      <text x={W/2} y={H-1} textAnchor="middle" fontSize="8" fill="#6b6b90">{dates[Math.floor(dates.length/2)]}</text>
+    </svg>
+  );
+}
+
+// ── CARD MODAL ─────────────────────────────────────────────────────────────────
+function CardModal({card,owned,manualOwned,manualMissing,priceHistory,onToggleManual,onRecordPrice,onClose}){
+  const price=getBestPrice(card);
+  const allVariants=card&&card.tcgplayer&&card.tcgplayer.prices?card.tcgplayer.prices:{};
+  const isManualOwned  =manualOwned.has(card.id);
+  const isManualMissing=manualMissing.has(card.id);
+  const cardHistory=priceHistory[card.id]||[];
+
+  useEffect(()=>{
+    if(!card||!price)return;
+    const td=todayStr();
+    if(!cardHistory.find(h=>h.date===td))onRecordPrice(card.id,price.amount,td);
+  },[card&&card.id]);
+  useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
+  useEffect(()=>{document.body.style.overflow="hidden";return()=>{document.body.style.overflow="";};},[]);
+  if(!card)return null;
+
+  const overrideStatus=isManualOwned?"manual-owned":isManualMissing?"manual-missing":"auto";
+
+  return(
+    <div className="modal-bg" onClick={onClose} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(7,7,15,0.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
+      <div className="fade-up" onClick={e=>e.stopPropagation()} style={{background:"#141425",border:"1px solid #1e1e35",borderRadius:16,maxWidth:460,width:"100%",maxHeight:"90dvh",overflowY:"auto",padding:"1.25rem"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"1rem"}}>
+          <div>
+            <h2 style={{fontWeight:700,fontSize:"1.05rem",color:"#e8e8f4"}}>{card.name}</h2>
+            <div style={{fontSize:".7rem",color:"#6b6b90",marginTop:2}}>{card.set&&card.set.name} · #{card.number} · {card.rarity}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#6b6b90",cursor:"pointer",padding:4,display:"flex"}}><IcoX/></button>
+        </div>
+
+        <div style={{display:"flex",gap:"1rem",marginBottom:"1.25rem"}}>
+          <div style={{flexShrink:0,width:128}}>
+            {card.images&&card.images.large
+              ?<img src={card.images.large} alt={card.name} style={{width:"100%",borderRadius:8,filter:owned?"none":"grayscale(1) brightness(0.45)"}}/>
+              :<div style={{width:"100%",paddingBottom:"139%",background:"#0f0f1c",borderRadius:8}}/>}
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{marginBottom:".75rem"}}>
+              <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",borderRadius:4,fontSize:".7rem",fontWeight:600,
+                background:owned?"rgba(34,197,94,0.12)":"rgba(107,107,144,0.15)",color:owned?"#22c55e":"#6b6b90"}}>
+                {owned?<span style={{display:"flex",alignItems:"center",gap:3}}><IcoCheck/> In Collection</span>:"Missing"}
+              </span>
+              {isManualOwned  &&<span style={{marginLeft:6,fontSize:".65rem",color:"#60a5fa",background:"rgba(96,165,250,0.12)",padding:"1px 6px",borderRadius:4}}>✏ Manual</span>}
+              {isManualMissing&&<span style={{marginLeft:6,fontSize:".65rem",color:"#f87171",background:"rgba(248,113,113,0.12)",padding:"1px 6px",borderRadius:4}}>✏ Overridden</span>}
             </div>
-
-            {Object.keys(allVariants).length > 1 && (
-              <div style={{ marginBottom:"1rem" }}>
-                <div style={{ fontSize:"0.68rem", color:"#6b6b90", marginBottom:"0.4rem" }}>All Variants</div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:"0.4rem" }}>
-                  {Object.entries(allVariants).map(function(kv) {
-                    const k=kv[0], v=kv[1];
-                    if (!v || v.market == null) return null;
-                    return (
-                      <div key={k} style={{ background:"#0f0f1c", border:"1px solid #1e1e35", borderRadius:6, padding:"3px 8px", fontSize:"0.67rem" }}>
-                        <span style={{color:"#6b6b90"}}>{k.replace(/([A-Z])/g," $1").trim()}: </span>
-                        <span style={{color:"#e8e8f4", fontWeight:600}}>{fmt$(v.market)}</span>
-                      </div>
-                    );
-                  })}
+            <div style={{fontSize:".68rem",color:"#6b6b90"}}>Artist</div>
+            <div style={{fontSize:".85rem",color:"#e8e8f4",marginBottom:".75rem",fontWeight:500}}>{card.artist}</div>
+            {price?(
+              <div>
+                <div style={{fontSize:".68rem",color:"#6b6b90"}}>Market Price</div>
+                <div style={{fontSize:"1.5rem",fontWeight:800,color:"#8b6cd8",letterSpacing:"-.02em",lineHeight:1.1,marginBottom:".3rem"}}>{fmt$(price.amount)}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:".5rem",fontSize:".68rem"}}>
+                  {price.prices&&price.prices.low !=null&&<span style={{color:"#6b6b90"}}>Low  <span style={{color:"#9b9bc0"}}>{fmt$(price.prices.low)}</span></span>}
+                  {price.prices&&price.prices.mid !=null&&<span style={{color:"#6b6b90"}}>Mid  <span style={{color:"#9b9bc0"}}>{fmt$(price.prices.mid)}</span></span>}
+                  {price.prices&&price.prices.high!=null&&<span style={{color:"#6b6b90"}}>High <span style={{color:"#9b9bc0"}}>{fmt$(price.prices.high)}</span></span>}
                 </div>
               </div>
-            )}
-
-            <div style={{ marginBottom:"0.75rem" }}>
-              <div style={{ fontSize:"0.68rem", color:"#6b6b90", marginBottom:"0.4rem" }}>Price History</div>
-              <PriceChart cardId={card.id}/>
-            </div>
-
-            {card.tcgplayer && card.tcgplayer.url && (
-              <a href={card.tcgplayer.url} target="_blank" rel="noopener noreferrer" style={{
-                display:"block", textAlign:"center", background:"#1a1430", color:"#9b7fe8",
-                padding:"0.5rem", borderRadius:8, textDecoration:"none",
-                fontSize:"0.78rem", border:"1px solid #2e2255", fontWeight:500,
-              }}>View on TCGPlayer →</a>
-            )}
+            ):<div style={{fontSize:".78rem",color:"#6b6b90"}}>No pricing data</div>}
           </div>
         </div>
-      );
-    }
 
-    // ════════════════════════════════════════════════════════════
-    // ARTIST SECTION
-    // ════════════════════════════════════════════════════════════
-    function ArtistSection({ entry, cards, ownedKeySet, onCardClick, searchQuery, sortBy }) {
-      const isSecondary = entry.tier === "secondary";
-      const [open, setOpen] = useState(!isSecondary);
-
-      const displayCards = useMemo(function() {
-        let arr = cards;
-        if (searchQuery) {
-          const q = searchQuery.toLowerCase();
-          arr = arr.filter(c => c.name.toLowerCase().indexOf(q) !== -1);
-        }
-        return sortCards(arr, sortBy, ownedKeySet);
-      }, [cards, searchQuery, sortBy, ownedKeySet]);
-
-      const ownedCount = useMemo(function() {
-        return cards.filter(c => isCardOwned(c, ownedKeySet)).length;
-      }, [cards, ownedKeySet]);
-
-      const pct = cards.length ? Math.round((ownedCount / cards.length) * 100) : 0;
-      const complete = pct === 100 && cards.length > 0;
-
-      useEffect(function() {
-        if (searchQuery && displayCards.length > 0) setOpen(true);
-      }, [searchQuery, displayCards.length]);
-
-      if (searchQuery && displayCards.length === 0) return null;
-
-      return (
-        <div style={{ marginBottom:"2rem" }}>
-          <div onClick={() => setOpen(o => !o)} style={{
-            display:"flex", alignItems:"center", gap:"0.6rem",
-            paddingBottom:"0.6rem", marginBottom:"0.75rem",
-            borderBottom:"1px solid #1e1e35", cursor:"pointer", userSelect:"none",
-          }}>
-            <IcoChev open={open}/>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ display:"flex", alignItems:"baseline", flexWrap:"wrap", gap:"0.5rem" }}>
-                <span style={{ fontSize: isSecondary ? "0.9rem" : "1.05rem", fontWeight:700, letterSpacing:"-0.01em", color: complete ? "#22c55e" : "#e8e8f4" }}>
-                  {entry.tier === "special" ? "🎮 " : ""}{entry.name}{complete ? " ✓" : ""}
-                </span>
-                <span style={{ fontSize:"0.73rem", color:"#6b6b90", fontVariantNumeric:"tabular-nums" }}>
-                  {ownedCount} / {cards.length}
-                </span>
-                {isSecondary && (
-                  <span style={{ fontSize:"0.6rem", color:"#3a3a5a", background:"#141425", border:"1px solid #1e1e35", padding:"0px 5px", borderRadius:3 }}>secondary</span>
-                )}
-              </div>
-              <div style={{ marginTop:"0.3rem", height:2, background:"#1e1e35", borderRadius:1, maxWidth:180, overflow:"hidden" }}>
-                <div className="prog-fill" style={{ width:`${pct}%`, height:"100%", borderRadius:1, background: complete ? "#22c55e" : "#8b6cd8" }}/>
-              </div>
-            </div>
+        {/* Manual override */}
+        <div style={{marginBottom:"1rem",padding:".75rem",background:"#0f0f1c",borderRadius:10,border:"1px solid #1e1e35"}}>
+          <div style={{fontSize:".68rem",color:"#6b6b90",marginBottom:".5rem",display:"flex",alignItems:"center",gap:4}}><IcoEdit/> Manual Override</div>
+          <div style={{display:"flex",gap:".4rem"}}>
+            <button onClick={()=>onToggleManual(card.id,"owned")} style={{flex:1,background:isManualOwned?"rgba(96,165,250,0.15)":"#141425",color:isManualOwned?"#60a5fa":"#6b6b90",border:`1px solid ${isManualOwned?"#60a5fa":"#1e1e35"}`,borderRadius:7,padding:".4rem .5rem",cursor:"pointer",fontSize:".72rem",fontWeight:600}}>✓ Force Owned</button>
+            <button onClick={()=>onToggleManual(card.id,"missing")} style={{flex:1,background:isManualMissing?"rgba(248,113,113,0.15)":"#141425",color:isManualMissing?"#f87171":"#6b6b90",border:`1px solid ${isManualMissing?"#f87171":"#1e1e35"}`,borderRadius:7,padding:".4rem .5rem",cursor:"pointer",fontSize:".72rem",fontWeight:600}}>✕ Force Missing</button>
+            {overrideStatus!=="auto"&&<button onClick={()=>onToggleManual(card.id,"reset")} style={{background:"#141425",color:"#6b6b90",border:"1px solid #1e1e35",borderRadius:7,padding:".4rem .6rem",cursor:"pointer",fontSize:".72rem"}}>Reset</button>}
           </div>
+          <div style={{marginTop:".4rem",fontSize:".62rem",color:"#3a3a5a"}}>
+            {overrideStatus==="auto"?"Using CSV matching — override if the app got it wrong.":isManualOwned?"Manually marked as owned. Synced to your account.":"Manually marked as missing. Synced to your account."}
+          </div>
+        </div>
 
-          {open && (
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(76px, 1fr))", gap:"6px" }}>
-              {displayCards.map(card => (
-                <CardTile key={card.id} card={card} owned={isCardOwned(card, ownedKeySet)} onClick={onCardClick}/>
+        {Object.keys(allVariants).length>1&&(
+          <div style={{marginBottom:"1rem"}}>
+            <div style={{fontSize:".68rem",color:"#6b6b90",marginBottom:".4rem"}}>All Variants</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:".4rem"}}>
+              {Object.entries(allVariants).map(([k,v])=>v&&v.market!=null&&(
+                <div key={k} style={{background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:6,padding:"3px 8px",fontSize:".67rem"}}>
+                  <span style={{color:"#6b6b90"}}>{k.replace(/([A-Z])/g," $1").trim()}: </span>
+                  <span style={{color:"#e8e8f4",fontWeight:600}}>{fmt$(v.market)}</span>
+                </div>
               ))}
             </div>
-          )}
-        </div>
-      );
-    }
+          </div>
+        )}
 
-    // ════════════════════════════════════════════════════════════
-    // SETTINGS
-    // ════════════════════════════════════════════════════════════
-    function SettingsPanel({ onClose, onClearCache }) {
-      const [key, setKey] = useState(() => lsGet("pb2_api_key") || "");
-      const save = () => { lsSet("pb2_api_key", key.trim()); onClose(); };
-      useEffect(function() {
-        const fn = e => { if (e.key === "Escape") onClose(); };
-        window.addEventListener("keydown", fn);
-        return () => window.removeEventListener("keydown", fn);
-      }, [onClose]);
-      return (
-        <div onClick={onClose} style={{
-          position:"fixed", inset:0, zIndex:300, background:"rgba(7,7,15,0.8)", backdropFilter:"blur(4px)",
-          display:"flex", alignItems:"center", justifyContent:"center", padding:"1rem",
-        }}>
-          <div className="fade-up" onClick={e => e.stopPropagation()} style={{
-            background:"#141425", border:"1px solid #1e1e35", borderRadius:16, padding:"1.5rem", maxWidth:380, width:"100%",
-          }}>
-            <h3 style={{ fontWeight:700, fontSize:"1rem", color:"#e8e8f4", marginBottom:"1.25rem" }}>Settings</h3>
-            <label style={{ display:"block", fontSize:"0.75rem", color:"#6b6b90", marginBottom:"0.4rem" }}>
-              pokemontcg.io API Key <span style={{ color:"#3a3a5a" }}>(optional)</span>
-            </label>
-            <input type="password" value={key} onChange={e => setKey(e.target.value)}
-              placeholder="Increases rate limits — leave blank for now"
-              style={{ width:"100%", background:"#0f0f1c", border:"1px solid #1e1e35", borderRadius:8, color:"#e8e8f4", padding:"0.5rem 0.75rem", fontSize:"0.85rem", marginBottom:"0.5rem" }}
-            />
-            <a href="https://dev.pokemontcg.io/" target="_blank" rel="noopener" style={{ display:"block", fontSize:"0.72rem", color:"#8b6cd8", marginBottom:"1.25rem" }}>
-              Get a free API key (30 seconds) →
-            </a>
-            <div style={{ display:"flex", gap:"0.5rem", marginBottom:"1.5rem" }}>
-              <button onClick={save} style={{ flex:1, background:"#8b6cd8", color:"white", border:"none", borderRadius:8, padding:"0.55rem", cursor:"pointer", fontWeight:600, fontSize:"0.875rem" }}>Save</button>
-              <button onClick={onClose} style={{ flex:1, background:"#1e1e35", color:"#e8e8f4", border:"none", borderRadius:8, padding:"0.55rem", cursor:"pointer", fontSize:"0.875rem" }}>Cancel</button>
-            </div>
-            <div style={{ borderTop:"1px solid #1e1e35", paddingTop:"1rem" }}>
-              <p style={{ fontSize:"0.72rem", color:"#4a4a70", marginBottom:"0.6rem" }}>Card data cached locally for 24 hours. Clear to force a re-fetch.</p>
-              <button onClick={() => { if (window.confirm("Clear cached card data? App will re-fetch on next load.")) { onClearCache(); onClose(); } }}
-                style={{ width:"100%", background:"#200f18", color:"#f87171", border:"1px solid #3d1525", borderRadius:8, padding:"0.5rem", cursor:"pointer", fontSize:"0.8rem" }}>
-                Clear card cache
-              </button>
-            </div>
+        <div style={{marginBottom:".75rem"}}>
+          <div style={{fontSize:".68rem",color:"#6b6b90",marginBottom:".4rem"}}>Price History</div>
+          <PriceChart history={cardHistory}/>
+        </div>
+
+        {card.tcgplayer&&card.tcgplayer.url&&(
+          <a href={card.tcgplayer.url} target="_blank" rel="noopener noreferrer" style={{display:"block",textAlign:"center",background:"#1a1430",color:"#9b7fe8",padding:".5rem",borderRadius:8,textDecoration:"none",fontSize:".78rem",border:"1px solid #2e2255",fontWeight:500}}>
+            View on TCGPlayer →
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── ARTIST SECTION ─────────────────────────────────────────────────────────────
+function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,onCardClick,searchQuery,sortBy}){
+  const isSecondary=entry.tier==="secondary";
+  const[open,setOpen]=useState(!isSecondary);
+  const displayCards=useMemo(()=>{
+    let arr=cards;
+    if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>c.name.toLowerCase().includes(q));}
+    return sortCards(arr,sortBy,checkOwned);
+  },[cards,searchQuery,sortBy,checkOwned]);
+  const ownedCount=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
+  const pct=cards.length?Math.round((ownedCount/cards.length)*100):0;
+  const complete=pct===100&&cards.length>0;
+  useEffect(()=>{if(searchQuery&&displayCards.length>0)setOpen(true);},[searchQuery,displayCards.length]);
+  if(searchQuery&&displayCards.length===0)return null;
+  return(
+    <div style={{marginBottom:"2rem"}}>
+      <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:".6rem",paddingBottom:".6rem",marginBottom:".75rem",borderBottom:"1px solid #1e1e35",cursor:"pointer",userSelect:"none"}}>
+        <IcoChev open={open}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",alignItems:"baseline",flexWrap:"wrap",gap:".5rem"}}>
+            <span style={{fontSize:isSecondary?".9rem":"1.05rem",fontWeight:700,letterSpacing:"-.01em",color:complete?"#22c55e":"#e8e8f4"}}>
+              {entry.tier==="special"?"🎮 ":""}{entry.name}{complete?" ✓":""}
+            </span>
+            <span style={{fontSize:".73rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{ownedCount} / {cards.length}</span>
+            {isSecondary&&<span style={{fontSize:".6rem",color:"#3a3a5a",background:"#141425",border:"1px solid #1e1e35",padding:"0px 5px",borderRadius:3}}>secondary</span>}
+          </div>
+          <div style={{marginTop:".3rem",height:2,background:"#1e1e35",borderRadius:1,maxWidth:180,overflow:"hidden"}}>
+            <div className="prog-fill" style={{width:`${pct}%`,height:"100%",borderRadius:1,background:complete?"#22c55e":"#8b6cd8"}}/>
           </div>
         </div>
-      );
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // APP
-    // ════════════════════════════════════════════════════════════
-    function App() {
-      const [cardData,     setCardData]     = useState({});
-      const [loadingSet,   setLoadingSet]   = useState(new Set());
-      const [errors,       setErrors]       = useState({});
-      const [ownedKeySet,  setOwnedKeySet]  = useState(new Set()); // Set of "normName:::normSet" keys
-      const [selectedCard, setSelectedCard] = useState(null);
-      const [search,       setSearch]       = useState("");
-      const [filterSlug,   setFilterSlug]   = useState("all");
-      const [sortBy,       setSortBy]       = useState("name");
-      const [showSettings, setShowSettings] = useState(false);
-      const [csvStatus,    setCsvStatus]    = useState(null);
-      const fileRef = useRef(null), searchRef = useRef(null);
-
-      const getApiKey = () => lsGet("pb2_api_key") || "";
-
-      useEffect(function() {
-        const el = document.getElementById("splash");
-        if (el) { el.style.opacity = "0"; setTimeout(() => el.remove(), 350); }
-      }, []);
-
-      useEffect(function() {
-        const saved = lsGet("pb2_owned_v2") || [];
-        setOwnedKeySet(new Set(saved));
-      }, []);
-
-      const loadEntry = useCallback(async function(entry) {
-        const slug = toSlug(entry.name);
-        setLoadingSet(s => new Set([...s, slug]));
-        setErrors(e => { const n = {...e}; delete n[slug]; return n; });
-        try {
-          const cards = await fetchArtistCards(entry, getApiKey());
-          setCardData(d => ({...d, [slug]: cards}));
-        } catch(err) {
-          setErrors(e => ({...e, [slug]: err.message}));
-        } finally {
-          setLoadingSet(s => { const n = new Set(s); n.delete(slug); return n; });
-        }
-      }, []);
-
-      useEffect(function() { ARTISTS.forEach(loadEntry); }, []);
-
-      const handleCSV = useCallback(function(file) {
-        setCsvStatus("loading");
-        Papa.parse(file, {
-          header: true, skipEmptyLines: true,
-          complete: function(result) {
-            const pokemon = result.data.filter(r => (r["Category"] || "").trim() === "Pokemon");
-            // Primary match: name+number (precise). Fallback: name+set.
-            const keys = new Set();
-            pokemon.forEach(function(r) {
-              makeKeys(r["Product Name"] || "", r["Card Number"] || "", r["Set"] || "").forEach(k => keys.add(k));
-            });
-            setOwnedKeySet(keys);
-            lsSet("pb2_owned_v2", Array.from(keys));
-            setCsvStatus({ count: pokemon.length });
-            setTimeout(() => setCsvStatus(null), 5000);
-          },
-          error: function() { setCsvStatus(null); alert("Could not read CSV. Make sure it's a Collectr export."); },
-        });
-      }, []);
-
-      const onFileChange = e => {
-        const f = e.target.files && e.target.files[0];
-        if (f) handleCSV(f);
-        e.target.value = "";
-      };
-
-      const clearCache = () => {
-        ARTISTS.forEach(e => lsDel(`pb2_cards_${toSlug(e.name)}`));
-        setCardData({}); setErrors({});
-        ARTISTS.forEach(loadEntry);
-      };
-
-      const visibleArtists = filterSlug === "all" ? ARTISTS : ARTISTS.filter(a => toSlug(a.name) === filterSlug);
-
-      const totalCards = useMemo(() => Object.values(cardData).reduce((s, a) => s + a.length, 0), [cardData]);
-      const totalOwned = useMemo(() =>
-        Object.values(cardData).reduce((s, cards) => s + cards.filter(c => isCardOwned(c, ownedKeySet)).length, 0),
-        [cardData, ownedKeySet]
-      );
-      const totalPct = totalCards ? Math.round((totalOwned / totalCards) * 100) : 0;
-
-      const searchHasResults = search
-        ? visibleArtists.some(entry => {
-            const cards = cardData[toSlug(entry.name)] || [];
-            const q = search.toLowerCase();
-            return cards.some(c => c.name.toLowerCase().indexOf(q) !== -1);
-          })
-        : true;
-
-      const selSt = {
-        background:"#0f0f1c", border:"1px solid #1e1e35", borderRadius:8,
-        color:"#e8e8f4", padding:"0.4rem 0.6rem", fontSize:"0.76rem",
-      };
-
-      return (
-        <div style={{ minHeight:"100dvh", background:"#07070f" }}>
-          <header style={{
-            position:"sticky", top:0, zIndex:100,
-            background:"rgba(7,7,15,0.97)",
-            backdropFilter:"blur(18px)", WebkitBackdropFilter:"blur(18px)",
-            borderBottom:"1px solid #1e1e35",
-          }}>
-            <div style={{ maxWidth:860, margin:"0 auto", padding:"0.7rem 1rem" }}>
-              {/* Row 1 */}
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"0.6rem" }}>
-                <div style={{ display:"flex", alignItems:"baseline", gap:"0.6rem" }}>
-                  <h1 style={{ fontSize:"1rem", fontWeight:800, color:"#e8e8f4", letterSpacing:"-0.02em" }}>🎴 Artist Binder</h1>
-                  {totalCards > 0 && (
-                    <span style={{ fontSize:"0.7rem", color:"#6b6b90", fontVariantNumeric:"tabular-nums" }}>
-                      {totalOwned}/{totalCards} · {totalPct}%
-                    </span>
-                  )}
-                </div>
-                <div style={{ display:"flex", gap:"0.4rem", alignItems:"center" }}>
-                  {csvStatus === "loading" && <span style={{ fontSize:"0.7rem", color:"#6b6b90", display:"flex", alignItems:"center", gap:4 }}><IcoSpin/> Reading…</span>}
-                  {csvStatus && csvStatus.count && <span style={{ fontSize:"0.7rem", color:"#22c55e" }}>✓ {csvStatus.count} Pokémon loaded</span>}
-                  <button onClick={() => fileRef.current && fileRef.current.click()} style={{
-                    display:"flex", alignItems:"center", gap:"0.35rem",
-                    background:"#1e1e35", color:"#8b6cd8", border:"1px solid #2a2a50",
-                    borderRadius:8, padding:"0.38rem 0.65rem", cursor:"pointer", fontSize:"0.75rem", fontWeight:600,
-                  }}>
-                    <IcoUpload/> Upload CSV
-                  </button>
-                  <button onClick={() => setShowSettings(true)} style={{ background:"#1e1e35", color:"#6b6b90", border:"1px solid #2a2a50", borderRadius:8, padding:"0.38rem", cursor:"pointer", display:"flex" }}>
-                    <IcoGear/>
-                  </button>
-                  <input ref={fileRef} type="file" accept=".csv" onChange={onFileChange} style={{ display:"none" }}/>
-                </div>
-              </div>
-              {/* Row 2: search + filters */}
-              <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                <div style={{ flex:"1 1 160px", position:"relative", minWidth:0 }}>
-                  <span style={{ position:"absolute", left:"0.6rem", top:"50%", transform:"translateY(-50%)", color:"#6b6b90", display:"flex", pointerEvents:"none" }}><IcoSearch/></span>
-                  <input ref={searchRef} type="search" placeholder="Search cards…" value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    style={{...selSt, width:"100%", padding:"0.4rem 2rem 0.4rem 2rem", fontSize:"0.85rem"}}
-                  />
-                  {search && (
-                    <button onClick={() => { setSearch(""); searchRef.current && searchRef.current.focus(); }} style={{ position:"absolute", right:"0.4rem", top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"#6b6b90", cursor:"pointer", display:"flex" }}>
-                      <IcoX/>
-                    </button>
-                  )}
-                </div>
-                <select value={filterSlug} onChange={e => setFilterSlug(e.target.value)} style={{...selSt, maxWidth:148}}>
-                  <option value="all">All Artists</option>
-                  <optgroup label="Main">{ARTISTS.filter(a => a.tier==="main").map(a => <option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
-                  <optgroup label="Secondary">{ARTISTS.filter(a => a.tier==="secondary").map(a => <option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
-                  <optgroup label="Special">{ARTISTS.filter(a => a.tier==="special").map(a => <option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
-                </select>
-                <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{...selSt, maxWidth:148}}>
-                  <option value="name">Name A–Z</option>
-                  <option value="missing">Missing first</option>
-                  <option value="owned">Owned first</option>
-                  <option value="price-desc">Price: High → Low</option>
-                  <option value="price-asc">Price: Low → High</option>
-                  <option value="date-desc">Newest first</option>
-                  <option value="date-asc">Oldest first</option>
-                </select>
-              </div>
-            </div>
-          </header>
-
-          <main style={{ maxWidth:860, margin:"0 auto", padding:"1rem" }}>
-            {totalCards > 0 && (
-              <div style={{ height:2, background:"#1e1e35", borderRadius:1, overflow:"hidden", marginBottom:"1.5rem" }}>
-                <div className="prog-fill" style={{ width:`${totalPct}%`, height:"100%", background:"#8b6cd8", borderRadius:1 }}/>
-              </div>
-            )}
-
-            {visibleArtists.map(function(entry) {
-              const slug = toSlug(entry.name), cards = cardData[slug] || [];
-              const isLoading = loadingSet.has(slug), err = errors[slug];
-              if (isLoading && !cards.length) return (
-                <div key={entry.name} style={{ display:"flex", alignItems:"center", gap:"0.5rem", padding:"0.6rem 0", color:"#6b6b90", fontSize:"0.8rem" }}>
-                  <IcoSpin/> Loading {entry.name}…
-                </div>
-              );
-              if (err) return (
-                <div key={entry.name} style={{ padding:"0.6rem 0", fontSize:"0.78rem", color:"#f87171", display:"flex", alignItems:"center", gap:"0.5rem" }}>
-                  <span>⚠ {entry.name}: {err}</span>
-                  <button onClick={() => loadEntry(entry)} style={{ color:"#8b6cd8", background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:3, fontSize:"0.75rem" }}>
-                    <IcoRetry/> retry
-                  </button>
-                </div>
-              );
-              if (!cards.length) return null;
-              return (
-                <ArtistSection key={entry.name} entry={entry} cards={cards}
-                  ownedKeySet={ownedKeySet} onCardClick={setSelectedCard}
-                  searchQuery={search} sortBy={sortBy}
-                />
-              );
-            })}
-
-            {search && !searchHasResults && (
-              <div style={{ textAlign:"center", padding:"3rem 1rem", color:"#6b6b90", fontSize:"0.875rem" }}>
-                No cards matching "{search}"
-              </div>
-            )}
-            <div style={{ marginTop:"3rem", paddingTop:"1rem", borderTop:"1px solid #1e1e35", fontSize:"0.68rem", color:"#3a3a5a", textAlign:"center" }}>
-              Card data from pokemontcg.io · Prices via TCGPlayer · Cached 24h locally
-            </div>
-          </main>
-
-          {selectedCard && (
-            <CardModal card={selectedCard} owned={isCardOwned(selectedCard, ownedKeySet)} onClose={() => setSelectedCard(null)}/>
-          )}
-          {showSettings && (
-            <SettingsPanel onClose={() => setShowSettings(false)} onClearCache={clearCache}/>
-          )}
+      </div>
+      {open&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>
+          {displayCards.map(card=><CardTile key={card.id} card={card} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} onClick={onCardClick}/>)}
         </div>
-      );
-    }
+      )}
+    </div>
+  );
+}
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
-  </script>
+// ── SETTINGS ───────────────────────────────────────────────────────────────────
+function SettingsPanel({onClose,onClearCache,onClearManual,onSignOut}){
+  const[key,setKey]=useState(()=>lsGet("pb2_api_key")||"");
+  const save=()=>{lsSet("pb2_api_key",key.trim());onClose();};
+  useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
+  const btnRow={width:"100%",borderRadius:8,padding:".45rem",cursor:"pointer",fontSize:".78rem",border:"none"};
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(7,7,15,0.8)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
+      <div className="fade-up" onClick={e=>e.stopPropagation()} style={{background:"#141425",border:"1px solid #1e1e35",borderRadius:16,padding:"1.5rem",maxWidth:380,width:"100%"}}>
+        <h3 style={{fontWeight:700,fontSize:"1rem",color:"#e8e8f4",marginBottom:"1.25rem"}}>Settings</h3>
+        <label style={{display:"block",fontSize:".75rem",color:"#6b6b90",marginBottom:".4rem"}}>pokemontcg.io API Key <span style={{color:"#3a3a5a"}}>(optional)</span></label>
+        <input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder="Increases rate limits"
+          style={{width:"100%",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".5rem .75rem",fontSize:".85rem",marginBottom:".5rem"}}/>
+        <a href="https://dev.pokemontcg.io/" target="_blank" rel="noopener" style={{display:"block",fontSize:".72rem",color:"#8b6cd8",marginBottom:"1.25rem"}}>Get a free API key →</a>
+        <div style={{display:"flex",gap:".5rem",marginBottom:"1.5rem"}}>
+          <button onClick={save} style={{flex:1,background:"#8b6cd8",color:"white",border:"none",borderRadius:8,padding:".55rem",cursor:"pointer",fontWeight:600,fontSize:".875rem"}}>Save</button>
+          <button onClick={onClose} style={{flex:1,background:"#1e1e35",color:"#e8e8f4",border:"none",borderRadius:8,padding:".55rem",cursor:"pointer",fontSize:".875rem"}}>Cancel</button>
+        </div>
+        <div style={{borderTop:"1px solid #1e1e35",paddingTop:"1rem",display:"flex",flexDirection:"column",gap:".5rem"}}>
+          <button onClick={()=>{if(window.confirm("Clear card cache?"))onClearCache();onClose();}} style={{...btnRow,background:"#200f18",color:"#f87171"}}>Clear card cache</button>
+          <button onClick={()=>{if(window.confirm("Reset all manual overrides?"))onClearManual();onClose();}} style={{...btnRow,background:"#0f1a20",color:"#60a5fa"}}>Reset all manual overrides</button>
+          <button onClick={()=>{onSignOut();onClose();}} style={{...btnRow,background:"#1a1020",color:"#c084fc"}}>Sign out</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── APP ────────────────────────────────────────────────────────────────────────
+function App(){
+  const[view,         setView]         =useState("checking-auth");
+  const[user,         setUser]         =useState(null);
+  const[cardData,     setCardData]     =useState({});
+  const[loadingSet,   setLoadingSet]   =useState(new Set());
+  const[errors,       setErrors]       =useState({});
+  const[ownedKeySet,  setOwnedKeySet]  =useState(new Set());
+  const[manualOwned,  setManualOwned]  =useState(new Set());
+  const[manualMissing,setManualMissing]=useState(new Set());
+  const[priceHistory, setPriceHistory] =useState({});
+  const[selectedCard, setSelectedCard] =useState(null);
+  const[search,       setSearch]       =useState("");
+  const[filterSlug,   setFilterSlug]   =useState("all");
+  const[sortBy,       setSortBy]       =useState("name");
+  const[showSettings, setShowSettings] =useState(false);
+  const[csvStatus,    setCsvStatus]    =useState(null);
+  const[syncStatus,   setSyncStatus]   =useState("idle"); // idle|syncing|synced|error
+  const fileRef=useRef(null),searchRef=useRef(null);
+
+  const getApiKey=()=>lsGet("pb2_api_key")||"";
+
+  // Sync status helper
+  const withSync=async(fn)=>{
+    setSyncStatus("syncing");
+    try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}
+    catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}
+  };
+
+  // Load all user data from Supabase
+  const loadData=useCallback(async(uid)=>{
+    setView("loading-data");
+    try{
+      const{ownedKeys,manualOwned:mo,manualMissing:mm,priceHistory:ph}=await loadUserData(uid);
+      setOwnedKeySet(ownedKeys);setManualOwned(mo);setManualMissing(mm);setPriceHistory(ph);
+    }catch(e){console.error("Load error:",e);}
+    setView("landing");
+  },[]);
+
+  // Auth: check session on mount and listen for changes
+  useEffect(()=>{
+    sb.auth.getSession().then(({data:{session}})=>{
+      if(session?.user){setUser(session.user);loadData(session.user.id);}
+      else setView("landing");
+    });
+    const{data:{subscription}}=sb.auth.onAuthStateChange(async(event,session)=>{
+      if((event==="SIGNED_IN"||event==="TOKEN_REFRESHED")&&session?.user){
+        setUser(session.user);
+        if(view==="landing"||view==="checking-auth")loadData(session.user.id);
+      }else if(event==="SIGNED_OUT"){
+        setUser(null);setOwnedKeySet(new Set());setManualOwned(new Set());setManualMissing(new Set());setPriceHistory({});setView("landing");
+      }
+    });
+    return()=>subscription.unsubscribe();
+  },[]);
+
+  const handleSendLink=async(email)=>{
+    const{error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:REDIRECT}});
+    if(error)throw error;
+  };
+  const handleSignOut=()=>sb.auth.signOut();
+
+  // Card data loading
+  const loadEntry=useCallback(async entry=>{
+    const slug=toSlug(entry.name);
+    setLoadingSet(s=>new Set([...s,slug]));
+    setErrors(e=>{const n={...e};delete n[slug];return n;});
+    try{const cards=await fetchArtistCards(entry,getApiKey());setCardData(d=>({...d,[slug]:cards}));}
+    catch(err){setErrors(e=>({...e,[slug]:err.message}));}
+    finally{setLoadingSet(s=>{const n=new Set(s);n.delete(slug);return n;});}
+  },[]);
+  useEffect(()=>{ARTISTS.forEach(loadEntry);},[]);
+
+  // CSV upload
+  const handleCSV=useCallback(file=>{
+    setCsvStatus("loading");
+    Papa.parse(file,{header:true,skipEmptyLines:true,complete:async({data})=>{
+      const pokemon=data.filter(r=>(r["Category"]||"").trim()==="Pokemon");
+      const keys=new Set();
+      pokemon.forEach(r=>makeKeys(r["Product Name"]||"",r["Card Number"]||"",r["Set"]||"").forEach(k=>keys.add(k)));
+      setOwnedKeySet(keys);
+      setCsvStatus({count:pokemon.length});
+      setTimeout(()=>setCsvStatus(null),5000);
+      if(user)withSync(()=>saveCollection(user.id,keys));
+    },error:()=>{setCsvStatus(null);alert("Could not read CSV.");}});
+  },[user]);
+
+  // Manual overrides
+  const handleToggleManual=useCallback((cardId,action)=>{
+    setManualOwned(prev=>{
+      const n=new Set(prev);
+      if(action==="owned")n.has(cardId)?n.delete(cardId):n.add(cardId);
+      else if(action==="reset")n.delete(cardId);
+      if(user)withSync(()=>saveOverride(user.id,cardId,action==="owned"?(n.has(cardId)?"owned":"reset"):"reset"));
+      return n;
+    });
+    setManualMissing(prev=>{
+      const n=new Set(prev);
+      if(action==="missing")n.has(cardId)?n.delete(cardId):n.add(cardId);
+      else if(action==="reset")n.delete(cardId);
+      if(user&&action==="missing")withSync(()=>saveOverride(user.id,cardId,n.has(cardId)?"missing":"reset"));
+      return n;
+    });
+  },[user]);
+
+  // Price recording
+  const handleRecordPrice=useCallback((cardId,price,date)=>{
+    setPriceHistory(prev=>{
+      const n={...prev};
+      if(!n[cardId])n[cardId]=[];
+      if(!n[cardId].find(h=>h.date===date)){
+        n[cardId]=[...n[cardId],{date,price}].slice(-180);
+        if(user)savePricePoint(user.id,cardId,price,date).catch(console.error);
+      }
+      return n;
+    });
+  },[user]);
+
+  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb2_cards_${toSlug(e.name)}`));setCardData({});setErrors({});ARTISTS.forEach(loadEntry);};
+  const clearManual=async()=>{
+    setManualOwned(new Set());setManualMissing(new Set());
+    if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});
+  };
+
+  const checkOwned=useCallback(card=>isCardOwned(card,ownedKeySet,manualOwned,manualMissing),[ownedKeySet,manualOwned,manualMissing]);
+  const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
+  const totalCards=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.length,0),[cardData]);
+  const totalOwned=useMemo(()=>Object.values(cardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0),[cardData,checkOwned]);
+  const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
+  const manualCount=manualOwned.size+manualMissing.size;
+
+  // ── Render non-binder views ──
+  if(view==="checking-auth")return(
+    <div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <IcoSpin/>
+    </div>
+  );
+
+  if(view==="loading-data")return(
+    <div style={{position:"fixed",inset:0,background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#030100 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",overflow:"hidden"}}>
+      <FlameBackground dim/>
+      <div style={{position:"relative",zIndex:10,textAlign:"center"}}>
+        <div style={{fontSize:"2rem",marginBottom:".5rem"}}>🎴</div>
+        <IcoSpin/>
+        <p style={{color:"#ff9944",fontSize:".9rem",marginTop:".75rem"}}>Loading your collection…</p>
+      </div>
+    </div>
+  );
+
+  if(view==="landing")return(
+    <LandingPage user={user} onEnter={()=>setView("binder")} onSendLink={handleSendLink} onSignOut={handleSignOut}/>
+  );
+
+  // ── Binder view ──
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".4rem .6rem",fontSize:".76rem"};
+  const syncIcon=syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓ Synced</span>:syncStatus==="error"?<span style={{color:"#f87171",fontSize:".65rem"}}>Sync failed</span>:null;
+
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".6rem"}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:".6rem"}}>
+              <h1 style={{fontSize:"1rem",fontWeight:800,color:"#e8e8f4",letterSpacing:"-.02em",cursor:"pointer"}} onClick={()=>setView("landing")}>🎴 Artist Binder</h1>
+              {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
+              {manualCount>0&&<span style={{fontSize:".62rem",color:"#60a5fa",background:"rgba(96,165,250,0.1)",padding:"1px 6px",borderRadius:4}}>{manualCount} manual</span>}
+              {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
+            </div>
+            <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
+              {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/> Reading…</span>}
+              {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count} Pokémon</span>}
+              <button onClick={()=>fileRef.current&&fileRef.current.click()} style={{display:"flex",alignItems:"center",gap:".35rem",background:"#1e1e35",color:"#8b6cd8",border:"1px solid #2a2a50",borderRadius:8,padding:".38rem .65rem",cursor:"pointer",fontSize:".75rem",fontWeight:600}}>
+                <IcoUpload/> Upload CSV
+              </button>
+              <button onClick={()=>setShowSettings(true)} style={{background:"#1e1e35",color:"#6b6b90",border:"1px solid #2a2a50",borderRadius:8,padding:".38rem",cursor:"pointer",display:"flex"}}><IcoGear/></button>
+              <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 160px",position:"relative",minWidth:0}}>
+              <span style={{position:"absolute",left:".6rem",top:"50%",transform:"translateY(-50%)",color:"#6b6b90",display:"flex",pointerEvents:"none"}}><IcoSearch/></span>
+              <input ref={searchRef} type="search" placeholder="Search cards…" value={search} onChange={e=>setSearch(e.target.value)} style={{...selSt,width:"100%",padding:".4rem 2rem .4rem 2rem",fontSize:".85rem"}}/>
+              {search&&<button onClick={()=>{setSearch("");searchRef.current&&searchRef.current.focus();}} style={{position:"absolute",right:".4rem",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#6b6b90",cursor:"pointer",display:"flex"}}><IcoX/></button>}
+            </div>
+            <select value={filterSlug} onChange={e=>setFilterSlug(e.target.value)} style={{...selSt,maxWidth:148}}>
+              <option value="all">All Artists</option>
+              <optgroup label="Main">{ARTISTS.filter(a=>a.tier==="main").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              <optgroup label="Secondary">{ARTISTS.filter(a=>a.tier==="secondary").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+            </select>
+            <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,maxWidth:148}}>
+              <option value="name">Name A–Z</option>
+              <option value="missing">Missing first</option>
+              <option value="owned">Owned first</option>
+              <option value="price-desc">Price: High → Low</option>
+              <option value="price-asc">Price: Low → High</option>
+              <option value="date-desc">Newest first</option>
+              <option value="date-asc">Oldest first</option>
+            </select>
+          </div>
+        </div>
+      </header>
+
+      <main style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
+        {totalCards>0&&<div style={{height:2,background:"#1e1e35",borderRadius:1,overflow:"hidden",marginBottom:"1.5rem"}}><div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",background:"#8b6cd8",borderRadius:1}}/></div>}
+
+        {visibleArtists.map(entry=>{
+          const slug=toSlug(entry.name),cards=cardData[slug]||[];
+          const isLoading=loadingSet.has(slug),err=errors[slug];
+          if(isLoading&&!cards.length)return<div key={entry.name} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".6rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading {entry.name}…</div>;
+          if(err)return<div key={entry.name} style={{padding:".6rem 0",fontSize:".78rem",color:"#f87171",display:"flex",alignItems:"center",gap:".5rem"}}><span>⚠ {entry.name}: {err}</span><button onClick={()=>loadEntry(entry)} style={{color:"#8b6cd8",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:3,fontSize:".75rem"}}><IcoRetry/> retry</button></div>;
+          if(!cards.length)return null;
+          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} onCardClick={setSelectedCard} searchQuery={search} sortBy={sortBy}/>;
+        })}
+
+        {search&&!visibleArtists.some(entry=>{const cards=cardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>c.name.toLowerCase().includes(q));})&&(
+          <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
+        )}
+        <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".68rem",color:"#3a3a5a",textAlign:"center"}}>
+          Card data from pokemontcg.io · Prices via TCGPlayer · {user?`Synced to ${user.email}`:"Local only"}
+        </div>
+      </main>
+
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} priceHistory={priceHistory} onToggleManual={handleToggleManual} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onClearCache={clearCache} onClearManual={clearManual} onSignOut={()=>{handleSignOut();setShowSettings(false);}}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
 </body>
 </html>
