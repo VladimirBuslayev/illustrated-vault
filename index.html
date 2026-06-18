@@ -94,7 +94,6 @@ const ARTISTS=[
   {name:"gapao",           tier:"secondary", isSet:false},
   {name:"okubo",           tier:"secondary", isSet:false},
   {name:"fukuda",          tier:"secondary", isSet:false},
-  {name:"Pokémon GO",      tier:"special",   isSet:true,setId:"pgo"},
 ];
 
 const lsGet=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
@@ -607,7 +606,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy}){
   const isSecondary=entry.tier==="secondary";
   const[open,setOpen]=useState(!isSecondary);
-  const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>c.name.toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
+  const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>(c.name||"").toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
   const ownedCount=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
   const pct=cards.length?Math.round((ownedCount/cards.length)*100):0;
   const complete=pct===100&&cards.length>0;
@@ -653,6 +652,28 @@ function SettingsPanel({onClose,onClearCache,onClearManual,onSignOut}){
       </div>
     </div>
   );
+}
+
+// ── ERROR BOUNDARY ─────────────────────────────────────────────────────────────
+// Safety net: if any single component throws unexpectedly, show a recoverable
+// screen instead of leaving the whole binder blank.
+class ErrorBoundary extends React.Component{
+  constructor(props){super(props);this.state={hasError:false,error:null};}
+  static getDerivedStateFromError(error){return{hasError:true,error};}
+  componentDidCatch(error,info){console.error("Artist Binder crashed:",error,info);}
+  render(){
+    if(this.state.hasError){
+      return(
+        <div style={{position:"fixed",inset:0,background:"#07070f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2rem",textAlign:"center",gap:"1rem"}}>
+          <BlazLogo size={48}/>
+          <p style={{color:"#f87171",fontSize:"1rem",fontWeight:700}}>Something went wrong.</p>
+          <p style={{color:"#6b6b90",fontSize:".8rem",maxWidth:320,lineHeight:1.5}}>{(this.state.error&&this.state.error.message)||"An unexpected error occurred."}</p>
+          <button onClick={()=>window.location.reload()} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff",border:"none",borderRadius:8,padding:".65rem 1.75rem",cursor:"pointer",fontWeight:700,fontSize:".85rem"}}>Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 // ── APP ────────────────────────────────────────────────────────────────────────
@@ -835,7 +856,7 @@ function App(){
           if(!cards.length)return null;
           return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} searchQuery={search} sortBy={sortBy}/>;
         })}
-        {search&&!visibleArtists.some(entry=>{const cards=cardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>c.name.toLowerCase().includes(q));})&&(
+        {search&&!visibleArtists.some(entry=>{const cards=cardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
         )}
         <div style={{marginTop:"3rem",paddingTop:"1rem",borderTop:"1px solid #1e1e35",fontSize:".62rem",color:"#2a2a3a",textAlign:"center",letterSpacing:".1em"}}>Komiya · Morii · Kanda · Nishida</div>
@@ -847,7 +868,7 @@ function App(){
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
