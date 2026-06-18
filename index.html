@@ -136,7 +136,7 @@
     const todayStr = () => new Date().toISOString().slice(0, 10);
 
     // Normalise card number: strip "/total" suffix so "27/123" → "27", keep promos as-is.
-    const normNum = n => (n || "").toLowerCase().trim().replace(/\/\d+$/, "").trim();
+    const normNum = n => (n || "").toLowerCase().trim().replace(/\/.*$/, "").trim();
 
     // Normalise set name (kept for fallback matching only).
     const normSet = s => (s || "")
