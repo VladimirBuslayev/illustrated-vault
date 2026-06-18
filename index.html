@@ -219,6 +219,21 @@ async function fetchFallbackImage(cardId){
     return false; // don't cache transient network errors — allow a retry later
   }
 }
+// Tier 2: Limitless TCG, the competitive scene's standard database — usually
+// the fastest place to get images for brand-new sets, well before TCGdex or
+// pokemontcg.io catch up. There's no JSON endpoint to query, so this is a
+// *constructed* URL guess from the set code + card number, not a verified
+// lookup — callers must confirm it actually loads (e.g. via <img onError>)
+// before trusting it, since an incorrect set-code-casing or numbering
+// convention for some set would otherwise silently show nothing useful.
+function buildLimitlessGuess(card){
+  const setId=card&&card.set&&card.set.id;
+  const num=card&&card.localId;
+  if(!setId||!num)return null;
+  const code=String(setId).toUpperCase();
+  const base=`https://limitlesstcg.nyc3.cdn.digitaloceanspaces.com/tpci/${code}/${code}_${num}_R_EN`;
+  return{small:`${base}_SM.png`,large:`${base}_LG.png`};
+}
 async function fetchArtistCards(entry){
   const ck=`pb5_cards_${toSlug(entry.name)}`;
   const cached=lsGet(ck);
@@ -524,17 +539,20 @@ const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissin
   const badge=owned?{color:"#22c55e",label:"✓"}:null;
   const sm=imgSmall(card);
   const[fallback,setFallback]=useState(undefined); // undefined=not tried yet, false=tried & missing, {small,large}=found
+  const[limitlessFailed,setLimitlessFailed]=useState(false);
   useEffect(()=>{
     if(sm||fallback!==undefined)return;
     let cancelled=false;
     fetchFallbackImage(card.id).then(r=>{if(!cancelled)setFallback(r);});
     return()=>{cancelled=true;};
   },[sm,card.id]);
-  const displaySrc=sm||(fallback&&fallback.small);
+  const limitlessGuess=fallback===false?buildLimitlessGuess(card):null;
+  const displaySrc=sm||(fallback&&fallback.small)||(limitlessGuess&&!limitlessFailed?limitlessGuess.small:null);
+  const isUnverified=!sm&&!(fallback&&fallback.small)&&!!displaySrc;
   return(
     <div className={`card-tile ${owned?"owned":"missing"}`}>
       <div onClick={()=>onCardClick(card)} style={{display:"block"}}>
-        {displaySrc?<img src={displaySrc} alt={card.name} loading="lazy" decoding="async"/>:<div className="card-blank"><div className="blank-inner">{fallback===undefined?<IcoSpin/>:<IcoNoImage/>}<span>{card.name}</span></div></div>}
+        {displaySrc?<img src={displaySrc} alt={card.name} loading="lazy" decoding="async" onError={isUnverified?()=>setLimitlessFailed(true):undefined}/>:<div className="card-blank"><div className="blank-inner">{fallback===undefined?<IcoSpin/>:<IcoNoImage/>}<span>{card.name}</span></div></div>}
       </div>
       {badge&&<div style={{position:"absolute",top:3,right:3,background:badge.color,borderRadius:"50%",width:14,height:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700,pointerEvents:"none"}}>{badge.label}</div>}
       <button className={`fav-btn ${isFavorite?"on":"off"}`} onClick={e=>{e.stopPropagation();onToggleFavorite(card.id);}}>★</button>
@@ -584,14 +602,18 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
   const tcgplayerUrl=`https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q=${encodeURIComponent(card.name+" "+(card.set?.name||""))}`;
   const lg=imgLarge(card);
   const[modalFallback,setModalFallback]=useState(undefined);
+  const[modalLimitlessFailed,setModalLimitlessFailed]=useState(false);
   useEffect(()=>{
     setModalFallback(undefined);
+    setModalLimitlessFailed(false);
     if(lg)return;
     let cancelled=false;
     fetchFallbackImage(card.id).then(r=>{if(!cancelled)setModalFallback(r);});
     return()=>{cancelled=true;};
   },[lg,card.id]);
-  const displayLg=lg||(modalFallback&&(modalFallback.large||modalFallback.small));
+  const modalLimitlessGuess=modalFallback===false?buildLimitlessGuess(card):null;
+  const displayLg=lg||(modalFallback&&(modalFallback.large||modalFallback.small))||(modalLimitlessGuess&&!modalLimitlessFailed?modalLimitlessGuess.large:null);
+  const sourceTier=lg?"tcgdex":((modalFallback&&(modalFallback.large||modalFallback.small))?"ptcgio":(displayLg?"limitless":null));
 
   useEffect(()=>{if(!card||!price)return;const td=todayStr();if(!cardHistory.find(h=>h.date===td))onRecordPrice(card.id,price.amount,td);},[card&&card.id]);
   useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
@@ -616,8 +638,9 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 
         <div style={{display:"flex",gap:"1rem",marginBottom:"1.25rem"}}>
           <div style={{flexShrink:0,width:128}}>
-            {displayLg?<img src={displayLg} alt={card.name} style={{width:"100%",borderRadius:8}}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{!lg&&modalFallback===undefined?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{!lg&&modalFallback===undefined?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
-            {!lg&&modalFallback&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Pokémon TCG API archive (TCGdex has none for this card)</div>}
+            {displayLg?<img src={displayLg} alt={card.name} style={{width:"100%",borderRadius:8}} onError={sourceTier==="limitless"?()=>setModalLimitlessFailed(true):undefined}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{!lg&&modalFallback===undefined?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{!lg&&modalFallback===undefined?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
+            {sourceTier==="ptcgio"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Pokémon TCG API archive (TCGdex has none for this card)</div>}
+            {sourceTier==="limitless"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Limitless TCG — unverified match, TCGdex has none for this card</div>}
           </div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{marginBottom:".75rem"}}>
