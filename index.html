@@ -183,7 +183,7 @@ async function fetchFullCard(id){
   return res.json();
 }
 async function fetchArtistCards(entry){
-  const ck=`pb3_cards_${toSlug(entry.name)}`;
+  const ck=`pb4_cards_${toSlug(entry.name)}`;
   const cached=lsGet(ck);
   if(cached&&cached.ts&&Date.now()-cached.ts<CACHE_TTL)return cached.cards;
   const briefs=await fetchCardBriefs(entry);
@@ -192,6 +192,12 @@ async function fetchArtistCards(entry){
     const batch=briefs.slice(i,i+FETCH_BATCH);
     const results=await Promise.all(batch.map(b=>fetchFullCard(b.id).catch(()=>null)));
     results.forEach(c=>{if(c)fullCards.push(c);});
+  }
+  // If TCGdex told us cards exist but every single detail fetch failed (e.g. a
+  // burst of requests got throttled), don't cache that as a real "0 cards"
+  // result for 24h — surface it as a retryable error instead.
+  if(briefs.length>0&&fullCards.length===0){
+    throw new Error(`Found ${briefs.length} cards but all detail fetches failed — likely rate-limited`);
   }
   fullCards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   lsSet(ck,{cards:fullCards,ts:Date.now()});
@@ -738,7 +744,17 @@ function App(){
     catch(err){setErrors(e=>({...e,[slug]:err.message}));}
     finally{setLoadingSet(s=>{const n=new Set(s);n.delete(slug);return n;});}
   },[]);
-  useEffect(()=>{ARTISTS.forEach(loadEntry);},[]);
+  // Load artists in small concurrent groups rather than firing all 21 (and their
+  // batched per-card fetches) at once — a full burst can spike to 150-200+
+  // simultaneous requests to TCGdex and risks silent throttling.
+  const ARTIST_CONCURRENCY=4;
+  const loadAllEntries=useCallback(async()=>{
+    for(let i=0;i<ARTISTS.length;i+=ARTIST_CONCURRENCY){
+      const chunk=ARTISTS.slice(i,i+ARTIST_CONCURRENCY);
+      await Promise.all(chunk.map(loadEntry));
+    }
+  },[loadEntry]);
+  useEffect(()=>{loadAllEntries();},[]);
 
   const handleCSV=useCallback(file=>{
     setCsvStatus("loading");
@@ -770,7 +786,7 @@ function App(){
     setPriceHistory(prev=>{const n={...prev};if(!n[cardId])n[cardId]=[];if(!n[cardId].find(h=>h.date===date)){n[cardId]=[...n[cardId],{date,price}].slice(-180);if(user)savePricePoint(user.id,cardId,price,date).catch(console.error);}return n;});
   },[user]);
 
-  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb3_cards_${toSlug(e.name)}`));setCardData({});setErrors({});ARTISTS.forEach(loadEntry);};
+  const clearCache=()=>{ARTISTS.forEach(e=>lsDel(`pb4_cards_${toSlug(e.name)}`));setCardData({});setErrors({});loadAllEntries();};
   const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await sb.from("card_overrides").delete().eq("user_id",user.id);});};
 
   const checkOwned=useCallback(card=>isCardOwned(card,ownedKeySet,manualOwned,manualMissing),[ownedKeySet,manualOwned,manualMissing]);
