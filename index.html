@@ -175,7 +175,13 @@ async function fetchCardBriefs(entry){
   const res=await fetch(`${TCG_BASE}/illustrators/${encodeURIComponent(entry.name)}`);
   if(!res.ok)throw new Error(`Illustrator lookup error ${res.status}`);
   const json=await res.json();
-  return Array.isArray(json)?json:[];
+  // TCGdex wraps this response as {name, cards:[...]} rather than a bare
+  // array — the old `Array.isArray(json)?json:[]` check silently discarded
+  // every real result here, which is why every artist always came back empty
+  // with no error: the fetch succeeded, the parsing just threw the data away.
+  if(Array.isArray(json))return json;
+  if(json&&Array.isArray(json.cards))return json.cards;
+  return [];
 }
 async function fetchFullCard(id){
   const res=await fetch(`${TCG_BASE}/cards/${id}`);
