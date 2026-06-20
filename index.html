@@ -20,11 +20,15 @@
   <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700;9..144,900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
     html,body,#root{min-height:100%;}
-    body{background:#07070f;color:#e8e8f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;-webkit-text-size-adjust:100%;overscroll-behavior:none;}
+    body{background:#07070f;color:#e8e8f4;font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;-webkit-text-size-adjust:100%;overscroll-behavior:none;}
+    .font-display{font-family:'Fraunces',Georgia,serif;font-optical-sizing:auto;}
     ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-track{background:#07070f;} ::-webkit-scrollbar-thumb{background:#2a2a45;border-radius:3px;}
     .card-tile{position:relative;cursor:pointer;border-radius:6px;overflow:hidden;}
     .card-tile img{display:block;width:100%;height:auto;border-radius:6px;transition:transform .15s ease,filter .15s ease;background:#1a1a2e;}
@@ -48,6 +52,7 @@
     @keyframes flameFlicker2{0%,100%{transform:scaleX(1) scaleY(1);}25%{transform:scaleX(1.08) scaleY(.94);}50%{transform:scaleX(.92) scaleY(1.08);}75%{transform:scaleX(1.05) scaleY(.97);}}
     @keyframes emberRise{0%{transform:translateY(0) scale(1);opacity:.9;}80%{opacity:.4;}100%{transform:translateY(-280px) scale(.1);opacity:0;}}
     @keyframes glowPulse{0%,100%{opacity:.6;}50%{opacity:1;}}
+    @keyframes cosmicBreathe{0%,100%{opacity:.55;transform:scale(1);}50%{opacity:.95;transform:scale(1.06);}}
     @keyframes landingExit{from{opacity:1;transform:scale(1);}to{opacity:0;transform:scale(1.04);}}
     .spinner{animation:spin .8s linear infinite;}
     .fade-up{animation:fadeUp .2s ease forwards;}
@@ -388,12 +393,13 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
       style={{position:"fixed",inset:0,zIndex:9999,cursor:isLoggedIn?"pointer":"default",background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#080200 70%,#030100 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
       <FlameBackground/>
       <div className="fade-in" style={{position:"relative",zIndex:10,textAlign:"center",padding:"1rem",width:"100%",maxWidth:400}}>
-        <div style={{display:"flex",justifyContent:"center",marginBottom:"1.25rem"}}><BlazLogo size={80} glow/></div>
-        <h1 style={{fontSize:"clamp(2.4rem,9vw,4.2rem)",fontWeight:900,letterSpacing:"-.03em",color:"#fff8f0",lineHeight:1,textShadow:"0 0 60px rgba(255,100,0,0.9),0 0 20px rgba(255,200,0,0.5)",marginBottom:".4rem"}}>
+        <div style={{position:"relative",display:"flex",justifyContent:"center",marginBottom:"1.25rem"}}>
+          <div style={{position:"absolute",width:200,height:200,borderRadius:"50%",background:"radial-gradient(circle,rgba(198,87,143,0.5) 0%,rgba(21,3,83,0.35) 55%,transparent 75%)",filter:"blur(18px)",animation:"cosmicBreathe 4.5s ease-in-out infinite",pointerEvents:"none"}}/>
+          <BlazLogo size={80} glow/>
+        </div>
+        <h1 className="font-display" style={{position:"relative",fontSize:"clamp(2.4rem,9vw,4.2rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".7rem",backgroundImage:"linear-gradient(90deg,#fcd99d 0%,#f38e29 22%,#ea2515 45%,#c6578f 70%,#150353 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",filter:"drop-shadow(0 0 28px rgba(234,37,21,0.45))"}}>
           Illustrated
         </h1>
-        <p style={{fontSize:".6rem",letterSpacing:".25em",color:"#7a3010",textTransform:"uppercase",marginBottom:".55rem",fontWeight:600}}>blaze 'n ink</p>
-        <p style={{fontSize:".72rem",letterSpacing:".18em",color:"#c87840",marginBottom:".3rem",fontWeight:500}}>Komiya. Morii. Kanda. Nishida.</p>
         {isLoggedIn?(
           <>
             <p style={{fontSize:".78rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"2.25rem",letterSpacing:".04em"}}>The art is the point.</p>
@@ -467,7 +473,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
         <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}} onClick={()=>onGoBinder("landing")}>
             <BlazLogo size={28}/>
-            <span style={{fontWeight:800,fontSize:".95rem",color:"#e8e8f4",letterSpacing:"-.02em"}}>Illustrated</span>
+            <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
           </div>
           <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
             {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
@@ -499,7 +505,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
           <div style={{display:"flex",justifyContent:"center",flexShrink:0}}><BlazLogo size={120} glow/></div>
           <div style={{flex:1,minWidth:180}}>
             <div style={{fontSize:".6rem",letterSpacing:".18em",color:"#5a2e10",marginBottom:".3rem",fontWeight:600}}>{user?.email||"YOUR COLLECTION"}</div>
-            <h2 style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:900,color:"#fff8f0",letterSpacing:"-.03em",lineHeight:1,marginBottom:".3rem",textShadow:"0 0 30px rgba(220,72,64,0.35)"}}>YOUR BINDER</h2>
+            <h2 className="font-display" style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".4rem",backgroundImage:"linear-gradient(90deg,#fcd99d 0%,#f38e29 22%,#ea2515 45%,#c6578f 70%,#150353 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",filter:"drop-shadow(0 0 22px rgba(234,37,21,0.35))"}}>YOUR BINDER</h2>
             <p style={{fontSize:".7rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"1.25rem",letterSpacing:".03em"}}>The art is the point.</p>
             <div style={{display:"flex",flexWrap:"wrap",gap:"1.5rem",marginBottom:"1.25rem"}}>
               <div>
@@ -1070,7 +1076,7 @@ function SharedBinder({token}){
             <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
               <BlazLogo size={26}/>
               <div style={{display:"flex",alignItems:"baseline",gap:".5rem",flexWrap:"wrap"}}>
-                <span style={{fontWeight:800,fontSize:".95rem",color:"#e8e8f4",letterSpacing:"-.02em"}}>Illustrated</span>
+                <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
                 {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
               </div>
             </div>
@@ -1274,7 +1280,7 @@ function App(){
             <div style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer"}} onClick={()=>setView("dashboard")}>
               <BlazLogo size={26}/>
               <div style={{display:"flex",alignItems:"baseline",gap:".5rem"}}>
-                <span style={{fontWeight:800,fontSize:".95rem",color:"#e8e8f4",letterSpacing:"-.02em"}}>Illustrated</span>
+                <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
                 {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
                 {manualCount>0&&<span style={{fontSize:".62rem",color:"#60a5fa",background:"rgba(96,165,250,0.1)",padding:"1px 6px",borderRadius:4}}>{manualCount} manual</span>}
                 {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
