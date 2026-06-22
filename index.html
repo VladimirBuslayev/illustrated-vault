@@ -776,6 +776,7 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
   const[showFact,setShowFact]=useState(false);
   const fact=ARTIST_FACTS[entry.name];
   const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>(c.name||"").toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
+  const groupedBySet=useMemo(()=>{if(sortBy!=="missing"&&sortBy!=="owned")return null;const filtered=searchQuery?cards.filter(c=>(c.name||"").toLowerCase().includes(searchQuery.toLowerCase())):cards;const groups=new Map();filtered.forEach(card=>{const sid=(card.set&&card.set.id)||"unknown",sname=(card.set&&card.set.name)||"Unknown Set",sdate=(card.set&&card.set.releaseDate)||"0000/00/00";if(!groups.has(sid))groups.set(sid,{name:sname,date:sdate,cards:[]});groups.get(sid).cards.push(card);});groups.forEach(g=>{g.cards.sort((a,b)=>{const ao=checkOwned(a),bo=checkOwned(b);if(ao!==bo)return sortBy==="missing"?(ao?1:-1):(ao?-1:1);return(a.name||"").localeCompare(b.name||"");});});return Array.from(groups.values()).sort((a,b)=>a.date.localeCompare(b.date));},[cards,searchQuery,sortBy,checkOwned]);
   const ownedCount=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
   const pct=cards.length?Math.round((ownedCount/cards.length)*100):0;
   const complete=pct===100&&cards.length>0;
