@@ -150,7 +150,7 @@ const normName=s=>(s||"").toLowerCase().trim().replace(/[^a-z0-9\s]/g,"").replac
 const normNum =n=>(n||"").toString().toLowerCase().trim().replace(/\/.*$/,"").trim();
 const normSet =s=>(s||"").toLowerCase().replace(/&/g,"and").replace(/[—–]/g," ").replace(/[^a-z0-9\s]/g,"").replace(/\bpromos?\b/g,"promo").replace(/\s+/g," ").trim();
 const fmt$    =n=>(n!=null&&!isNaN(n))?`$${Number(n).toFixed(2)}`:"—";
-const todayStr=()=>new Date().toISOString().slice(0,10);
+const todayStr=()=>new Date().toISOString().slice(0,10); const parseDateNum=s=>{if(!s)return 0;const p=String(s).split(/[\/\-]/);return(parseInt(p[0]||0)*10000)+(parseInt(p[1]||0)*100)+parseInt(p[2]||0);};
 
 const makeKeys=(cn,num,sn)=>{const n=normName(cn);if(!n)return[];const k=[];const nu=normNum(num);if(nu)k.push(n+"::num::"+nu);const s=normSet(sn);if(s)k.push(n+"::set::"+s);return k;};
 const isCardOwned=(card,ownedKeySet,mo,mm)=>{if(mm.has(card.id))return false;if(mo.has(card.id))return true;return makeKeys(card.name||"",card.localId||"",card.set&&card.set.name||"").some(k=>ownedKeySet.has(k));};
@@ -180,7 +180,7 @@ const sortCards=(arr,sortBy,checkOwned)=>{
   if(!arr||!arr.length)return arr;const a2=arr.slice();
   const priceOf=c=>{const p=getBestPrice(c);return p?p.amount:null;};
   const byName=(a,b)=>(a.name||"").localeCompare(b.name||"");
-  const parseDateNum=s=>{if(!s)return 0;const p=String(s).split(/[\/\-]/);return(parseInt(p[0]||0)*10000)+(parseInt(p[1]||0)*100)+parseInt(p[2]||0);};   const byDate=(a,b)=>{const da=parseDateNum(a.set&&a.set.releaseDate),db=parseDateNum(b.set&&b.set.releaseDate);return da===db?byName(a,b):da-db;};
+  const byDate=(a,b)=>{const da=parseDateNum(a.set&&a.set.releaseDate),db=parseDateNum(b.set&&b.set.releaseDate);return da===db?byName(a,b):da-db;};
   switch(sortBy){
     case"price-desc":return a2.sort((a,b)=>{const pa=priceOf(a),pb=priceOf(b);if(pa===null&&pb===null)return byName(a,b);if(pa===null)return 1;if(pb===null)return-1;return pb-pa||byName(a,b);});
     case"price-asc": return a2.sort((a,b)=>{const pa=priceOf(a),pb=priceOf(b);if(pa===null&&pb===null)return byName(a,b);if(pa===null)return 1;if(pb===null)return-1;return pa-pb||byName(a,b);});
