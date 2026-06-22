@@ -770,13 +770,13 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 }
 
 // ── ARTIST SECTION ─────────────────────────────────────────────────────────────
-function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,readOnly}){
+function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly}){
   const isSecondary=entry.tier==="secondary";
   const[open,setOpen]=useState(!isSecondary);
   const[showFact,setShowFact]=useState(false);
   const fact=ARTIST_FACTS[entry.name];
   const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>(c.name||"").toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
-  const groupedBySet=useMemo(()=>{if(sortBy!=="missing"&&sortBy!=="owned")return null;const filtered=searchQuery?cards.filter(c=>(c.name||"").toLowerCase().includes(searchQuery.toLowerCase())):cards;const missingCards=filtered.filter(c=>!checkOwned(c));const ownedCards=filtered.filter(c=>checkOwned(c));const bySet=list=>{const groups=new Map();list.forEach(card=>{const sid=(card.set&&card.set.id)||"unknown",sname=(card.set&&card.set.name)||"Unknown Set",sdate=(card.set&&card.set.releaseDate)||"0000/00/00";if(!groups.has(sid))groups.set(sid,{name:sname,date:sdate,cards:[]});groups.get(sid).cards.push(card);});groups.forEach(g=>{g.cards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));});return Array.from(groups.values()).sort((a,b)=>a.date.localeCompare(b.date));};return{missing:bySet(missingCards),owned:bySet(ownedCards),missingCount:missingCards.length,ownedCount:ownedCards.length};},[cards,searchQuery,sortBy,checkOwned]);
+  const groupedBySet=useMemo(()=>{if(!viewMode)return null;const filtered=searchQuery?cards.filter(c=>(c.name||"").toLowerCase().includes(searchQuery.toLowerCase())):cards;const missingCards=filtered.filter(c=>!checkOwned(c));const ownedCards=filtered.filter(c=>checkOwned(c));const bySet=list=>{const groups=new Map();list.forEach(card=>{const sid=(card.set&&card.set.id)||"unknown",sname=(card.set&&card.set.name)||"Unknown Set",sdate=(card.set&&card.set.releaseDate)||"0000/00/00";if(!groups.has(sid))groups.set(sid,{name:sname,date:sdate,cards:[]});groups.get(sid).cards.push(card);});groups.forEach(g=>{g.cards.sort((a,b)=>(a.name||"").localeCompare(b.name||""));});return Array.from(groups.values()).sort((a,b)=>{const da=parseDN(a.date),db=parseDN(b.date);if(sortBy==="date-desc")return da===db?(a.name||"").localeCompare(b.name||""):db-da;return da===db?(a.name||"").localeCompare(b.name||""):da-db;});};return{missing:bySet(missingCards),owned:bySet(ownedCards),missingCount:missingCards.length,ownedCount:ownedCards.length};},[cards,searchQuery,sortBy,viewMode,checkOwned]);
   const ownedCount=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
   const pct=cards.length?Math.round((ownedCount/cards.length)*100):0;
   const complete=pct===100&&cards.length>0;
@@ -804,7 +804,7 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
       )}
       {open&&(
         groupedBySet?(
-          <>{(sortBy==="missing"?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>))}</>
+          <>{(viewMode==="missing"?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>))}</>
         ):(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>
             {displayCards.map(card=><CardTile key={card.id} card={card} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}
@@ -1010,6 +1010,7 @@ function SharedBinder({token}){
   const[search,         setSearch]       =useState("");
   const[filterSlug,     setFilterSlug]   =useState("all");
   const[sortBy,         setSortBy]       =useState("name");
+  const[viewMode,       setViewMode]     =useState(null);
   const[showAllColor,   setShowAllColor] =useState(false);
   const[includedSlugs,  setIncludedSlugs]=useState(null); // null = no restriction (older/legacy links)
   const searchRef=useRef(null);
@@ -1104,9 +1105,9 @@ function SharedBinder({token}){
               <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
             </select>
             <div style={{display:"flex",gap:".3rem",alignItems:"center",flexShrink:0}}>
-              <button onClick={()=>setSortBy(sortBy==="missing"?"name":"missing")} style={{background:sortBy==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:sortBy==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${sortBy==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="missing"?700:500,whiteSpace:"nowrap"}}>Missing</button>
-              <button onClick={()=>setSortBy(sortBy==="owned"?"name":"owned")} style={{background:sortBy==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:sortBy==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${sortBy==="owned"?"#22c55e":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="owned"?700:500,whiteSpace:"nowrap"}}>Owned</button>
-              <button onClick={()=>setSortBy("name")} style={{background:sortBy==="name"?"rgba(100,100,160,0.2)":"#0f0f1c",color:sortBy==="name"?"#b0b0e8":"#6b6b90",border:`1px solid ${sortBy==="name"?"#6060a0":"#1e1e35"}`,borderRadius:7,padding:".38rem .6rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="name"?700:500,whiteSpace:"nowrap"}}>A–Z</button>
+              <button onClick={()=>setViewMode(viewMode==="missing"?null:"missing")} style={{background:viewMode==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:viewMode==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${viewMode==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="missing"?700:500,whiteSpace:"nowrap"}}>Missing</button>
+              <button onClick={()=>setViewMode(viewMode==="owned"?null:"owned")} style={{background:viewMode==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:viewMode==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${viewMode==="owned"?"#22c55e":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="owned"?700:500,whiteSpace:"nowrap"}}>Owned</button>
+              <button onClick={()=>setViewMode(null)} style={{background:viewMode===null?"rgba(100,100,160,0.2)":"#0f0f1c",color:viewMode===null?"#b0b0e8":"#6b6b90",border:`1px solid ${viewMode===null?"#6060a0":"#1e1e35"}`,borderRadius:7,padding:".38rem .6rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode===null?700:500,whiteSpace:"nowrap"}}>A–Z</button>
             </div>
           </div>
         </div>
@@ -1119,7 +1120,7 @@ function SharedBinder({token}){
           const isLoading=loadingSet.has(slug),err=errors[slug];
           if(isLoading&&!cards.length)return<div key={entry.name} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".6rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading {entry.name}…</div>;
           if(err||!cards.length)return null;
-          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={()=>{}} searchQuery={search} sortBy={sortBy} readOnly/>;
+          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={()=>{}} searchQuery={search} sortBy={sortBy} viewMode={viewMode} readOnly/>;
         })}
         {search&&!visibleArtists.some(entry=>{const cards=visibleCardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
@@ -1147,6 +1148,7 @@ function App(){
   const[search,        setSearch]       =useState("");
   const[filterSlug,    setFilterSlug]   =useState("all");
   const[sortBy,        setSortBy]       =useState("name");
+  const[viewMode,      setViewMode]     =useState(null);
   const[showSettings,  setShowSettings] =useState(false);
   const[hideTcgPocket, setHideTcgPocket]=useState(()=>{const v=lsGet("pb_hide_tcgp");return v===null?true:v;});
   const[showAllColor, setShowAllColor] =useState(()=>{const v=lsGet("pb_show_all_color");return v===null?false:v;});
@@ -1314,9 +1316,9 @@ function App(){
               <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
             </select>
             <div style={{display:"flex",gap:".3rem",alignItems:"center",flexShrink:0}}>
-              <button onClick={()=>setSortBy(sortBy==="missing"?"name":"missing")} style={{background:sortBy==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:sortBy==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${sortBy==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="missing"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Missing</button>
-              <button onClick={()=>setSortBy(sortBy==="owned"?"name":"owned")} style={{background:sortBy==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:sortBy==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${sortBy==="owned"?"#22c55e":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:sortBy==="owned"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Owned</button>
-              <select value={["missing","owned"].includes(sortBy)?"name":sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,fontSize:".72rem",paddingLeft:".5rem",paddingRight:".5rem",maxWidth:80}}>
+              <button onClick={()=>setViewMode(viewMode==="missing"?null:"missing")} style={{background:viewMode==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:viewMode==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${viewMode==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="missing"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Missing</button>
+              <button onClick={()=>setViewMode(viewMode==="owned"?null:"owned")} style={{background:viewMode==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:viewMode==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${viewMode==="owned"?"#22c55e":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="owned"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Owned</button>
+              <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,fontSize:".72rem",paddingLeft:".5rem",paddingRight:".5rem",maxWidth:80}}>
                 <option value="name">A–Z</option>
                 <option value="price-desc">$↓</option>
                 <option value="price-asc">$↑</option>
@@ -1336,7 +1338,7 @@ function App(){
           if(isLoading&&!cards.length)return<div key={entry.name} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".6rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading {entry.name}…</div>;
           if(err)return<div key={entry.name} style={{padding:".6rem 0",fontSize:".78rem",color:"#f87171",display:"flex",alignItems:"center",gap:".5rem"}}><span>⚠ {entry.name}: {err}</span><button onClick={()=>loadEntry(entry)} style={{color:"#8b6cd8",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:3,fontSize:".75rem"}}><IcoRetry/> retry</button></div>;
           if(!cards.length)return null;
-          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} searchQuery={search} sortBy={sortBy}/>;
+          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode}/>;
         })}
         {search&&!visibleArtists.some(entry=>{const cards=visibleCardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
