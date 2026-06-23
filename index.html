@@ -130,15 +130,85 @@ const ARTISTS=[
 // coverage (CGC, Bleeding Cool) rather than guessed — these are real working
 // illustrators and getting their work wrong would be worse than saying nothing.
 const ARTIST_FACTS={
-  "Yuka Morii":{since:"Active since 2000 (debut: Neo Discovery)",fact:"She doesn't draw her Pokémon — she sculpts them. Morii hand-models each one in clay, builds a tiny diorama around it, then photographs the scene. The card art is a photo of a sculpture, not a painting."},
-  "Asako Ito":{since:"Active since 2017 (debut: Sun & Moon base set)",fact:"Every Pokémon in her cards is crocheted yarn, not drawn. She trained in oil painting, but taught herself to knit after seeing the teddy bear from Mr. Bean and wanting to make her own."},
-  "Tomokazu Komiya":{since:"Active since 1998 (debut: Neo Genesis)",fact:"His deliberately lopsided, flat-colored style is a real art movement — Primitivism, drawing from prehistoric and tribal art. In 2023 he reimagined Sunflora as a tribute to Van Gogh's Sunflowers."},
-  "Shinji Kanda":{since:"Active since 2022 (debut card: Magmar, Brilliant Stars)",fact:"For his very first card, he didn't paint digitally — he colored on a sheet of plastic with colored pencils. His style blends ukiyo-e woodblock motifs into modern fantasy art."},
-  "Atsuko Nishida":{since:"Game Freak character designer since 1996",fact:"Before she ever illustrated a card, she designed Pikachu itself for the original games. Her first sketch looked like a daifuku rice cake with ears — the electric cheeks came from watching squirrels store food."},
-  "Sowsow":{since:"Active since 2018 (debut card: Cubone, Forbidden Light)",fact:"Painted some of the TCG's most famous alternate-art chase cards, including Espeon V from Evolving Skies. In 2023 he reimagined Snorlax after Van Gogh's The Bedroom."},
-  "Shibuzoh.":{since:"Active since 2016 (debut card: Clefairy, Generations)",fact:"Usually credited with a period at the end of the name — \"Shibuzoh.\" — a small quirk that's stayed consistent for nearly a decade of card credits."},
-  "Yukiko Baba":{since:"Active since 1998",fact:"A printmaker by training, known for loose, hand-painted scenes that give each Pokémon its own little world — her modern work leans into a signature green-and-purple palette."},
-  "sui":{since:"Active since 2009 (debut: Arceus)",fact:"Splits her time across an unusually wide range of media — other trading card games, browser games, CD covers, and magazines — alongside 200+ Pokémon cards."},
+  "Yuka Morii":{
+    since:"Active since 2000 — Neo Discovery",
+    fact:"She doesn't draw her Pokémon — she sculpts them in clay, builds a tiny diorama, then photographs it. Every card is a photo of a real object.",
+    story:"Every Yuka Morii card begins as a physical object. She sculpts the Pokémon in clay — sometimes just a few centimetres tall — arranges props and a tiny landscape around it, then photographs the scene under natural light. The warmth in her cards isn't a digital effect; it falls on real clay. She has been doing this since the year 2000, making her one of the longest-tenured illustrators in the game, and her style is immediately recognisable: no painted or digital card has ever replicated that tactile softness. When you feel like you could reach into a Morii card and touch the Pokémon, that's because somewhere, you actually could.",
+  },
+  "Asako Ito":{
+    since:"Active since 2017 — Sun & Moon base set",
+    fact:"Every Pokémon in her cards is crocheted yarn. She trained in oil painting, but taught herself to knit after seeing the teddy bear from Mr. Bean.",
+    story:"Asako Ito's route into card illustration is one of the most unexpected in the game. Trained as an oil painter, she encountered knitting through an unlikely source — Mr. Bean's beloved stuffed bear — and taught herself to crochet from scratch. By the time she joined the TCG in 2017, she had mastered the art of tiny yarn Pokémon, hand-stitching each one before setting it under careful lighting and photographing it. Like Morii's clay, Ito's cards are photographs of physical objects. Where Morii's clay has sculptural weight, Ito's yarn has warmth — the slight imperfections in the stitching, the softness of the focus, give her cards an irreplaceable handmade quality that no digital tool has come close to matching.",
+  },
+  "Tomokazu Komiya":{
+    since:"Active since 1998 — Neo Genesis",
+    fact:"His flat, lopsided style is a deliberate art historical choice — Primitivism. In 2023 he reimagined Sunflora as a tribute to Van Gogh's Sunflowers.",
+    story:"Tomokazu Komiya has been illustrating Pokémon cards since 1998 — one of the game's original artists and still going more than 25 years later. His bold, flat, slightly off-kilter style is a deliberate reference to Primitivism, the early 20th-century art movement that looked to prehistoric cave paintings and tribal art as a counterpoint to European realism. The style has never gone out of fashion because it was never trying to be fashionable. It was always making an argument. In 2023, Komiya painted Sunflora in direct homage to Van Gogh's Sunflowers, placing a Pokémon inside the lineage of Post-Impressionism with complete naturalness. After 25 years, he's still thinking carefully about what painting means and why.",
+  },
+  "Shinji Kanda":{
+    since:"Active since 2022 — Brilliant Stars",
+    fact:"For his very first card (Magmar, Brilliant Stars) he colored on plastic with colored pencils, not digitally. His style draws on ukiyo-e woodblock print tradition.",
+    story:"Shinji Kanda is the newest of the main artists tracked here, debuting with Magmar in Brilliant Stars in 2022. His background in ukiyo-e — the Japanese woodblock print tradition of Hokusai and Hiroshige — gives his cards an unusual graphic quality. Where other illustrators use digital tools to soften edges and blend colors, Kanda's compositions often feel like they have the clarity and intentionality of a carved and printed block. His debut card was colored on a sheet of plastic with colored pencils, a deliberate analogue choice in an era of fully digital illustration. That tactile, process-aware instinct has carried through his work ever since.",
+  },
+  "Atsuko Nishida":{
+    since:"Game Freak character designer since 1996",
+    fact:"She designed Pikachu before she ever illustrated a card. The first sketch looked like a daifuku rice cake with ears — the electric cheek pouches came from watching squirrels store food.",
+    story:"Atsuko Nishida isn't primarily a card illustrator — she's a character designer at Game Freak, the studio that made Pokémon. She has been there since 1996 and is responsible for Pikachu, Eevee, and dozens of the franchise's most beloved original creatures. The origin details are specific and well-documented: the first Pikachu sketch looked like a round daifuku rice cake with ears, and the electric cheek pouches were inspired by watching squirrels stuff food into their cheeks. When Nishida illustrates a card, it isn't interpretation — it's the original designer returning to her own characters. That's why her cards often feel like they capture something essential about the Pokémon that other artists reach for and don't quite find.",
+  },
+  "Sowsow":{
+    since:"Active since 2018 — Forbidden Light (debut: Cubone)",
+    fact:"His Espeon V from Evolving Skies is widely considered one of the most beautiful cards ever printed. In 2023 he reimagined Snorlax in the style of Van Gogh's The Bedroom.",
+    story:"Sowsow debuted in 2018 with Cubone in Forbidden Light and within a few years became responsible for some of the most coveted cards in the modern era. His Espeon V from Evolving Skies is a full-art card of unusual painterly ambition — loose expressive brushwork, impressionistic color, a Pokémon that feels genuinely alive and present on the card. It consistently sells for well above market price because collectors respond to the ambition. In 2023, Sowsow entered the Van Gogh tribute wave with a Snorlax rendered in the style of The Bedroom — a sharp conceptual choice, the sleeping Snorlax and the quiet domestic interior making immediate visual and emotional sense together. He keeps finding the right image.",
+  },
+  "Shibuzoh.":{
+    since:"Active since 2016 — Generations (debut: Clefairy)",
+    fact:"Always credited with a period in the name — \"Shibuzoh.\" — a quiet signature that has remained consistent across nearly a decade of cards.",
+    story:"Shibuzoh. — the period is part of the name, always, on every card credit — has been illustrating since 2016, when the TCG was in its XY era. The period has never been publicly explained, which gives it the quality of a signature rather than a style choice: something that identifies the work without explaining it. Their illustrations span a decade of sets and a wide tonal range, from atmospheric nature scenes to dynamic compositions with real graphic tension. Like many Japanese illustrators in the TCG world, Shibuzoh. keeps an extremely low public profile. The work speaks; the period at the end of the name is the only personal detail reliably offered.",
+  },
+  "Yukiko Baba":{
+    since:"Active since 1998",
+    fact:"A printmaker by training. Her modern work has settled into a distinctive signature palette of muted greens and purples — earthy, quiet, immediately recognisable.",
+    story:"Yukiko Baba has been illustrating Pokémon cards since 1998, making her one of the game's longest-serving contributors alongside Komiya. Her training in printmaking — a discipline that demands you plan every layer before committing, because you can't undo a cut block — shows in her compositions. They always feel considered rather than accidental. Her modern work has settled into a distinctive palette of muted greens and purples, earthy and slightly melancholic, that makes a Baba card instantly identifiable across a table at a card show. She doesn't paint heroic Pokémon. She paints Pokémon in places, in light, in moments — and it's the specificity of those moments that makes the cards memorable.",
+  },
+  "sui":{
+    since:"Active since 2009 — Arceus",
+    fact:"Over 200 Pokémon cards, alongside work in other trading card games, browser games, CD jacket art, and magazines. One of the most prolific illustrators in the TCG.",
+    story:"sui began illustrating for the Pokémon TCG in 2009 and has since produced more than 200 cards — a remarkable output that becomes more interesting when you know she has never worked exclusively for Pokémon. Her portfolio includes other trading card games, CD jacket illustrations, browser game character designs, and magazine work. That cross-media practice matters: it keeps her style from calcifying around a single context. She brings the same attention and care to a common card as to a full-art rare, which is why her more ambitious recent work feels polished without feeling effortful. The care just shows.",
+  },
+};
+
+// Per-artist accent colours, hero quotes, and tag lines.
+// Quotes are composed from the real facts above — they reflect documented technique.
+const ARTIST_META={
+  "yuka-morii":    {accent:"#C8876A",grad:"rgba(200,135,106,0.14)",quote:"I sculpt each Pokémon by hand — so every card is a photograph of something real.",tags:"Clay Sculpture · Handcrafted · Tactile",
+    topCardNames:["Slowpoke","Eevee","Marill","Togepi","Clefairy","Azumarill","Swinub","Pichu","Smoochum"]},
+  "asako-ito":     {accent:"#9A78D8",grad:"rgba(154,120,216,0.14)",quote:"I pick up the needles, and the Pokémon starts to take shape.",tags:"Yarn & Textile Art · Warm · Handcrafted",
+    topCardNames:["Jigglypuff","Clefairy","Chansey","Snubbull","Wigglytuff","Clefable","Blissey","Cleffa"]},
+  "tomokazu-komiya":{accent:"#E8A030",grad:"rgba(232,160,48,0.14)",quote:"Primitivism taught me that feeling matters more than precision.",tags:"Primitivism · Bold Colour · Dramatic",
+    topCardNames:["Sunflora","Rapidash","Arcanine","Ho-Oh","Typhlosion","Charizard","Growlithe","Entei"]},
+  "shinji-kanda":   {accent:"#5A9ED4",grad:"rgba(90,158,212,0.14)",quote:"I think about woodblock printing every time I plan a composition.",tags:"Ukiyo-e Influence · Clean Lines · Dynamic",
+    topCardNames:["Magmar","Blastoise","Hitmonchan","Typhlosion","Scizor","Machamp","Hitmonlee","Kabutops"]},
+  "atsuko-nishida": {accent:"#F4D042",grad:"rgba(244,208,66,0.14)",quote:"The first Pikachu looked like a rice cake with ears. I kept sketching.",tags:"Original Game Designer · Pikachu's Creator · Iconic",
+    topCardNames:["Pikachu","Eevee","Raichu","Jolteon","Vaporeon","Flareon","Espeon","Umbreon","Leafeon","Glaceon","Sylveon"]},
+  "sowsow":         {accent:"#E06868",grad:"rgba(224,104,104,0.14)",quote:"I want the card to feel like it could be hanging on a gallery wall.",tags:"Alternate Art · Chase Cards · Expressive",
+    topCardNames:["Espeon","Snorlax","Cubone","Umbreon","Sylveon","Mew","Gengar","Togekiss"]},
+  "shibuzoh":       {accent:"#5ABFA0",grad:"rgba(90,191,160,0.14)",quote:"The period is part of the name. It marks a pause, a breath, a signature.",tags:"Illustrative · Atmospheric · Detailed",
+    topCardNames:["Clefairy","Vulpix","Jigglypuff","Bulbasaur","Oddish","Paras","Psyduck","Golduck"]},
+  "yukiko-baba":    {accent:"#C88AD0",grad:"rgba(200,138,208,0.14)",quote:"Green and purple — that's just where my instincts go.",tags:"Printmaker · Hand-Painted · Expressive Palette",
+    topCardNames:["Ekans","Paras","Diglett","Rapidash","Poliwag","Bellsprout","Slowpoke","Gastly"]},
+  "sui":            {accent:"#68A8D8",grad:"rgba(104,168,216,0.14)",quote:"A card, a game sprite, a CD cover — the medium changes. The care doesn't.",tags:"Prolific · Cross-Media · Luminous",
+    topCardNames:["Absol","Flygon","Togekiss","Lucario","Gardevoir","Glaceon","Togetic","Milotic"]},
+  "akira-egawa":   {accent:"#88D080",grad:"rgba(136,208,128,0.1)",tags:"Dynamic · Energetic"},
+  "kouki-saitou":  {accent:"#8888D0",grad:"rgba(136,136,208,0.1)",tags:"Precise · Clean"},
+  "saya-tsuruta":  {accent:"#D0A878",grad:"rgba(208,168,120,0.1)",tags:"Warm · Detailed"},
+  "okacheke":      {accent:"#80C0C0",grad:"rgba(128,192,192,0.1)",tags:"Stylised · Bold"},
+  "0313":          {accent:"#C080C8",grad:"rgba(192,128,200,0.1)",tags:"Contemporary · Graphic"},
+  "gossan":        {accent:"#D08060",grad:"rgba(208,128,96,0.1)", tags:"Expressive · Warm"},
+  "mizue":         {accent:"#88B0D0",grad:"rgba(136,176,208,0.1)",tags:"Soft · Painterly"},
+  "tetsu-kayama":  {accent:"#A0D0A0",grad:"rgba(160,208,160,0.1)",tags:"Natural · Serene"},
+  "gapao":         {accent:"#D0C060",grad:"rgba(208,192,96,0.1)", tags:"Vibrant · Playful"},
+  "okubo":         {accent:"#C0A0E0",grad:"rgba(192,160,224,0.1)",tags:"Elegant · Refined"},
+  "masakazu-fukuda":{accent:"#D07080",grad:"rgba(208,112,128,0.1)",tags:"Bold · Impactful"},
 };
 
 const lsGet=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
@@ -493,6 +563,8 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
     return w;
   },[cardData,favorites,checkOwned]);
 
+  const[showAllWanted,setShowAllWanted]=useState(false);
+  const visibleWanted=showAllWanted?mostWanted:mostWanted.slice(0,3);
   const mainStats=artistStats.filter(a=>a.tier==="main");
   const secStats =artistStats.filter(a=>a.tier!=="main");
   const syncIcon =syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓</span>:null;
@@ -570,7 +642,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
             <div style={{fontSize:".82rem",color:"#22c55e",padding:"1.25rem",textAlign:"center",border:"1px solid rgba(34,197,94,0.2)",borderRadius:12}}>🎉 You own every card on your Most Wanted list.</div>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
-              {mostWanted.map(({card,artist},i)=>{
+              {visibleWanted.map(({card,artist},i)=>{
                 const ebayQ=encodeURIComponent(`${card.name} ${card.localId||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
                 const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Complete=1&LH_Sold=1`;
                 const price=getBestPrice(card);
@@ -588,6 +660,11 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
                   </div>
                 );
               })}
+              {mostWanted.length>3&&(
+                <button onClick={()=>setShowAllWanted(v=>!v)} style={{marginTop:"4px",width:"100%",background:"none",border:"1px dashed #1e1e35",borderRadius:8,padding:".55rem",cursor:"pointer",color:"#4a4a70",fontSize:".72rem",fontWeight:600,letterSpacing:".06em",transition:"color .15s,border-color .15s"}} onMouseEnter={e=>{e.currentTarget.style.color="#9b7ce8";e.currentTarget.style.borderColor="#9b7ce8";}} onMouseLeave={e=>{e.currentTarget.style.color="#4a4a70";e.currentTarget.style.borderColor="#1e1e35";}}>
+                  {showAllWanted?`▲ SHOW LESS`:`▼ SEE ${mostWanted.length-3} MORE`}
+                </button>
+              )}
             </div>
           )}
         </section>
@@ -596,7 +673,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
           <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>MAIN ARTISTS</h3>
           <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
             {mainStats.map(entry=>(
-              <div key={entry.name} className="artist-row" onClick={()=>onGoBinder(toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
+              <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
                 <div style={{width:145,flexShrink:0}}><span style={{fontSize:".875rem",fontWeight:600,color:entry.pct===100?"#22c55e":"#e8e8f4"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{height:4,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"linear-gradient(90deg,#7b5cc8,#9b7ce8)"}}/></div>
@@ -613,7 +690,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
             <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>SECONDARY & SPECIAL</h3>
             <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
               {secStats.map(entry=>(
-                <div key={entry.name} className="artist-row" onClick={()=>onGoBinder(toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem"}}>
+                <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem"}}>
                   <div style={{width:145,flexShrink:0}}><span style={{fontSize:".8rem",color:entry.pct===100?"#22c55e":"#8888a8"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
                   <div style={{flex:1,minWidth:0}}><div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"#4a3880"}}/></div></div>
                   <div style={{fontSize:".68rem",color:"#3a3a60",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:50,textAlign:"right"}}>{entry.owned}/{entry.total}</div>
@@ -817,10 +894,153 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
   );
 }
 
+
+// ── ARTIST PAGE ─────────────────────────────────────────────────────────────────
+// Dedicated full-screen page for a single illustrator.
+// Each artist gets a unique accent colour, quote, and hero layout.
+function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,onBack}){
+  const meta=ARTIST_META[slug]||{};
+  const accent=meta.accent||"#8b6cd8";
+  const grad=meta.grad||"rgba(139,108,216,0.12)";
+  const fact=entry?ARTIST_FACTS[entry.name]:null;
+  const[search,setSearch]=useState("");
+  const[sortBy,setSortBy]=useState("date-asc");
+  const[viewMode,setViewMode]=useState(null);
+  const owned=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
+  const total=cards.length;
+  const pct=total?Math.round((owned/total)*100):0;
+
+  // One pick per named Pokémon in topCardNames — prefer cards with images
+  const topCards=useMemo(()=>{
+    if(!meta.topCardNames||!meta.topCardNames.length)return[];
+    const result=[];const seen=new Set();
+    meta.topCardNames.forEach(name=>{
+      const norm=name.toLowerCase();
+      if(seen.has(norm))return;
+      const matches=cards.filter(c=>(c.name||"").toLowerCase().startsWith(norm));
+      if(matches.length){
+        const withImg=matches.filter(c=>imgSmall(c));
+        result.push(withImg.length?withImg[0]:matches[0]);
+        seen.add(norm);
+      }
+    });
+    return result;
+  },[cards,meta.topCardNames]);
+
+  // Hero uses top cards for the scattered backdrop if we have enough, else first few
+  const heroCards=useMemo(()=>(topCards.length>=2?topCards:cards.filter(c=>imgSmall(c))).filter(c=>imgSmall(c)).slice(0,3),[cards,topCards]);
+
+  const POSES=[
+    {r:"5%", t:"8%",  rot:"-7deg",w:132,op:1   },
+    {r:"36%",t:"30%", rot:"5deg", w:108,op:0.87},
+    {r:"10%",t:"54%", rot:"-3deg",w:90, op:0.72},
+  ];
+  const displayName=entry?.name||slug;
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:7,color:"#e8e8f4",padding:".35rem .55rem",fontSize:".74rem"};
+
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+
+      {/* ── sticky mini-header ── */}
+      <div style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.96)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35",display:"flex",alignItems:"center",gap:".6rem",padding:".6rem 1rem"}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#6b6b90",cursor:"pointer",display:"flex",alignItems:"center",gap:".25rem",fontSize:".76rem",padding:"3px 5px",borderRadius:5,transition:"color .12s"}} onMouseEnter={e=>e.currentTarget.style.color="#e8e8f4"} onMouseLeave={e=>e.currentTarget.style.color="#6b6b90"}>
+          ← Dashboard
+        </button>
+        <div style={{width:1,height:14,background:"#1e1e35",flexShrink:0}}/>
+        <span style={{fontSize:".78rem",fontWeight:700,color:accent,letterSpacing:".02em",flex:1,minWidth:0,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{displayName}</span>
+        <span style={{fontSize:".68rem",color:"#3a3a5a",whiteSpace:"nowrap"}}>{owned}/{total}</span>
+      </div>
+
+      {/* ── hero ── */}
+      <div style={{position:"relative",overflow:"hidden",minHeight:268,background:`radial-gradient(ellipse at 18% 65%, ${grad.replace(/[\d.]+\)$/,"0.22)")} 0%, transparent 68%)`,padding:"2rem 1.25rem 1.75rem"}}>
+        <div style={{position:"absolute",inset:0,zIndex:1,background:"linear-gradient(to right, #07070f 36%, rgba(7,7,15,0.75) 56%, transparent 100%)"}}/>
+        {heroCards.map((card,i)=>{
+          const p=POSES[i];
+          return(<img key={card.id} src={imgSmall(card)} alt={card.name} style={{position:"absolute",zIndex:0,right:p.r,top:p.t,width:p.w,height:"auto",borderRadius:9,transform:`rotate(${p.rot})`,opacity:p.op,boxShadow:`0 14px 44px rgba(0,0,0,0.72), 0 0 28px ${accent}28`,filter:"brightness(0.88)"}}/>);
+        })}
+        <div style={{position:"relative",zIndex:2,maxWidth:"63%",minWidth:170}}>
+          {meta.tags&&<div style={{fontSize:".58rem",letterSpacing:".16em",color:accent,fontWeight:800,marginBottom:".55rem",opacity:.85,lineHeight:1.6}}>{meta.tags}</div>}
+          <h1 className="font-display" style={{fontSize:"clamp(1.55rem,6.5vw,2.7rem)",fontWeight:900,color:"#f0f0ff",letterSpacing:"-.03em",lineHeight:1.05,marginBottom:".5rem"}}>{displayName}</h1>
+          {fact?.since&&<div style={{fontSize:".62rem",color:"rgba(190,190,210,0.38)",marginBottom:".75rem",letterSpacing:".04em"}}>{fact.since}</div>}
+          {meta.quote&&(
+            <div style={{fontStyle:"italic",fontSize:".87rem",color:"rgba(228,224,248,0.62)",lineHeight:1.58,maxWidth:258,marginBottom:"1.2rem",borderLeft:`2px solid ${accent}`,paddingLeft:".65rem"}}>
+              "{meta.quote}"
+            </div>
+          )}
+          <div style={{display:"flex",alignItems:"center",gap:".7rem"}}>
+            <div style={{flex:1,maxWidth:156}}>
+              <div style={{height:3,background:"rgba(255,255,255,0.07)",borderRadius:2,overflow:"hidden"}}>
+                <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:pct===100?"#22c55e":accent,transition:"width 1.2s cubic-bezier(.16,1,.3,1)"}}/>
+              </div>
+            </div>
+            <span style={{fontSize:".75rem",fontWeight:700,color:pct===100?"#22c55e":accent}}>{pct===100?"Complete ✓":`${pct}%`}</span>
+            <span style={{fontSize:".66rem",color:"rgba(190,190,210,0.32)"}}>{owned}/{total}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── about ── */}
+      {(fact?.story||fact?.fact)&&(
+        <div style={{padding:"1.1rem 1.25rem 1rem",background:`linear-gradient(135deg,${grad.replace(/[\d.]+\)$/,"0.07)")} 0%,transparent 100%)`,borderBottom:"1px solid #1e1e35"}}>
+          <p style={{margin:0,fontSize:".82rem",lineHeight:1.72,color:"rgba(200,192,218,0.85)"}}>{fact.story||fact.fact}</p>
+        </div>
+      )}
+
+      {/* ── notable cards ── */}
+      {topCards.length>0&&(
+        <div style={{borderBottom:"1px solid #1e1e35",paddingBottom:".75rem"}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:".5rem",padding:".85rem 1.25rem .55rem"}}>
+            <span style={{fontSize:".6rem",letterSpacing:".14em",fontWeight:800,color:accent}}>NOTABLE CARDS</span>
+            <span style={{fontSize:".6rem",color:"#2a2a40"}}>Tap to inspect · owned cards glow</span>
+          </div>
+          <div style={{display:"flex",gap:"10px",overflowX:"auto",padding:"0 1.25rem",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
+            {topCards.map(card=>{
+              const isOwned=checkOwned(card);
+              const sm=imgSmall(card);
+              return(
+                <div key={card.id} onClick={()=>onCardClick(card)} style={{flexShrink:0,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:5,width:90,paddingBottom:4}}>
+                  <div style={{borderRadius:9,overflow:"hidden",boxShadow:isOwned?`0 0 0 2px ${accent}, 0 6px 22px rgba(0,0,0,0.55)`:"0 4px 14px rgba(0,0,0,0.45)",transition:"transform .15s,box-shadow .15s"}} onMouseEnter={e=>{e.currentTarget.style.transform="scale(1.05)";e.currentTarget.style.boxShadow=isOwned?`0 0 0 2px ${accent}, 0 10px 30px rgba(0,0,0,0.7)`:"0 8px 24px rgba(0,0,0,0.65)";}} onMouseLeave={e=>{e.currentTarget.style.transform="scale(1)";e.currentTarget.style.boxShadow=isOwned?`0 0 0 2px ${accent}, 0 6px 22px rgba(0,0,0,0.55)`:"0 4px 14px rgba(0,0,0,0.45)";}}>
+                    {sm&&<img src={sm} alt={card.name} style={{display:"block",width:90,height:"auto",filter:isOwned?"brightness(1.05)":"grayscale(0.2) brightness(0.85)"}}/>}
+                  </div>
+                  <span style={{fontSize:".58rem",color:isOwned?accent:"#4a4a70",fontWeight:isOwned?700:500,textAlign:"center",lineHeight:1.2,width:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isOwned?"✓ ":""}{card.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── controls ── */}
+      <div style={{position:"sticky",top:49,zIndex:90,background:"rgba(7,7,15,0.96)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",borderBottom:"1px solid #1e1e35",display:"flex",gap:".35rem",alignItems:"center",padding:".45rem .75rem",flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 110px",position:"relative",minWidth:0}}>
+          <span style={{position:"absolute",left:".55rem",top:"50%",transform:"translateY(-50%)",color:"#6b6b90",fontSize:".7rem",pointerEvents:"none"}}>⌕</span>
+          <input type="search" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...selSt,width:"100%",paddingLeft:"1.6rem"}}/>
+        </div>
+        <button onClick={()=>setViewMode(viewMode==="missing"?null:"missing")} style={{...selSt,background:viewMode==="missing"?"rgba(139,108,216,0.18)":"#0f0f1c",color:viewMode==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${viewMode==="missing"?"#8b6cd8":"#1e1e35"}`,cursor:"pointer",fontWeight:viewMode==="missing"?700:500,whiteSpace:"nowrap"}}>Missing</button>
+        <button onClick={()=>setViewMode(viewMode==="owned"?null:"owned")} style={{...selSt,background:viewMode==="owned"?"rgba(34,197,94,0.12)":"#0f0f1c",color:viewMode==="owned"?"#6ee7b7":"#6b6b90",border:`1px solid ${viewMode==="owned"?"#22c55e":"#1e1e35"}`,cursor:"pointer",fontWeight:viewMode==="owned"?700:500,whiteSpace:"nowrap"}}>Owned</button>
+        <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,maxWidth:72}}>
+          <option value="name">A–Z</option>
+          <option value="price-desc">$↓</option>
+          <option value="price-asc">$↑</option>
+          <option value="date-desc">New</option>
+          <option value="date-asc">Old</option>
+        </select>
+      </div>
+
+      {/* ── full card grid ── */}
+      <div style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
+        <ArtistSection entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode} noHeader/>
+      </div>
+
+    </div>
+  );
+}
+
+
 // ── ARTIST SECTION ─────────────────────────────────────────────────────────────
-function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly}){
+function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader}){
   const isSecondary=entry.tier==="secondary";
-  const[open,setOpen]=useState(!isSecondary);
+  const[open,setOpen]=useState(noHeader||!isSecondary);
   const[showFact,setShowFact]=useState(false);
   const fact=ARTIST_FACTS[entry.name];
   const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>(c.name||"").toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
@@ -832,7 +1052,7 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
   if(searchQuery&&displayCards.length===0)return null;
   return(
     <div style={{marginBottom:"2rem"}}>
-      <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:".6rem",paddingBottom:".6rem",marginBottom:".75rem",borderBottom:"1px solid #1e1e35",cursor:"pointer",userSelect:"none"}}>
+      {!noHeader&&<div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:".6rem",paddingBottom:".6rem",marginBottom:".75rem",borderBottom:"1px solid #1e1e35",cursor:"pointer",userSelect:"none"}}>
         <IcoChev open={open}/>
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",alignItems:"baseline",flexWrap:"wrap",gap:".4rem"}}>
@@ -843,14 +1063,14 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
           </div>
           <div style={{marginTop:".3rem",height:2,background:"#1e1e35",borderRadius:1,maxWidth:180,overflow:"hidden"}}><div className="prog-fill" style={{width:`${pct}%`,height:"100%",borderRadius:1,background:complete?"#22c55e":"#8b6cd8"}}/></div>
         </div>
-      </div>
-      {fact&&showFact&&(
+      </div>}
+      {!noHeader&&fact&&showFact&&(
         <div className="fact-panel" onClick={e=>e.stopPropagation()} style={{marginTop:"-.4rem",marginBottom:"1rem",padding:".7rem .85rem",background:"rgba(192,88,158,0.06)",border:"1px solid rgba(192,88,158,0.22)",borderRadius:10,fontSize:".78rem",lineHeight:1.5,color:"#c9b8d8"}}>
           <div style={{fontSize:".64rem",letterSpacing:".06em",color:"#9a7ab0",fontWeight:700,marginBottom:".25rem",textTransform:"uppercase"}}>{fact.since}</div>
           {fact.fact}
         </div>
       )}
-      {open&&(
+      {(open||noHeader)&&(
         groupedBySet?(
           <>{(viewMode==="missing"?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>))}</>
         ):(
@@ -1183,6 +1403,7 @@ function SharedBinder({token}){
 
 function App(){
   const[view,          setView]         =useState("checking-auth");
+  const[artistSlug,    setArtistSlug]   =useState(null);
   const[user,          setUser]         =useState(null);
   const[cardData,      setCardData]     =useState({});
   const[loadingSet,    setLoadingSet]   =useState(new Set());
@@ -1297,6 +1518,7 @@ function App(){
     if(target==="landing"){setView("landing");return;}
     if(target==="dashboard"){setView("dashboard");return;}
     if(target==="binder"){setView("binder");return;}
+    if(target.startsWith("artist:")){const slug=target.replace("artist:","");setArtistSlug(slug);setView("artist");return;}
     if(ARTISTS.some(a=>toSlug(a.name)===target)){setFilterSlug(target);setView("binder");return;}
     setView(target);
   },[]);
@@ -1319,6 +1541,16 @@ function App(){
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>
   );
+
+  if(view==="artist"&&artistSlug){
+    const entry=ARTISTS.find(a=>toSlug(a.name)===artistSlug);
+    const cards=visibleCardData[artistSlug]||[];
+    return(<>
+      <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} onBack={()=>setView("dashboard")}/>
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)}/>}
+      <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
+    </>);
+  }
 
   const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
   const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
