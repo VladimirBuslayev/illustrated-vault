@@ -92,6 +92,14 @@ Current state:
 |---|---|---|
 | `cards_effective` | `cards` LEFT JOIN `card_extras` | Frontend read surface; exposes COALESCE(illustrator_override, illustrator) |
 
+### RPCs
+
+| RPC | Called by | Purpose |
+|---|---|---|
+| `get_shared_collection` | `fetchSharedCollection` in frontend | Returns card and ownership data for a share token; used by the public binder / share view |
+
+The `get_shared_collection` RPC must be preserved during Gate 2 migration. It is the only backend dependency for the share/binder read path; the frontend calls `sb.rpc("get_shared_collection", {p_token: token})` and has no fallback if the RPC is absent.
+
 ### View access
 
 `cards_effective` is live with `security_invoker = true`. anon and authenticated roles have SELECT. No INSERT/UPDATE/DELETE is possible on a non-updatable view. `card_extras` has RLS enabled with a SELECT-only policy for anon/authenticated; write access is service-role only.
@@ -168,7 +176,7 @@ The following aliases have not been confirmed against live Supabase data:
 
 ### 1. Bulk enrichment of null-illustrator cards across swsh9–swsh12.5
 
-Once the read-model is validated, the remaining work is a one-time data-quality pass: query Supabase for all cards in swsh9–swsh12.5 where `illustrator` is null, verify each against a trusted source (Bulbapedia, pokemontcg.io, physical card scan), and insert `card_extras` rows with the correct illustrator name and a `source_note`. Do not bulk-insert unverified data. Each override must be verified at exact card ID/local-number level — do not infer from Pokémon name, set, rarity, or similar cards. This is a follow-up pass and does not block Gate 2 migration.
+Now that the read-model is validated, the remaining work is a one-time data-quality pass: query Supabase for all cards in swsh9–swsh12.5 where `illustrator` is null, verify each against a trusted source (Bulbapedia, pokemontcg.io, physical card scan), and insert `card_extras` rows with the correct illustrator name and a `source_note`. Do not bulk-insert unverified data. Each override must be verified at exact card ID/local-number level — do not infer from Pokémon name, set, rarity, or similar cards. This is a follow-up pass and does not block Gate 2 migration.
 
 ### 2. TCGPlayer Market pricing framing
 
@@ -199,7 +207,7 @@ Remaining open before Gate 2:
 - Bulk enrichment of null-illustrator cards across swsh9–swsh12.5 (follow-up data-quality pass; not a hard Gate 2 blocker)
 - Artist alias confirmation for Saya Tsuruta and Masakazu Fukuda
 
-Gate 2 migration (Vite/React) may proceed once alias coverage is resolved. The bulk enrichment data-quality pass can continue in parallel with or after Gate 2.
+Gate 2 migration (Vite/React) may proceed once any remaining user-visible Gate 1 issues are resolved. Artist alias confirmation is a small data-quality item and can be resolved before or during Gate 2 if it remains low-risk. The bulk enrichment data-quality pass can continue in parallel with or after Gate 2.
 
 ## Do not do yet
 
@@ -210,5 +218,3 @@ Gate 2 migration (Vite/React) may proceed once alias coverage is resolved. The b
 - Do not add pricing confidence yet
 - Do not add Cardmarket link button yet
 - Do not silently invent Supabase columns
-
-
