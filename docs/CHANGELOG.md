@@ -1,5 +1,66 @@
 # Illustrated — Changelog
 
+## v0.1.4 — Gate 1 illustrator enrichment read-model
+
+Date: 2026-06-23
+
+Status: SQL written and ready; pending Supabase deployment, seed-row insertion, frontend switch, and live validation.
+
+### Problem
+
+Six complete set ranges — swsh9 through swsh12.5 — have `illustrator: null` in Supabase. This is a TCGdex data gap, not a sync bug. The cards exist with correct images, names, and pricing. Because the frontend artist page query uses `illustrator.ilike.%name%`, null-illustrator cards are invisible on all artist pages. Named high-value cards affected include Giratina and Altaria cards from Lost Origin, Silver Tempest, and Crown Zenith.
+
+### Solution
+
+A two-layer read-model was introduced:
+
+- `card_extras` — a new Supabase table that holds manual editorial corrections. The sync script never touches it.
+- `cards_effective` — a new Supabase view that LEFT JOINs `cards` and `card_extras`, exposing `COALESCE(card_extras.illustrator_override, cards.illustrator) AS illustrator`. The frontend queries this view instead of `cards` directly.
+
+`cards` remains the raw, sync-owned source of truth for TCGdex data. `card_extras` is the editorial layer. The view is the frontend's runtime read surface.
+
+### `card_extras` table
+
+New table with columns:
+
+- `card_id TEXT PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE`
+- `illustrator_override TEXT`
+- `source_note TEXT`
+- `created_at TIMESTAMPTZ DEFAULT now()`
+- `updated_at TIMESTAMPTZ DEFAULT now()`
+
+FK with ON DELETE CASCADE is safe because the sync script uses upsert-only writes and never truncates or recreates the `cards` table.
+
+anon and authenticated roles have SELECT only. No INSERT/UPDATE/DELETE granted. Manual enrichment is performed via the Supabase table editor using service-role access.
+
+### `cards_effective` view
+
+Created with `security_invoker = true` (PostgreSQL 15+). Exposes the same column set and names as the `cards` table, with the single difference that `illustrator` is resolved via COALESCE. SELECT granted to anon and authenticated.
+
+The PostgREST ilike OR filter used by `fetchArtistCards` — `illustrator.ilike.%name%` — evaluates correctly against the COALESCE expression in the view. No query logic changes were needed.
+
+### Frontend change (`index.html`)
+
+One string substitution in `fetchArtistCards`:
+
+```js
+// Before:
+sb.from("cards")
+
+// After:
+sb.from("cards_effective")
+```
+
+`supaRowToCard` is unchanged. The view exposes identical column names, so the mapping is column-name-compatible without modification. The `illustrator` field on the card object now contains the COALESCE result — either the override or the raw TCGdex value — with no frontend awareness of which source won.
+
+### What this does not do
+
+- Bulk-enrich all null-illustrator cards across swsh9–swsh12.5. That is a separate data-quality pass, tracked in Known Follow-up Items. The schema and view support it without modification.
+- Add a frontend override map or any client-side awareness of `card_extras`.
+- Change the sync script.
+
+---
+
 ## v0.1.3 — Pricing Phase 2: frontend activation
 
 Date: 2026-06-23
@@ -59,22 +120,11 @@ Three adapter functions were added before `mapCardToRow`:
 - `adaptCardmarket(raw)` — restructures TCGdex's flat Cardmarket fields into the `{ url, prices: { averageSellPrice, lowPrice, trendPrice } }` shape the frontend expects. Maps `avg` → `averageSellPrice`, `low` → `lowPrice`, `trend` → `trendPrice`.
 - `adaptPricing(raw)` — top-level coordinator; returns `null` if both sections are absent.
 
-`mapCardToRow` was updated to compute `adaptPricing(card.pricing ?? null)` once per card and write three new fields to the Supabase row:
-
-```js
-pricing:            pricing,
-pricing_updated_at: pricing ? new Date().toISOString() : null,
-pricing_source:     pricing ? 'tcgdex' : null,
-```
+`mapCardToRow` was updated to compute `adaptPricing(card.pricing ?? null)` once per card and write three new fields to the Supabase row.
 
 ### Full sync results
 
-A `SYNC_MODE=full` run populated pricing for 19,415 of 23,314 cards (83%). The 3,899 cards without pricing are primarily WotC-era sets where TCGdex carries no TCGPlayer data. These cards correctly store `pricing: null` and display "No pricing data" in the modal.
-
-Variant key spot-check confirmed all observed keys in Supabase are frontend-compatible:
-`normal`, `holofoil`, `reverse-holofoil`, `1st-edition`, `1st-edition-holofoil`, `unlimited`, `unlimited-holofoil`, `updated`, `unit`.
-
-No entries in `VARIANT_KEY_MAP` needed beyond `normal`, `holo`, and `reverse`. First-edition and unlimited variants appear to have been already in the correct kebab-case format from TCGdex — no normalization was needed for those keys.
+A `SYNC_MODE=full` run populated pricing for 19,415 of 23,314 cards (83%). The 3,899 cards without pricing are primarily WotC-era sets where TCGdex carries no TCGPlayer data.
 
 ---
 
@@ -88,23 +138,23 @@ Changes:
 
 ### Clear Cache — cancel behavior fixed
 
-The "Clear card cache" button in Settings previously called `onClose()` unconditionally, closing the Settings panel even when the user clicked Cancel on the confirm dialog. This has been fixed. Cancel now leaves the Settings panel open.
+The "Clear card cache" button in Settings previously called `onClose()` unconditionally. This has been fixed. Cancel now leaves the Settings panel open.
 
 ### Clear Cache — confirm copy corrected
 
-The confirm dialog previously read "Will re-fetch from Supabase on next load." This was inaccurate: `clearCache` triggers an immediate re-fetch via `loadAllEntries()`. The copy now reads "Cards will be re-fetched from Supabase immediately."
+The confirm dialog previously read "Will re-fetch from Supabase on next load." The copy now reads "Cards will be re-fetched from Supabase immediately."
 
 ### `supaRowToCard` — `release_date` now mapped
 
-`release_date` was already selected from Supabase and used as the primary `ORDER BY` on the `fetchArtistCards` query, but was not mapped to the returned card object. It is now mapped as `releaseDate: row.release_date || null`. The UI's visual date sort continues to use `SET_ORDER`, so no display behavior changes. The field is available on the card object for future use.
+Mapped as `releaseDate: row.release_date || null`.
 
 ### Clear Cache — `pb_fallback_img_*` keys now purged
 
-`clearCache` previously purged `pb6_cards_*` (old TCGdex cache) and `pb7_supa_*` (current Supabase cache) keys, but did not touch `pb_fallback_img_${cardId}` keys. These keys cache pokemontcg.io fallback image lookups — including permanent `false` values for cards where no image was found. `clearCache` now also purges all keys matching the `pb_fallback_img_` prefix, so stale "not found" results do not persist after TCGdex gains images for previously imageless cards.
+`clearCache` now also purges all keys matching the `pb_fallback_img_` prefix.
 
 ### Stale comment corrected in `loadAllEntries`
 
-A comment describing the `ARTIST_CONCURRENCY=4` chunked loading strategy referred to "simultaneous requests to TCGdex and risks silent throttling." Artist entries no longer hit TCGdex live — they query Supabase. The comment now reads "simultaneous Supabase queries and risks connection pool pressure."
+Updated to reference Supabase query pressure rather than TCGdex throttling.
 
 ---
 
@@ -121,19 +171,6 @@ State:
 - Sync/backfill scripts exist in `sync/`
 - Supabase is being introduced as runtime card source
 - TCGdex remains a source/sync provider
-
-Known working areas to preserve:
-
-- artist browsing
-- card modal
-- CSV import
-- owned/missing state
-- manual overrides
-- bookmarks/favorites
-- share/binder view
-- eBay sold links
-- pricing display where available
-- image fallback behavior
 
 Known risk:
 
