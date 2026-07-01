@@ -7,8 +7,9 @@
 Decision:
 
 Production deployment moved from GitHub Pages to Vercel. Vercel production
-branch set to `gate-2/vite-migration`. Apex DNS record updated to point to
-Vercel (`A @ 216.198.79.1`).
+branch set to `gate-2/vite-migration` initially, then migrated to `main` after
+Gate 2 stabilization (Phase 5K). Apex DNS record updated to point to Vercel
+(`A @ 216.198.79.1`).
 
 Reason:
 
@@ -20,18 +21,20 @@ migration was the appropriate moment for this transition.
 
 Implications:
 
-- The `.github/workflows/deploy-gate2.yml` GitHub Actions workflow (manual
-  GitHub Pages deploy) is no longer the production deployment path. It remains
-  on `main` as a historical Gate 2 artifact only.
-- Vercel production branch is currently `gate-2/vite-migration`, not `main`.
-  Migrating to `main` is a deferred cleanup item for after Gate 2 stabilization.
-- GitHub Pages is not yet disabled. The old GitHub Pages redirect URL in
-  Supabase (`https://vladimirbuslayev.github.io/fire-chicken/`) is not yet
-  removed. Both are retained for rollback safety.
+- `.github/workflows/deploy-gate2.yml` (manual GitHub Pages deploy) was the
+  original production deployment path. It was removed in commit `77b7a15`
+  after Gate 2 cleanup completed.
+- `.github/workflows/build-check-gate2.yml` (build-only smoke test) remains.
+  It is `workflow_dispatch`-only and does not deploy. Minor future hygiene,
+  such as renaming it, is outside Gate 2 closure.
+- GitHub Pages was unpublished in Phase 5M.
+- The old GitHub Pages Supabase Auth redirect URL
+  (`https://vladimirbuslayev.github.io/fire-chicken/`) was removed in Phase 5L.
 
 Status:
 
-Accepted. In production since Phase 5H (2026-06-26).
+Accepted. In production since Phase 5H (2026-06-26). Vercel production branch
+migrated from `gate-2/vite-migration` to `main` in Phase 5K (2026-07-01).
 
 ---
 
