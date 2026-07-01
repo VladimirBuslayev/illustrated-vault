@@ -1,82 +1,130 @@
 # Illustrated — Changelog
 
-## Gate 2 close — Phase 5I — 2026-07-01
+## Gate 2 close — Phase 5O — 2026-07-01
 
-Gate 2 Vite migration is complete. `gate-2/vite-migration` merged into `main`
-via PR #2 (merge commit `a03aff7`). No app code, Supabase schema, or product
-behavior was changed during Phase 5I. No feature work was introduced during Gate 2.
+Final documentation update. Gate 2 is fully closed.
 
-Phase 5I status: In progress — PR merged; docs/tag pending.
+No app code, Supabase schema, or product behavior was changed. No feature work
+was introduced during Gate 2 or its cleanup.
 
-### Phase 5I — Gate 2 PR and main cleanup
+### Phase 5O — Final docs update
 
-- PR #2 conflict resolved: single file `.github/workflows/build-check-gate2.yml`.
+Comprehensive docs update from Phase 5D baseline to final closed state,
+covering all phases 5E–5O. Applied in a single commit to `main`:
+`Gate 2 close: final docs update (Phase 5I + 5O)`
+
+---
+
+### Phase 5N — Repository cleanup — 2026-07-01
+
+Commit `77b7a15` on `main` — "Post-Gate-2 cleanup: remove legacy rollback artifacts":
+
+- Moved `index.legacy.html` → `docs/archive/index.legacy.html` (archived; not deleted)
+- Deleted root `CNAME` (GitHub Pages domain record; no longer needed)
+- Deleted root `sw.js` (legacy service worker; superseded by `public/sw.js`)
+- Deleted `.github/workflows/deploy-gate2.yml` (legacy deploy workflow; no longer the production deployment path)
+
+After commit validation: `gate-2/vite-migration` branch deleted via GitHub UI.
+
+`.github/workflows/build-check-gate2.yml` retained — manual-only build smoke
+test; does not deploy; no longer Gate 2-specific in behavior.
+
+---
+
+### Phase 5M — GitHub Pages unpublished — 2026-07-01
+
+GitHub Pages unpublished for the repo via Settings → Pages → Unpublish site.
+The apex DNS record already pointed to Vercel; GitHub Pages was no longer
+serving production traffic. Unpublishing formally disabled it.
+
+---
+
+### Phase 5L — Supabase Auth redirect cleanup — 2026-07-01
+
+Removed old GitHub Pages redirect URL from Supabase Auth allowed redirects:
+`https://vladimirbuslayev.github.io/fire-chicken/`
+
+Remaining redirect URLs after removal:
+- `https://illustratedvault.com`
+- `https://illustratedvault.com/**`
+- Vercel preview URL(s)
+
+Site URL unchanged: `https://illustratedvault.com`
+
+OTP auth validated end-to-end on production after removal.
+
+---
+
+### Phase 5K — Vercel production branch migrated to main — 2026-07-01
+
+Vercel production branch changed from `gate-2/vite-migration` to `main`.
+New production deployment from `main`: commit `5848c90`. Validated: app loads,
+auth, cards, owned/missing, SharedBinder, manifest, service worker.
+
+---
+
+### Phase 5J — Stabilization monitoring — 2026-06-26 to 2026-07-01
+
+Passive monitoring of production under `gate-2/vite-migration` as Vercel
+production branch. No issues observed. Go criteria met before proceeding to 5K.
+
+---
+
+### Phase 5I — Gate 2 PR close — 2026-07-01
+
+- PR #2 conflict resolved: `.github/workflows/build-check-gate2.yml`.
   Accepted `main`-side version (includes parameterized branch input).
 - PR #2 merged to `main` using merge commit strategy (merge commit `a03aff7`).
-- Merging to `main` created a Vercel Preview deployment only. Production was
-  not affected; it continues to run from the `gate-2/vite-migration` branch.
-- `gate-2/vite-migration` branch retained as rollback reference.
+- Merging to `main` created a Vercel Preview deployment only. Production
+  continued from `gate-2/vite-migration`.
+- `gate-2-complete` annotated pre-release tag created on GitHub, pointing to
+  the docs commit on `main`.
 
-### Phase 5H — Production cutover
+---
+
+### Phase 5H — Production cutover — 2026-06-26
 
 - Vercel production branch set to `gate-2/vite-migration`.
 - Apex DNS updated: `A @ 216.198.79.1` → Vercel.
 - Supabase site URL updated to `https://illustratedvault.com`.
-- Supabase redirect URLs updated (old GitHub Pages URL retained for rollback).
-- Production domain `https://illustratedvault.com` now serves Vite/React app.
+- Supabase redirect URLs updated (old GitHub Pages URL retained temporarily).
+- Production domain `https://illustratedvault.com` began serving Vite/React app.
 - Original production-validated cutover commit: `d707abc`
   ("Register service worker for Vite app").
 - Validated: auth, session, owned/missing, favorites, pricing, SharedBinder,
   PWA assets, `/manifest.json`, `/icons/icon-192.png`, `/sw.js`.
-- No Supabase schema changes. No product behavior changes.
+- Subsequent production deployment: `4198689` (workflow conflict-resolution
+  merge commit on `gate-2/vite-migration`; changed only
+  `.github/workflows/build-check-gate2.yml`; app behavior identical to `d707abc`).
 
-Note on subsequent production deployment: after the workflow conflict-resolution
-merge ("Merge branch 'main' into gate-2/vite-migration", commit `4198689`) was
-pushed to `gate-2/vite-migration`, Vercel deployed a new production build. This
-commit changed only `.github/workflows/build-check-gate2.yml`; app behavior is
-identical to `d707abc`.
-
-### Phase 5I www cleanup
+### Phase 5I www cleanup — 2026-06-26
 
 - `www.illustratedvault.com` added to Vercel.
 - Redirect configured: `www.illustratedvault.com` → `illustratedvault.com` (307).
-- Porkbun `www` CNAME updated from GitHub Pages to Vercel DNS target.
-- `https://www.illustratedvault.com` redirects cleanly to apex. Validated.
+- Porkbun `www` CNAME updated to Vercel DNS target. Validated.
 
-### Phase 5G — Service worker registration
+---
 
-- SW registration script added to `index.html` (Phase 5G).
-- `/sw.js` registered and validated on production.
+### Phase 5G — Service worker registration — 2026-06-26
 
-### Phase 5F — Auth and SharedBinder validation
+SW registration script added to `index.html` before production cutover.
+`/sw.js` registered and validated in production.
 
-- Auth/OTP flow validated on live Vercel preview HTTPS URL.
-- SharedBinder real-token resolution validated.
-- Bad share token failure confirmed graceful.
+---
 
-### Phase 5E — Vercel preview deployment
+### Phase 5F — Auth and SharedBinder validation — 2026-06-26
 
-- Vercel project created: `illustrated-vault` (team: Illustrated Vault).
-- PR #2 opened as Draft to trigger Vercel preview integration.
-- Preview deployment validated before production cutover.
+Auth/OTP flow validated on live Vercel preview HTTPS URL.
+SharedBinder real-token resolution validated.
+Bad share token failure confirmed graceful.
 
-### Rollback artifacts retained (not yet cleaned up)
+---
 
-- Root `CNAME` (GitHub Pages domain record)
-- Root `sw.js` (legacy service worker)
-- `index.legacy.html` (single-file source-of-truth reference)
-- `gate-2/vite-migration` branch
-- Old Supabase redirect URL (`https://vladimirbuslayev.github.io/fire-chicken/`)
-- GitHub Pages configuration (not yet disabled)
+### Phase 5E — Vercel preview deployment — 2026-06-26
 
-### Deferred cleanup items
-
-- Vercel production branch → `main` (when stabilization confirmed)
-- GitHub Pages disable
-- Old Supabase redirect URL removal
-- Root `sw.js` and `CNAME` removal from `main`
-- `gate-2/vite-migration` branch deletion
-- `deploy-gate2.yml` review (no longer the production deployment path)
+Vercel project created: `illustrated-vault` (team: Illustrated Vault).
+PR #2 opened as Draft to trigger Vercel preview integration.
+Preview deployment validated before production cutover.
 
 ---
 
@@ -84,7 +132,7 @@ identical to `d707abc`.
 
 ### Phase 5D — Gate 2 checkpoint documentation update
 
-Status: This update.
+Status: Closed.
 
 Updated CURRENT_STATE.md, CHANGELOG.md, ARCHITECTURE.md, DECISION_LOG.md to reflect the validated state of the Gate 2 migration through Phase 5C. No code changes.
 
@@ -103,7 +151,7 @@ Ran `npm run build` locally and opened `npm run preview`. Compared Vite app beha
 - Network tab confirmed `cards_effective` requests after cache clear; no TCGdex `/illustrators/` calls observed
 - Overall visual behavior consistent with legacy
 
-Remaining flows requiring a live HTTPS URL (OTP login, SharedBinder real-token, auth redirect handling) are deferred to Phase 5E/5F.
+Remaining flows requiring a live HTTPS URL (OTP login, SharedBinder real-token, auth redirect handling) were deferred to Phase 5E/5F.
 
 ---
 
@@ -164,9 +212,9 @@ Files repaired:
 | `src/services/collectionService.js` | `loadUserData`, `saveCollection`, `saveOverride`, `savePricePoint` |
 | `src/services/shareService.js` | `fetchSharedCollection` |
 
-`tcgdexService.js` note: the repaired version intentionally excludes the legacy illustrator lookup branch (`/illustrators/{name}`). That branch is not repaired or carried forward. `fetchCardBriefs` returns `[]` immediately when `entry?.isSet` is false. This enforces the Gate 2 rule that TCGdex is permitted only for `entry.isSet` paths. Artist-path display uses Supabase `cards_effective` exclusively.
+`tcgdexService.js` note: the repaired version intentionally excludes the legacy illustrator lookup branch (`/illustrators/{name}`). `fetchCardBriefs` returns `[]` immediately when `entry?.isSet` is false. See DECISION_LOG.md.
 
-`fmt$` renamed to `fmtPrice` in the module export. The legacy single-file shorthand used a trailing `$` character; the module name is cleaner for ESM. Function behavior is identical.
+`fmt$` renamed to `fmtPrice` in the module export. Function behavior is identical.
 
 ---
 
@@ -181,8 +229,6 @@ Created:
 - `src/services/imageService.js`
 - `src/services/tcgdexService.js`
 - `src/services/cardService.js`
-
-None of these were wired into `index.legacy.html`. They exist as the module-world service layer ready for Phase 5B.
 
 `cardService.js` artist path queries `cards_effective`. Cache keys and TTL behavior are preserved.
 
@@ -201,8 +247,6 @@ Created:
 ### Phase 4B — Legacy inventory audit
 
 Status: Closed / no code changes.
-
-Conclusion: auth/session handling should wait until a real Vite React app boundary exists (deferred to Phase 5B), because auth drives `setUser`, `setView`, and `loadData`.
 
 ---
 
@@ -236,7 +280,7 @@ All values are verbatim copies from `index.legacy.html`. `makeKeys` output forma
 
 Status: Closed / build-validated.
 
-Created `public/sw.js` as a byte-for-byte copy of root `sw.js`. Root `sw.js` left in place. Service worker registration in `index.html` intentionally deferred to Phase 5G.
+Created `public/sw.js` as a byte-for-byte copy of root `sw.js`. Root `sw.js` left in place at the time. Service worker registration in `index.html` deferred to Phase 5G.
 
 ---
 
@@ -261,16 +305,16 @@ Extracted base64-embedded assets from `index.legacy.html`:
 Status: Closed / build-validated.
 
 Created:
-- `index.legacy.html` (copy of legacy `index.html` at Gate 2 start; untouched source of truth)
+- `index.legacy.html` (copy of legacy `index.html` at Gate 2 start; archived at `docs/archive/index.legacy.html` after Gate 2 close)
 - New minimal Vite `index.html`
 - `package.json` (Vite 5, React 18, @supabase/supabase-js, papaparse)
 - `vite.config.js`
-- `tailwind.config.js` (custom color tokens: bg, surface, card, border, accent, text, muted, ok, err)
+- `tailwind.config.js`
 - `postcss.config.js`
 - `src/main.jsx` (scaffold placeholder)
-- `src/styles/index.css` (verbatim CSS from legacy `<style>` block)
-- `.github/workflows/deploy-gate2.yml` (manual-only; no longer the production deployment path)
-- `.github/workflows/build-check-gate2.yml` (build-only validation, no deploy)
+- `src/styles/index.css`
+- `.github/workflows/deploy-gate2.yml` (manual-only; removed after Gate 2 close)
+- `.github/workflows/build-check-gate2.yml` (build-only validation; retained)
 - `.gitignore`
 
 ---
