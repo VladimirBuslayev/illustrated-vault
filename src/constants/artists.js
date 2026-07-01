@@ -3,28 +3,33 @@
 // Source: index.legacy.html lines 106-212.
 // ARTIST_FACTS keys are display names ("Yuka Morii").
 // ARTIST_META  keys are slugs        ("yuka-morii").
+//
+// Gate 3D: artistId added to each ARTISTS entry.
+// artistId is the Supabase artists.id slug confirmed in Gate 3B/3C.
+// cardService.fetchArtistCards uses artistId for FK-based queries when present.
+// aliases are retained as fallback metadata and for the ILIKE path on entries without artistId.
 
 const ARTISTS=[
-  {name:"Yuka Morii",      tier:"main",      isSet:false},
-  {name:"Asako Ito",       tier:"main",      isSet:false},
-  {name:"Tomokazu Komiya", tier:"main",      isSet:false},
-  {name:"Shinji Kanda",    tier:"main",      isSet:false},
-  {name:"Atsuko Nishida",  tier:"main",      isSet:false},
-  {name:"Sowsow",          tier:"main",      isSet:false},
-  {name:"Shibuzoh.",       tier:"main",      isSet:false, aliases:["Shibuzoh","Shibuzō"]},
-  {name:"Yukiko Baba",     tier:"main",      isSet:false},
-  {name:"sui",             tier:"main",      isSet:false},
-  {name:"AKIRA EGAWA",     tier:"secondary", isSet:false},
-  {name:"Kouki Saitou",    tier:"secondary", isSet:false},
-  {name:"Saya Tsuruta",    tier:"secondary", isSet:false, aliases:["Saya　Tsuruta"]},
-  {name:"OKACHEKE",        tier:"secondary", isSet:false},
-  {name:"0313",            tier:"secondary", isSet:false},
-  {name:"GOSSAN",          tier:"secondary", isSet:false},
-  {name:"Mizue",           tier:"secondary", isSet:false},
-  {name:"Tetsu Kayama",    tier:"secondary", isSet:false},
-  {name:"Gapao",           tier:"secondary", isSet:false},
-  {name:"OKUBO",           tier:"secondary", isSet:false},
-  {name:"Masakazu Fukuda", tier:"secondary", isSet:false, aliases:["Masayuki Fukuda"]},
+  {name:"Yuka Morii",      artistId:"yuka-morii",      tier:"main",      isSet:false},
+  {name:"Asako Ito",       artistId:"asako-ito",        tier:"main",      isSet:false},
+  {name:"Tomokazu Komiya", artistId:"tomokazu-komiya",  tier:"main",      isSet:false},
+  {name:"Shinji Kanda",    artistId:"shinji-kanda",     tier:"main",      isSet:false},
+  {name:"Atsuko Nishida",  artistId:"atsuko-nishida",   tier:"main",      isSet:false},
+  {name:"Sowsow",          artistId:"sowsow",            tier:"main",      isSet:false},
+  {name:"Shibuzoh.",       artistId:"shibuzoh",          tier:"main",      isSet:false, aliases:["Shibuzoh","Shibuzō"]},
+  {name:"Yukiko Baba",     artistId:"yukiko-baba",       tier:"main",      isSet:false},
+  {name:"sui",             artistId:"sui",               tier:"main",      isSet:false},
+  {name:"AKIRA EGAWA",     artistId:"akira-egawa",       tier:"secondary", isSet:false},
+  {name:"Kouki Saitou",    artistId:"kouki-saitou",      tier:"secondary", isSet:false},
+  {name:"Saya Tsuruta",    artistId:"saya-tsuruta",      tier:"secondary", isSet:false, aliases:["Saya　Tsuruta"]},
+  {name:"OKACHEKE",        artistId:"okacheke",           tier:"secondary", isSet:false},
+  {name:"0313",            artistId:"0313",               tier:"secondary", isSet:false},
+  {name:"GOSSAN",          artistId:"gossan",             tier:"secondary", isSet:false},
+  {name:"Mizue",           artistId:"mizue",              tier:"secondary", isSet:false},
+  {name:"Tetsu Kayama",    artistId:"kayama",             tier:"secondary", isSet:false},
+  {name:"Gapao",           artistId:"gapao",              tier:"secondary", isSet:false},
+  {name:"OKUBO",           artistId:"okubo",              tier:"secondary", isSet:false},
+  {name:"Masakazu Fukuda", artistId:"fukuda",             tier:"secondary", isSet:false, aliases:["Masayuki Fukuda"]},
 ];
 
 const ARTIST_FACTS={
