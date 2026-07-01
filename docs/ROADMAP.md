@@ -41,12 +41,12 @@ Delivered:
 - Domain still works
 
 Deployment note: production moved from GitHub Pages to Vercel during Gate 2.
-Vercel production branch is currently `gate-2/vite-migration`; migrating to
-`main` is a deferred cleanup item. GitHub Pages is retained for rollback.
+GitHub Pages has been unpublished. Production is served by Vercel from `main`.
 
-Current focus: post-Gate-2 stabilization and deferred cleanup, then Gate 3.
+No Gate 2 rollback or deferred cleanup remains. Minor future hygiene, such as
+renaming the manual build-check workflow, is outside Gate 2 closure.
 
-## Gate 3 — Data model improvement
+## Gate 3 — Data model improvement (current focus)
 
 Objective:
 
