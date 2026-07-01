@@ -1,24 +1,29 @@
 # Illustrated — Architecture
 
-Last updated: 2026-06-25
+Last updated: 2026-07-01
 
-## Production architecture (unchanged)
+## Production architecture
 
-The production app at `illustratedvault.com` is still served from the `main` branch as a single-file `index.html` with a `sw.js` service worker. This has not changed and is not being modified during Gate 2.
+Production at `https://illustratedvault.com` is served from Vercel.
+Vercel production branch: `gate-2/vite-migration`.
 
-## Gate 2 target architecture
+The app is a Vite 5 / React 18 build. Vercel runs `npm install && npm run build`
+on push to the production branch and serves `dist/` directly.
 
-Gate 2 migrates the single-file MVP into a Vite 5 / React 18 module structure on the `gate-2/vite-migration` branch. The migration is behavior-preserving. No features are added, no UI is changed, and no Supabase objects are modified.
+`main` now contains the same Vite project structure (merged via PR #2,
+merge commit `a03aff7`). Merging to `main` created a Vercel Preview deployment
+only — it did not affect production. Migrating the Vercel production branch
+from `gate-2/vite-migration` to `main` is a deferred cleanup item.
 
 ## Data source principles (unchanged)
 
 TCGdex is an ingestion/source-sync provider. Supabase is the runtime source of truth for card display. The frontend does not depend on live TCGdex calls for normal artist pages.
 
-TCGdex runtime usage is now further restricted during Gate 2: `tcgdexService.js` permits only the `entry.isSet` path (fetching a specific set by ID). The illustrator lookup path (`/illustrators/{name}`) is intentionally excluded. See DECISION_LOG.md.
+TCGdex runtime usage is restricted: `tcgdexService.js` permits only the `entry.isSet` path (fetching a specific set by ID). The illustrator lookup path (`/illustrators/{name}`) is intentionally excluded. See DECISION_LOG.md.
 
 Pricing data is adapted at write time in `sync-cards.mjs`, not at read time in the frontend. Pricing is buying guidance.
 
-## Current Vite module structure (gate-2/vite-migration)
+## Current module structure (main and gate-2/vite-migration)
 
 ```
 src/
@@ -57,17 +62,18 @@ public/
     icon-512.png
   sw.js
 index.html
-index.legacy.html
+index.legacy.html        — rollback reference; do not delete yet
 package.json
 vite.config.js
 tailwind.config.js
 postcss.config.js
-sw.js
+sw.js                    — root legacy service worker; rollback reference; do not delete yet
+CNAME                    — GitHub Pages domain record; rollback reference; do not delete yet
 ```
 
 ## Component boundary — current state
 
-`src/App.jsx` is the Vite component root. It is a single 1,266-line file containing the full component tree. This is intentional for Gate 2 — it mirrors the legacy single-file approach while operating inside the Vite module system. Component splitting into `src/components/` files is deferred to Phase 7, after Gate 2 closes and production stability is confirmed.
+`src/App.jsx` is the component root. It is a single 1,266-line file containing the full component tree. This is intentional for Gate 2 — it mirrors the legacy single-file approach while operating inside the Vite module system. Component splitting into `src/components/` files is deferred to Phase 7, after Gate 2 stabilization is confirmed.
 
 `src/main.jsx` is the Vite entry point. It:
 - imports `{ App, SharedBinder, ErrorBoundary }` from `./App.jsx`
@@ -182,29 +188,44 @@ This RPC is the only stored procedure the frontend calls. It powers the public s
 
 ## Deployment — current state
 
-The `gate-2/vite-migration` branch has a manual-only GitHub Actions workflow (`deploy-gate2.yml`). It has been triggered only for build validation (producing `dist/`). No deployment to any live URL has occurred from this branch.
+Production is served by Vercel from the `gate-2/vite-migration` branch. Vercel
+builds automatically on push to that branch.
 
-Production (`illustratedvault.com`) is unaffected. Service at the custom domain continues to be provided by the `main` branch.
+Merging PR #2 into `main` created a Vercel Preview deployment (commit `a03aff7`,
+environment: Preview). It did not change or create a new Production deployment.
 
-## Service worker — deferred
+The manual GitHub Actions workflow `.github/workflows/build-check-gate2.yml`
+remains on `main` as a `workflow_dispatch`-only build smoke test. It never
+triggers automatically and does not deploy anything.
 
-`public/sw.js` exists and is correct. Service worker registration (the `<script>` tag in `index.html`) is intentionally deferred to Phase 5G, immediately before the production deployment step. Adding SW registration before the preview URL is validated creates unnecessary caching complexity during audit.
+The manual GitHub Actions workflow `.github/workflows/deploy-gate2.yml` is no
+longer the production deployment path. It remains on `main` as a historical
+Gate 2 artifact only.
+
+## Service worker
+
+`public/sw.js` is the Vite app service worker. Service worker registration is
+present in `index.html` (added in Phase 5G, before production cutover). The SW
+is registered and validated in production.
+
+Root `sw.js` also remains in the repo as a legacy rollback artifact. Do not
+delete until GitHub Pages rollback window closes.
 
 ## Future direction — post Gate 2
 
-After Gate 2 closes and production stability is confirmed:
+After Gate 2 stabilization is confirmed and deferred cleanup is complete:
 
+- Vercel production branch migration: `gate-2/vite-migration` → `main`
 - Component extraction: split `src/App.jsx` into `src/components/` files (Phase 7+)
 - Shared hooks: `useCardData`, `useCollection` (Phase 8+)
 - Artist Directory / Add Artist flow (backlog)
 - Set browsing (backlog)
 - Freemium model / public collection pages (deferred)
 
-## Constraints active through Gate 2 close
+## Constraints active through Gate 2 stabilization
 
-- `index.legacy.html` must not be modified
-- `public/CNAME` must not be created
+- `index.legacy.html` must not be modified (rollback reference)
+- Root `sw.js` and `CNAME` must not be deleted yet (rollback reference)
 - Supabase schema, SQL, tables, views, policies, RPCs must not be modified
 - TCGdex runtime usage must remain limited to `entry.isSet` paths
 - `cards_effective` must remain the artist-path read model
-- No features added; no UI redesigned
