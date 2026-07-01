@@ -1,6 +1,6 @@
 # Illustrated — Roadmap
 
-## Gate 1 — Stabilize current MVP
+## Gate 1 — Stabilize current MVP ✓ Complete
 
 Objective:
 
@@ -22,31 +22,29 @@ Acceptance criteria:
 - Console has no obvious errors
 - Deployment still works
 
-Do not add features during this gate.
-
-## Gate 2 — Modular migration
+## Gate 2 — Modular migration ✓ Complete (2026-07-01)
 
 Objective:
 
 Move existing behavior into a maintainable app structure.
 
-Target:
+Delivered:
 
-- Vite
-- React modules
-- separated services
-- centralized card mapping
-- centralized pricing logic
-- centralized collection/import logic
-- centralized cache utility
-
-Acceptance criteria:
-
+- Vite 5 / React 18
+- Separated service modules (`src/services/`)
+- Centralized constants and utilities (`src/constants/`, `src/utils/`)
+- Centralized card mapping (`cardAdapter.js`)
+- Centralized collection/import logic (`collectionService.js`)
+- Centralized cache utility (`cache.js`)
 - Same visible app behavior as MVP
 - No feature regression
-- GitHub Pages deployment still works
 - Domain still works
-- Project structure is understandable
+
+Deployment note: production moved from GitHub Pages to Vercel during Gate 2.
+Vercel production branch is currently `gate-2/vite-migration`; migrating to
+`main` is a deferred cleanup item. GitHub Pages is retained for rollback.
+
+Current focus: post-Gate-2 stabilization and deferred cleanup, then Gate 3.
 
 ## Gate 3 — Data model improvement
 
