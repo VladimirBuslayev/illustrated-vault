@@ -280,7 +280,10 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
         </section>
 
         <section style={{marginBottom:"1.5rem"}}>
-          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>MAIN ARTISTS</h3>
+          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35",display:"flex",alignItems:"baseline",gap:".6rem"}}>
+            <span>MAIN ARTISTS</span>
+            <button onClick={()=>onGoBinder("artists")} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".64rem",fontWeight:700,letterSpacing:".04em",padding:0,whiteSpace:"nowrap"}}>Explore Artists →</button>
+          </h3>
           <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
             {mainStats.map(entry=>(
               <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
@@ -1173,6 +1176,87 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack}){
   );
 }
 
+// ── ARTIST DIRECTORY (A-D1) ───────────────────────────────────────────────────
+// Read-only visual directory of the tracked artist roster ("Explore Artists").
+// Derived entirely from in-memory state — no Supabase calls, no mutation.
+// Tapping an artist opens the existing Artist Page. Track/untrack is A-D2.
+function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArtist,onBack}){
+  const stats=useMemo(()=>ARTISTS.map(entry=>{
+    const slug=toSlug(entry.name);
+    const meta=ARTIST_META[slug]||{};
+    const cards=visibleCardData[slug]||[];
+    const owned=cards.filter(checkOwned).length;
+    const pct=cards.length?Math.round((owned/cards.length)*100):0;
+    // Preview picks: prefer curated topCardNames, fill from existing sorted
+    // order. Only cards with an image are eligible; always shown in color.
+    const withImg=cards.filter(c=>c&&c.image);
+    const picks=[];const used=new Set();
+    (meta.topCardNames||[]).forEach(n=>{
+      if(picks.length>=3)return;
+      const c=withImg.find(x=>x.name===n&&!used.has(x.id));
+      if(c){picks.push(c);used.add(c.id);}
+    });
+    for(let i=0;i<withImg.length&&picks.length<3;i++){
+      if(!used.has(withImg[i].id)){picks.push(withImg[i]);used.add(withImg[i].id);}
+    }
+    return{...entry,slug,meta,total:cards.length,owned,pct,picks};
+  }),[visibleCardData,checkOwned]);
+  const sections=[
+    {label:"MAIN ARTISTS",items:stats.filter(a=>a.tier==="main")},
+    {label:"SECONDARY & SPECIAL",items:stats.filter(a=>a.tier!=="main")},
+  ];
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem",display:"flex",alignItems:"center",gap:".8rem"}}>
+          <button onClick={onBack} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".35rem .55rem",fontSize:".74rem",display:"flex",alignItems:"center",gap:".3rem",whiteSpace:"nowrap"}}>← Dashboard</button>
+          <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Artists</span>
+          <span style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{ARTISTS.length} artists</span>
+        </div>
+      </header>
+      <main style={{maxWidth:860,margin:"0 auto",padding:"1.2rem 1rem 3rem"}}>
+        <p style={{fontSize:".74rem",color:"#6b6b90",marginBottom:"1.4rem",letterSpacing:".02em"}}>The illustrators in your vault.</p>
+        {sections.map(sec=>sec.items.length>0&&(
+          <section key={sec.label} style={{marginBottom:"2rem"}}>
+            <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>{sec.label}</h3>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(270px,1fr))",gap:".7rem"}}>
+              {sec.items.map(a=>{
+                const isLoading=loadingSet&&loadingSet.has(a.slug)&&a.total===0;
+                const err=errors&&errors[a.slug];
+                return(
+                  <div key={a.slug} className="artist-row" onClick={()=>onOpenArtist(a.slug)} style={{border:"1px solid #1e1e35",borderLeft:`3px solid ${a.meta.accent||"#8b6cd8"}`,borderRadius:12,padding:".8rem .9rem",background:"#0b0b16",display:"flex",flexDirection:"column",gap:".55rem"}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:".6rem"}}>
+                      <div style={{fontSize:".9rem",fontWeight:700,color:a.pct===100&&a.total>0?"#22c55e":"#e8e8f4",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{a.name}{a.pct===100&&a.total>0?" ✓":""}</div>
+                      <div style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",flexShrink:0}}>{err?"—":isLoading?"…":`${a.owned}/${a.total}`}</div>
+                    </div>
+                    {a.meta.tags&&<div style={{fontSize:".64rem",color:"#6b6b90",letterSpacing:".02em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{a.meta.tags}</div>}
+                    {a.picks.length>0&&(
+                      <div style={{display:"flex",gap:".4rem"}}>
+                        {a.picks.map(c=>{
+                          const sm=imgSmall(c);
+                          if(!sm)return null;
+                          return<img key={c.id} src={sm} alt={c.name} loading="lazy" onError={e=>{e.currentTarget.style.display="none";}} style={{width:54,height:"auto",borderRadius:5,background:"#1a1a2e"}}/>;
+                        })}
+                      </div>
+                    )}
+                    {err?(
+                      <div style={{fontSize:".66rem",color:"#f87171"}}>Couldn't load — open the binder to retry.</div>
+                    ):isLoading?(
+                      <div style={{fontSize:".66rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/> Loading…</div>
+                    ):(
+                      <div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${a.pct}%`,height:"100%",borderRadius:2,background:a.pct===100?"#22c55e":(a.meta.accent||"#8b6cd8")}}/></div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </main>
+    </div>
+  );
+}
+
 function App(){
   const[view,          setView]         =useState("checking-auth");
   const[artistSlug,    setArtistSlug]   =useState(null);
@@ -1321,6 +1405,7 @@ function App(){
     if(target==="landing"){setView("landing");return;}
     if(target==="dashboard"){setView("dashboard");return;}
     if(target==="binder"){setView("binder");return;}
+    if(target==="artists"){setView("artists");return;}
     if(target.startsWith("artist:")){const slug=target.replace("artist:","");setArtistSlug(slug);setView("artist");return;}
     if(ARTISTS.some(a=>toSlug(a.name)===target)){setFilterSlug(target);setView("binder");return;}
     setView(target);
@@ -1359,6 +1444,10 @@ function App(){
     <HuntBoard visibleCardData={visibleCardData} intentMap={intentMap} checkOwned={checkOwned} onCardClick={setSelectedCard} onBack={()=>setView("dashboard")}/>
     {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
   </>);
+
+  if(view==="artists")return(
+    <ArtistDirectory visibleCardData={visibleCardData} checkOwned={checkOwned} loadingSet={loadingSet} errors={errors} onOpenArtist={slug=>goTo("artist:"+slug)} onBack={()=>setView("dashboard")}/>
+  );
 
   const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
   const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
