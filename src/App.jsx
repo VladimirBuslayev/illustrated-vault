@@ -1138,7 +1138,7 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack}){
           const count=artistGroups.reduce((n,g)=>n+g.cards.length,0);
           return(
             <section key={sec.key} style={{marginBottom:"2.2rem"}}>
-              <div onClick={()=>toggleSection(sec.key)} style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:collapsed[sec.key]?"0":".9rem",cursor:"pointer",userSelect:"none",padding:".2rem 0"}}>
+              <div onClick={()=>toggleSection(sec.key)} style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:collapsed[sec.key]?"0":".9rem",cursor:"pointer",userSelect:"none",padding:".55rem 0"}}>
                 <span style={{color:sec.clr,display:"flex"}}><IcoChev open={!collapsed[sec.key]}/></span>
                 <span style={{fontSize:".64rem",fontWeight:800,letterSpacing:".14em",color:sec.clr,whiteSpace:"nowrap"}}>{sec.label} · {count}</span>
                 <div style={{flex:1,height:1,background:sec.line}}/>
