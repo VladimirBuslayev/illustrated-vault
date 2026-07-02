@@ -1,36 +1,70 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#07070f" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Illustrated</title>
-  <meta name="apple-mobile-web-app-title" content="Illustrated" />
+/* ── Illustrated Vault — Global Styles ──────────────────────────────────────
+   Copied verbatim from the <style> block in index.legacy.html (lines 28–87).
+   Do not modify here during the Gate 2 scaffold phase.
+   These styles will be reviewed and potentially split during later phases.
+   ─────────────────────────────────────────────────────────────────────────── */
 
-  <!-- PWA assets — extracted from index.legacy.html base64 blobs in Phase 2A -->
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="icon" type="image/png" href="/favicon.png" />
-  <link rel="manifest" href="/manifest.json" />
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-  <!-- Google Fonts — preserved verbatim from index.legacy.html -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700;9..144,900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-</head>
-<body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.jsx"></script>
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch((error) => {
-        console.warn('Service worker registration failed:', error);
-      });
-    });
-  }
-</script>
-</body>
-</html>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body,#root{min-height:100%;}
+body{background:#07070f;color:#e8e8f4;font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;-webkit-text-size-adjust:100%;overscroll-behavior:none;}
+.font-display{font-family:'Fraunces',Georgia,serif;font-optical-sizing:auto;}
+::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-track{background:#07070f;} ::-webkit-scrollbar-thumb{background:#2a2a45;border-radius:3px;}
+.card-tile{position:relative;cursor:pointer;border-radius:6px;overflow:hidden;}
+.card-tile img{display:block;width:100%;height:auto;border-radius:6px;transition:transform .15s ease,filter .15s ease;background:#1a1a2e;}
+.card-tile.missing img{filter:grayscale(1) brightness(0.3);}
+.color-mode .card-tile.missing img{filter:none;}
+.card-tile.owned   img{filter:none;}
+.card-tile:hover   img{transform:translateY(-2px) scale(1.03);}
+.card-tile.missing:hover img{filter:grayscale(0.5) brightness(0.5);}
+.color-mode .card-tile.missing:hover img{filter:none;}
+.card-blank{width:100%;padding-bottom:139.7%;border-radius:6px;position:relative;border:1px solid #1e1e35;background:repeating-linear-gradient(135deg,#13131f,#13131f 8px,#171728 8px,#171728 16px);}
+.card-blank .blank-inner{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:6px;color:#46466a;}
+.card-blank .blank-inner span{font-size:.58rem;color:#5a5a82;text-align:center;line-height:1.3;}
+.fav-btn{position:absolute;bottom:3px;right:3px;width:17px;height:17px;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;line-height:1;transition:transform .1s,background .1s;}
+.fav-btn:hover{transform:scale(1.2);}
+.fav-btn.on {background:rgba(255,200,30,0.95);color:#1a0f00;}
+.fav-btn.off{background:rgba(0,0,0,0.55);color:rgba(255,255,255,0.45);}
+@keyframes spin{to{transform:rotate(360deg);}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+@keyframes flameFlicker{0%,100%{transform:scaleX(1) scaleY(1) skewX(0deg);}15%{transform:scaleX(.93) scaleY(1.07) skewX(2deg);}30%{transform:scaleX(1.06) scaleY(.96) skewX(-1deg);}50%{transform:scaleX(.97) scaleY(1.05) skewX(1.5deg);}70%{transform:scaleX(1.04) scaleY(.98) skewX(-2deg);}85%{transform:scaleX(.95) scaleY(1.03) skewX(1deg);}}
+@keyframes flameFlicker2{0%,100%{transform:scaleX(1) scaleY(1);}25%{transform:scaleX(1.08) scaleY(.94);}50%{transform:scaleX(.92) scaleY(1.08);}75%{transform:scaleX(1.05) scaleY(.97);}}
+@keyframes emberRise{0%{transform:translateY(0) scale(1);opacity:.9;}80%{opacity:.4;}100%{transform:translateY(-280px) scale(.1);opacity:0;}}
+@keyframes glowPulse{0%,100%{opacity:.6;}50%{opacity:1;}}
+@keyframes cosmicBreathe{0%,100%{opacity:.55;transform:scale(1);}50%{opacity:.95;transform:scale(1.06);}}
+@keyframes landingExit{from{opacity:1;transform:scale(1);}to{opacity:0;transform:scale(1.04);}}
+.spinner{animation:spin .8s linear infinite;}
+.fade-up{animation:fadeUp .2s ease forwards;}
+.fade-in{animation:fadeIn .5s ease forwards;}
+.prog-fill{transition:width .7s ease;}
+.modal-bg{backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
+.landing-exit{animation:landingExit .45s ease forwards;}
+input:focus,select:focus{outline:none;border-color:#8b6cd8!important;}
+select{-webkit-appearance:none;appearance:none;cursor:pointer;}
+input[type="search"]::-webkit-search-cancel-button{display:none;}
+.artist-row{border-radius:10px;transition:background .15s;cursor:pointer;}
+.artist-row:hover{background:rgba(255,255,255,0.03);}
+.wanted-row{border-radius:10px;transition:background .15s;}
+.wanted-row:hover{background:rgba(255,255,255,0.03);}
+@keyframes popIn{from{opacity:0;transform:scale(.96) translateY(-4px);}to{opacity:1;transform:scale(1) translateY(0);}}
+.fact-panel{animation:popIn .22s cubic-bezier(.2,.9,.3,1.3) forwards;transform-origin:top left;}
+.btn-flame{background:linear-gradient(160deg,#a8330e,#cf5417);color:#fff3ea;border:none;box-shadow:inset 0 1px 0 rgba(255,180,120,0.16);cursor:pointer;transition:transform .12s ease,box-shadow .15s ease,filter .15s ease;}
+.btn-flame:hover{filter:brightness(1.07);box-shadow:inset 0 1px 0 rgba(255,180,120,0.16),0 4px 14px rgba(190,70,20,0.24);}
+.btn-flame:active{transform:scale(.96);}
+.btn-moon{background:linear-gradient(135deg,#7c5cd6,#c0589e);color:#fff;border:none;cursor:pointer;transition:transform .12s ease,box-shadow .15s ease,filter .15s ease;}
+.btn-moon:hover{filter:brightness(1.1);box-shadow:0 6px 20px rgba(139,108,216,0.3);}
+.btn-moon:active{transform:scale(.96);}
+.btn-ghost{background:#141425;color:#e8e8f4;border:1px solid #1e1e35;cursor:pointer;transition:transform .12s ease,background .15s ease,border-color .15s ease;}
+.btn-ghost:hover{background:#1a1a30;border-color:#2a2a45;}
+.btn-ghost:active{transform:scale(.96);}
+.info-btn{background:none;border:none;cursor:pointer;color:#52527a;display:flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;transition:background .15s ease,color .15s ease,transform .1s ease;flex-shrink:0;}
+.info-btn:hover{background:rgba(192,88,158,0.14);color:#d68fc0;}
+.info-btn:active{transform:scale(.85);}
+.info-btn.active{color:#d68fc0;background:rgba(192,88,158,0.14);}
+.btn-tap{transition:transform .12s ease,filter .15s ease;}
+.btn-tap:hover{filter:brightness(1.15);}
+.btn-tap:active{transform:scale(.96);}
