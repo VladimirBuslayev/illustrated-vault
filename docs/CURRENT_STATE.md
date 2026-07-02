@@ -70,6 +70,15 @@ Top-level view `hunt`, reachable from the Dashboard header and Binder header.
 - Color-mode toggle reuses the persisted `showAllColor` state shared with Binder view.
 - Missing/Owned segments are literal because `soloSections` is passed; Binder/SharedBinder retain legacy paired-section behavior (they do not pass `soloSections`).
 
+## Explore Artists directory — A-D1 live
+
+Read-only `artists` view over the current 20 tracked roster artists (SQL
+confirmed the `artists` table contains exactly these 20 rows). Entered via the
+"Explore Artists →" link on the Dashboard artist section header; derived
+entirely from in-memory state with no new Supabase calls. Tapping an artist
+opens the existing Artist Page. Track/untrack and untracked-artist behavior
+are deferred to A-D2.
+
 ## SharedBinder — read-only share surface
 
 - Never exposes Hunt status, editable controls, or private user info.
