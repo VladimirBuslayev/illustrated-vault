@@ -51,7 +51,7 @@ const IcoContrast=()=><svg width="15" height="15" viewBox="0 0 24 24" fill="none
 function BlazLogo({size=32,glow=false}){
   return(
     <img src={logoSrc} width={size} height={size} alt="Illustrated"
-      style={{display:"block",filter:glow?"drop-shadow(0 0 14px rgba(234,37,21,0.75))":"none"}}/>
+      style={{display:"block",filter:glow?"drop-shadow(0 0 5px rgba(240,120,50,0.30)) drop-shadow(0 0 16px rgba(155,127,232,0.10))":"none"}}/>
   );
 }
 
@@ -71,12 +71,12 @@ function FlameBackground({dim}){
   const op=dim?.5:1;
   return(<>
     <div style={{position:"absolute",bottom:0,left:0,right:0,height:"65%",overflow:"hidden",opacity:op}}>
-      {FDEFS.map((f,i)=><div key={i} style={{position:"absolute",bottom:0,left:f.left,marginLeft:-f.w/2,width:f.w,height:f.h,background:"linear-gradient(to top,#ff2200 0%,#ff6600 40%,#ffaa00 70%,#ffe066 90%,transparent 100%)",borderRadius:"50% 50% 25% 25% / 55% 55% 45% 45%",filter:`blur(${f.blur}px)`,transformOrigin:"bottom center",animation:`${f.anim} ${f.dur}s ${f.delay}s ease-in-out infinite`,opacity:.88}}/>)}
+      {FDEFS.map((f,i)=><div key={i} style={{position:"absolute",bottom:0,left:f.left,marginLeft:-f.w/2,width:f.w,height:f.h,background:"linear-gradient(to top,#ff2200 0%,#ff6600 40%,#ffaa00 70%,#ffe066 90%,transparent 100%)",borderRadius:"50% 50% 25% 25% / 55% 55% 45% 45%",filter:`blur(${f.blur}px)`,transformOrigin:"bottom center",animation:`${f.anim} ${f.dur}s ${f.delay}s ease-in-out infinite`,opacity:.5}}/>)}
     </div>
     <div style={{position:"absolute",inset:0,overflow:"hidden",pointerEvents:"none",opacity:op}}>
-      {EDEFS.map((e,i)=><div key={i} style={{position:"absolute",bottom:"15%",left:e.left,width:e.size,height:e.size,borderRadius:"50%",background:"#ff9900",boxShadow:`0 0 ${e.size*2}px #ff4400`,animation:`emberRise ${e.dur}s ${e.delay}s ease-out infinite`,opacity:0}}/>)}
+      {EDEFS.map((e,i)=><div key={i} style={{position:"absolute",bottom:"15%",left:e.left,width:e.size,height:e.size,borderRadius:"50%",background:"#e8873a",boxShadow:`0 0 ${e.size*2}px rgba(224,90,20,0.55)`,animation:`emberRise ${e.dur}s ${e.delay}s ease-out infinite`,opacity:0}}/>)}
     </div>
-    <div style={{position:"absolute",bottom:0,left:0,right:0,height:120,background:"linear-gradient(to top,rgba(255,60,0,0.35),transparent)",animation:"glowPulse 2.5s ease-in-out infinite",opacity:op}}/>
+    <div style={{position:"absolute",bottom:0,left:0,right:0,height:120,background:"linear-gradient(to top,rgba(255,60,0,0.16),transparent)",animation:"glowPulse 2.5s ease-in-out infinite",opacity:op}}/>
   </>);
 }
 
@@ -106,13 +106,13 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
           <div style={{position:"absolute",width:200,height:200,borderRadius:"50%",background:"radial-gradient(circle,rgba(198,87,143,0.5) 0%,rgba(21,3,83,0.35) 55%,transparent 75%)",filter:"blur(18px)",animation:"cosmicBreathe 4.5s ease-in-out infinite",pointerEvents:"none"}}/>
           <BlazLogo size={80} glow/>
         </div>
-        <h1 className="font-display" style={{position:"relative",fontSize:"clamp(2.4rem,9vw,4.2rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".7rem",backgroundImage:"linear-gradient(90deg,#fcd99d 0%,#f38e29 22%,#ea2515 45%,#c6578f 70%,#150353 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",filter:"drop-shadow(0 0 28px rgba(234,37,21,0.45))"}}>
+        <h1 className="font-display" style={{position:"relative",fontSize:"clamp(2.4rem,9vw,4.2rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".7rem",backgroundImage:"linear-gradient(90deg,#fcd99d 0%,#f38e29 22%,#ea2515 45%,#c6578f 70%,#150353 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",filter:"drop-shadow(0 0 10px rgba(234,37,21,0.15))"}}>
           Illustrated
         </h1>
         {isLoggedIn?(
           <>
             <p style={{fontSize:".78rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"2.25rem",letterSpacing:".04em"}}>The art is the point.</p>
-            <button onClick={e=>{e.stopPropagation();enter();}} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:50,padding:".9rem 3rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".1em",boxShadow:"0 0 40px rgba(255,60,0,0.6),0 0 80px rgba(255,60,0,0.3)"}}
+            <button onClick={e=>{e.stopPropagation();enter();}} style={{background:"linear-gradient(160deg,#a8330e,#cf5417)",color:"#fff3ea",border:"none",borderRadius:50,padding:".9rem 3rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".1em",boxShadow:"0 4px 18px rgba(190,70,20,0.28)"}}
               onMouseEnter={e=>e.currentTarget.style.transform="scale(1.06)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>
               ENTER BINDER
             </button>
@@ -139,7 +139,7 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
             <p style={{fontSize:".82rem",color:"#c87040",marginBottom:"1rem",lineHeight:1.5,fontStyle:"italic"}}>The art is the point.</p>
             <input type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} style={inputStyle} autoFocus/>
             {error&&<p style={{fontSize:".72rem",color:"#f87171",marginBottom:".5rem"}}>{error}</p>}
-            <button onClick={send} disabled={sending||!email.trim()} style={{width:"100%",background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff8f0",border:"none",borderRadius:10,padding:".75rem",fontSize:".95rem",fontWeight:800,cursor:"pointer",boxShadow:"0 0 30px rgba(255,60,0,0.4)",opacity:(sending||!email.trim())?.45:1}}>
+            <button onClick={send} disabled={sending||!email.trim()} style={{width:"100%",background:"linear-gradient(160deg,#a8330e,#cf5417)",color:"#fff3ea",border:"none",borderRadius:10,padding:".75rem",fontSize:".95rem",fontWeight:800,cursor:"pointer",boxShadow:"0 4px 14px rgba(190,70,20,0.25)",opacity:(sending||!email.trim())?.45:1}}>
               {sending?"Sending…":"Send Magic Link 🔥"}
             </button>
             <p style={{marginTop:".65rem",fontSize:".65rem",color:"#4a2810",lineHeight:1.4}}>No password. One click and you're in.</p>
@@ -216,7 +216,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
           <div style={{display:"flex",justifyContent:"center",flexShrink:0}}><BlazLogo size={120} glow/></div>
           <div style={{flex:1,minWidth:180}}>
             <div style={{fontSize:".6rem",letterSpacing:".18em",color:"#5a2e10",marginBottom:".3rem",fontWeight:600}}>{user?.email||"YOUR COLLECTION"}</div>
-            <h2 className="font-display" style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".4rem",backgroundImage:"linear-gradient(90deg,#fcd99d 0%,#f38e29 22%,#ea2515 45%,#c6578f 70%,#150353 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",filter:"drop-shadow(0 0 22px rgba(234,37,21,0.35))"}}>YOUR BINDER</h2>
+            <h2 className="font-display" style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".4rem",color:"#f2e9df"}}>YOUR BINDER</h2>
             <p style={{fontSize:".7rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"1.25rem",letterSpacing:".03em"}}>The art is the point.</p>
             <div style={{display:"flex",flexWrap:"wrap",gap:"1.5rem",marginBottom:"1.25rem"}}>
               <div>
@@ -311,7 +311,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
         )}
 
         <div style={{textAlign:"center",padding:"1.5rem 0 3rem"}}>
-          <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:50,padding:".85rem 2.5rem",fontSize:".95rem",fontWeight:800,letterSpacing:".08em",boxShadow:"0 0 30px rgba(255,60,0,0.35)"}}>OPEN FULL BINDER →</button>
+          <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:50,padding:".85rem 2.5rem",fontSize:".95rem",fontWeight:800,letterSpacing:".08em",boxShadow:"0 4px 16px rgba(190,70,20,0.22)"}}>OPEN FULL BINDER →</button>
         </div>
       </div>
     </div>
