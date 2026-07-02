@@ -1,5 +1,180 @@
-# Illustrated — Decision Log
+# Illustrated Vault — Decision Log
 
+---
+
+## 2026-07-02 — Roadmap sequencing after Hunt Board
+
+Decision:
+
+With Hunt Board H-1/H-2/H-3 complete and validated, the next slices are ordered:
+Product Surface Map → Artist expansion / tracked artist management → Set Lens v0
+→ Artist Page Slice C or Brand/Logo/Loading V-B (chosen by app feel at the time)
+→ Pokémon Search / Lens v0 → Collection Goals / Custom Lists → Binder Planning v0
+once the goal/list model is clearer.
+
+Reason:
+
+The Product Surface Map should precede new lens types so navigation is planned
+rather than accreted. Set and Pokémon lenses build toward the collection-goals
+abstraction incrementally. Binder Planning is deliberately last because it
+depends on a clear goal/list model — starting a large Binder Composer early
+risks overbuilding schema and UI.
+
+Status:
+
+Accepted. Guardrail — later slices are not pulled forward without an explicit decision.
+
+---
+
+## 2026-07-02 — Collection goals as the long-term organizing abstraction
+
+Decision:
+
+Illustrated Vault will eventually organize around "collection goals," where
+Artist, Set, Pokémon, Custom List, and Binder Plan are different goal types,
+each with its own progress, hunt targets, and showcase.
+
+Reason:
+
+The strongest product triangle is artist collecting + set completion +
+Pokédex-style progression. A goal abstraction unifies these without rebuilding
+each surface from scratch.
+
+Constraint:
+
+The abstraction must be earned gradually — each goal type ships as a focused,
+opinionated experience. The app must not become a generic database/filter
+tracker. Artist-first, premium, calm, visual, and intentional remains the
+product identity.
+
+Status:
+
+Accepted as strategic direction. No schema or UI generalization work yet.
+
+---
+
+## 2026-07-02 — Hunt Board is derived state; MAYBE LATER collapsed by default
+
+Decision:
+
+The Hunt Board is derived entirely from in-memory state (`visibleCardData`,
+`intentMap`, `checkOwned`) with no new Supabase calls. It groups by
+hunting / want / maybe, then by artist in roster order, sorted by market price
+descending with unpriced cards last. It shows only missing cards with intent,
+suppresses owned cards with stale intent rows, suppresses `ignore`, and
+deduplicates by card id. Sections are collapsible (H-2); ACTIVE TARGETS and
+ON THE LIST default open; MAYBE LATER defaults collapsed when it has cards;
+collapse state is local only and not persisted. Section headers received a
+larger mobile tap target (H-3).
+
+Reason:
+
+Hunt planning must stay fast and cheap — one intent fetch per session, all
+board logic client-side. Collapsing MAYBE LATER keeps the board focused on
+actionable targets while keeping speculation discoverable via visible counts.
+Local-only collapse avoids persisting trivial UI state.
+
+Status:
+
+Accepted. H-1/H-2/H-3 live in production.
+
+---
+
+## 2026-07-02 — Hunt intent model (want / hunting / maybe / ignore)
+
+Decision:
+
+Hunt intent lives in a dedicated Supabase table `user_card_intent` with
+statuses `want`, `hunting`, `maybe`, `ignore`, accessed only through
+`src/services/intentService.js`. Intent is planning metadata only:
+
+- It never affects owned/missing state.
+- It never affects completion counts (`ignore` included).
+- Owned cards with stale intent rows are suppressed from hunt surfaces at
+  render time; rows are not eagerly deleted.
+- Intent is not exposed in SharedBinder v1.
+
+Reason:
+
+Ownership and completion are the app's ground truth and must stay independent
+of planning signals. Render-time suppression avoids write amplification and
+keeps intent history recoverable. The share surface stays read-only and
+private-data-free.
+
+Status:
+
+Accepted. Live in production.
+
+---
+
+## 2026-07-02 — Favorites vs. intent disambiguation
+
+Decision:
+
+"Favorite" (★) is an emotional bookmark and can apply to any card. Intent
+statuses are acquisition planning and apply meaningfully only to missing cards.
+The Dashboard "Most Wanted" section remains favorites-driven and was not
+migrated to intent.
+
+Reason:
+
+The two signals answer different questions — "cards I love" vs. "cards I am
+actively planning to acquire." Merging them would overload one control and
+muddy both meanings.
+
+Status:
+
+Accepted.
+
+---
+
+## 2026-07-02 — Gate 3: FK-based artist queries (artist_id) replace ILIKE
+
+Decision:
+
+`cardService.fetchArtistCards` queries `cards_effective` by
+`.eq('artist_id', entry.artistId)` when an `artistId` is present. The ILIKE
+alias path is retained only as a fallback for entries without an `artistId`.
+The localStorage cache key prefix was bumped `pb7_supa_` → `pb8_supa_` to
+invalidate stale ILIKE-based caches.
+
+Reason:
+
+Substring ILIKE matching produced false positives — most notably `sui`
+matching "Misa Tsutsui." FK equality against the normalized `artists` table is
+precise, faster, and makes artist identity a data-model concern rather than a
+string-matching concern.
+
+Status:
+
+Accepted. Live in production. Related cleanup: Tetsu Kayama alias/FK cleanup,
+three card_extras seed FK fixes (`swsh11-186` → shinji-kanda,
+`swsh12.5-GG19` → asako-ito, `swsh12.5-GG69` → akira-egawa), `shibuzoh` alias
+includes `Shibuzō`, and the `"Mosakazu Fukuda"` alias was confirmed legitimate.
+
+---
+
+## 2026-07-02 — V-A: subtractive visual refinement over redesign
+
+Decision:
+
+Visual polish proceeds by removing the "campfire/game" prototype layer
+(excess glow, loud flame styling, gradient text) rather than building a new
+design system. The V-A Quiet Pass applied this: reduced logo glow, calmer
+flame/button styling, de-gradiented Dashboard hero, removed footer artist-name
+text. `index.html` must remain a minimal Vite shell — an incident where app
+CSS was pasted into it caused a build failure and was fixed.
+
+Reason:
+
+The "archive" visual layer already works. Subtraction preserves what's good,
+keeps slices small and revertible, and avoids a risky global redesign.
+
+Status:
+
+Accepted. V-A applied; V-B (landing/loading/logo) is a future slice.
+
+---
 ---
 
 ## 2026-06-26 — Gate 2: Vercel selected as production hosting platform
