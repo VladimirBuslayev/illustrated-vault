@@ -181,12 +181,12 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
   return(
     <div style={{minHeight:"100dvh",background:"#07070f",paddingBottom:"5rem"}}>
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
-        <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}} onClick={()=>onGoBinder("landing")}>
+        <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",rowGap:".45rem"}}>
+          <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer",minWidth:0}} onClick={()=>onGoBinder("landing")}>
             <BlazLogo size={28}/>
             <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
           </div>
-          <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
+          <div style={{display:"flex",gap:".4rem",alignItems:"center",marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
             {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
             {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count} cards</span>}
             {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
@@ -1115,6 +1115,8 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack}){
     return out;
   },[visibleCardData,intentMap,checkOwned]);
   const total=HUNT_SECTIONS.reduce((s,{key})=>s+groups[key].reduce((n,g)=>n+g.cards.length,0),0);
+  const [collapsed,setCollapsed]=useState({maybe:true});
+  const toggleSection=key=>setCollapsed(c=>({...c,[key]:!c[key]}));
   return(
     <div style={{minHeight:"100dvh",background:"#07070f"}}>
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
@@ -1136,11 +1138,12 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack}){
           const count=artistGroups.reduce((n,g)=>n+g.cards.length,0);
           return(
             <section key={sec.key} style={{marginBottom:"2.2rem"}}>
-              <div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".9rem"}}>
+              <div onClick={()=>toggleSection(sec.key)} style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:collapsed[sec.key]?"0":".9rem",cursor:"pointer",userSelect:"none",padding:".2rem 0"}}>
+                <span style={{color:sec.clr,display:"flex"}}><IcoChev open={!collapsed[sec.key]}/></span>
                 <span style={{fontSize:".64rem",fontWeight:800,letterSpacing:".14em",color:sec.clr,whiteSpace:"nowrap"}}>{sec.label} · {count}</span>
                 <div style={{flex:1,height:1,background:sec.line}}/>
               </div>
-              {artistGroups.map(g=>(
+              {!collapsed[sec.key]&&artistGroups.map(g=>(
                 <div key={g.artist} style={{marginBottom:"1.1rem"}}>
                   <div style={{fontSize:".66rem",fontWeight:700,letterSpacing:".08em",color:"#8b8bb0",marginBottom:".35rem",paddingLeft:".1rem"}}>{g.artist} · {g.cards.length}</div>
                   <div style={{display:"flex",flexDirection:"column"}}>
