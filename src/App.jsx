@@ -531,7 +531,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 // ── ARTIST PAGE ─────────────────────────────────────────────────────────────────
 // Dedicated full-screen page for a single illustrator.
 // Each artist gets a unique accent colour, quote, and hero layout.
-function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,intentMap,onBack}){
+function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,intentMap,showAllColor,toggleShowAllColor,onBack}){
   const meta=ARTIST_META[slug]||{};
   const accent=meta.accent||"#8b6cd8";
   const grad=meta.grad||"rgba(139,108,216,0.12)";
@@ -583,7 +583,7 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
   const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:7,color:"#e8e8f4",padding:".35rem .55rem",fontSize:".74rem"};
 
   return(
-    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+    <div className={showAllColor?"color-mode":""} style={{minHeight:"100dvh",background:"#07070f"}}>
 
       {/* ── sticky mini-header ── */}
       <div style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.96)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35",display:"flex",alignItems:"center",gap:".6rem",padding:".6rem 1rem"}}>
@@ -677,6 +677,7 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
           <option value="date-desc">New</option>
           <option value="date-asc">Old</option>
         </select>
+        {toggleShowAllColor&&<button onClick={toggleShowAllColor} className="btn-ghost" title={showAllColor?"Showing missing cards in color":"Showing missing cards grayed out"} style={{color:showAllColor?"#c0589e":"#6b6b90",borderRadius:8,padding:".38rem",display:"flex",background:showAllColor?"rgba(192,88,158,0.12)":undefined,border:showAllColor?"1px solid rgba(192,88,158,0.3)":undefined}}><IcoContrast/></button>}
       </div>
 
       {/* ── full card grid ── */}
@@ -1229,7 +1230,7 @@ function App(){
     const entry=ARTISTS.find(a=>toSlug(a.name)===artistSlug);
     const cards=visibleCardData[artistSlug]||[];
     return(<>
-      <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} intentMap={intentMap} onBack={()=>setView("dashboard")}/>
+      <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} intentMap={intentMap} showAllColor={showAllColor} toggleShowAllColor={toggleShowAllColor} onBack={()=>setView("dashboard")}/>
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>);
