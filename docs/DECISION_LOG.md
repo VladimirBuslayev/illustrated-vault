@@ -1,7 +1,34 @@
 # Illustrated Vault — Decision Log
 
 ---
+## 2026-07-02 — A-D1: Explore Artists directory v0 (read-only)
 
+Decision:
+
+Ship the Artist Directory as a read-only "Explore Artists" view over the
+current tracked roster: a new top-level `artists` view derived entirely from
+in-memory state (`visibleCardData`, `checkOwned`, `ARTIST_META`), entered via
+an "Explore Artists →" link on the Dashboard artist section header. Gallery
+cards show name, tags, accent, a 3-card color preview strip, and owned/total
+progress; tapping opens the existing Artist Page. No new Supabase reads, no
+schema changes, no track/untrack.
+
+Reason:
+
+The directory → lens pattern (which Set Lens v0 will copy) can be established
+with zero data-layer risk because everything needed is already loaded.
+SQL confirmed `select count(*) from artists;` = 20 — the artists table is
+effectively the curated/tracked roster, not a broader illustrator database.
+Broader artist discovery and "add to archive" therefore require an A-D2
+data-model decision (how untracked illustrators are represented and fetched)
+and were deliberately excluded from this slice.
+
+Status:
+
+Accepted. Live in production and validated. A-D2 (tracked-artist selection /
+untracked-artist read-only lens) is planned separately.
+
+---
 ## 2026-07-02 — Roadmap sequencing after Hunt Board
 
 Decision:
