@@ -982,16 +982,8 @@ function SharedBinder({token}){
     return out;
   },[cardData]);
 
-  if(status==="loading")return<div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}><IcoSpin/></div>;
-  if(status==="invalid")return(
-    <div style={{minHeight:"100dvh",background:"#07070f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",padding:"2rem",textAlign:"center"}}>
-      <BlazLogo size={64}/>
-      <h2 style={{color:"#e8e8f4",fontSize:"1.15rem",fontWeight:800}}>This share link isn't active</h2>
-      <p style={{color:"#6b6b90",fontSize:".85rem",maxWidth:320,lineHeight:1.5}}>It may have been revoked, paused, or copied incorrectly. Ask whoever shared it for a fresh link.</p>
-    </div>
-  );
-
   const visibleArtists=filterSlug==="all"?sharedArtists:sharedArtists.filter(a=>toSlug(a.name)===filterSlug);
+
   const exportMissingCSV=useCallback(()=>{
     // Read-only, client-side export of the missing-card list currently represented by this
     // shared link: respects the share's artist selection, the viewer's artist dropdown, and
@@ -1020,6 +1012,17 @@ function SharedBinder({token}){
     document.body.appendChild(a);a.click();document.body.removeChild(a);
     URL.revokeObjectURL(url);
   },[visibleArtists,visibleCardData,checkOwned]);
+
+  if(status==="loading")return<div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}><IcoSpin/></div>;
+  if(status==="invalid")return(
+    <div style={{minHeight:"100dvh",background:"#07070f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",padding:"2rem",textAlign:"center"}}>
+      <BlazLogo size={64}/>
+      <h2 style={{color:"#e8e8f4",fontSize:"1.15rem",fontWeight:800}}>This share link isn't active</h2>
+      <p style={{color:"#6b6b90",fontSize:".85rem",maxWidth:320,lineHeight:1.5}}>It may have been revoked, paused, or copied incorrectly. Ask whoever shared it for a fresh link.</p>
+    </div>
+  );
+
+  
   const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
   const totalOwned=Object.values(visibleCardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0);
   const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
