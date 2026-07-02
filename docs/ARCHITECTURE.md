@@ -1,6 +1,6 @@
-# Illustrated — Architecture
+# Illustrated Vault — Architecture
 
-Last updated: 2026-07-01
+Last updated: 2026-07-02
 
 ## Production architecture
 
@@ -39,6 +39,7 @@ src/
     cardAdapter.js
     imageService.js
     tcgdexService.js
+    intentService.js
   styles/
     index.css
   utils/
@@ -72,7 +73,7 @@ postcss.config.js
 
 ## Component boundary — current state
 
-`src/App.jsx` is the component root. It is a single 1,266-line file containing the full component tree. This is intentional for Gate 2 — it mirrors the legacy single-file approach while operating inside the Vite module system. Component splitting into `src/components/` files is deferred to Phase 7.
+`src/App.jsx` is the component root. It is a single file (~1,444 lines) containing the full component tree, including post-Gate-2 additions: `ArtistPage` 2.0, `HuntStatusDot`, and `HuntBoard`. Keeping it single-file is intentional; component splitting into `src/components/` files is deferred and must not happen without explicit approval.
 
 `src/main.jsx` is the Vite entry point. It:
 - imports `{ App, SharedBinder, ErrorBoundary }` from `./App.jsx`
@@ -122,6 +123,7 @@ All network and Supabase I/O. Imported by `src/App.jsx`.
 | `cardAdapter.js` | `supaRowToCard` | Maps `cards_effective` row to TCGdex card shape |
 | `imageService.js` | `fetchFallbackImage`, `buildLimitlessGuess` | pokemontcg.io fallback; Limitless CDN guess |
 | `tcgdexService.js` | `fetchCardBriefs`, `fetchFullCard` | TCGdex only; `fetchCardBriefs` returns `[]` when `entry.isSet` is false |
+| `intentService.js` | `fetchUserIntent`, `setCardIntent`, `clearCardIntent`, `INTENT_STATUSES` | All `user_card_intent` reads/writes; no caching; RLS-enforced `user_id = auth.uid()` |
 
 ## Data flow — artist card display
 
@@ -134,10 +136,18 @@ App.useEffect → loadAllEntries
       → fetchFullCard(id) × N         [tcgdexService.js]
         → GET api.tcgdex.net/cards/{id}
     else (artist path):
-      → supabase.from('cards_effective').select(...).or(ilikeFilters)
+      if entry.artistId:
+        → supabase.from('cards_effective').select(...).eq('artist_id', entry.artistId)
+      else (fallback only):
+        → supabase.from('cards_effective').select(...).or(ilikeFilters)
       → supaRowToCard(row) × N        [cardAdapter.js]
   → setCardData(cards)
 ```
+
+The FK path (Gate 3D) is the normal path for all tracked artists. The ILIKE
+alias path exists only as a fallback for entries without an `artistId`.
+The localStorage cache key prefix is `pb8_supa_` (bumped from `pb7_supa_` to
+invalidate stale ILIKE-based caches).
 
 ## Data flow — collection / ownership
 
@@ -153,6 +163,26 @@ checkOwned(card) → isCardOwned(card, ownedKeySet, manualOwned, manualMissing)
   → makeKeys(name, localId, setName).some(k => ownedKeySet.has(k))
 ```
 
+## Data flow — hunt intent
+
+```
+App.useEffect (on user change) → fetchUserIntent(userId)   [intentService.js]
+  → supabase.from('user_card_intent').select('card_id, status')
+  → setIntentMap(Map<cardId, status>)
+
+CardModal Hunt status buttons →
+  handleSetIntent(card, status)  → optimistic Map update → setCardIntent (upsert)
+  handleClearIntent(cardId)      → optimistic Map update → clearCardIntent (delete)
+  (both roll back the Map on Supabase error)
+
+HuntBoard / ArtistPage hunt surfaces derive entirely from
+(visibleCardData, intentMap, checkOwned) in memory — no additional Supabase calls.
+```
+
+Invariants: intent never affects `checkOwned`, ownership keys, or completion
+counts. Owned cards with stale intent rows are suppressed at render time.
+Intent is not exposed in SharedBinder v1.
+
 ## Data flow — SharedBinder
 
 ```
@@ -162,20 +192,31 @@ main.jsx: SHARE_TOKEN → <SharedBinder token={token} />
   → fetchArtistCards(entry) per artist (same path as App)
 ```
 
-## Supabase read model — unchanged
+## Supabase read model
 
-`cards_effective` is the frontend read model. No changes to Supabase during Gate 2.
+`cards_effective` is the frontend read model. Since Gate 3 it exposes
+`artist_id`, and the normal artist query is FK-based:
 
 ```sql
-SELECT id, name, set_id, set_name, local_id, illustrator,
+SELECT id, name, set_id, set_name, local_id, illustrator, artist_id,
        image_url, rarity, release_date, pricing, pricing_updated_at
 FROM cards_effective
-WHERE illustrator ILIKE '%{name}%'
-  OR  illustrator ILIKE '%{alias}%'
+WHERE artist_id = '{artistId}'
 ORDER BY release_date ASC NULLS LAST, set_id, local_id
 ```
 
-`supaRowToCard` maps this to the TCGdex card shape the components expect. The mapping is stable and must not be altered without a corresponding schema migration.
+The ILIKE alias variant (`illustrator ILIKE '%{name}%' OR ...`) remains only
+as a fallback for entries without an `artistId`.
+
+`supaRowToCard` maps rows to the TCGdex card shape the components expect. The
+mapping is stable and must not be altered without a corresponding schema
+migration.
+
+User-scoped tables: `user_collection`, `card_overrides`, `price_history`,
+`card_favorites` (via `collectionService.js`) and `user_card_intent` (via
+`intentService.js`, RLS `user_id = auth.uid()`). Editorial enrichment lives in
+`card_extras`, merged into `cards_effective`; the normalized `artists` table
+(with alias arrays) backs FK artist identity.
 
 ## Backend RPC dependencies — unchanged
 
@@ -202,10 +243,15 @@ Gate 2 closure.
 present in `index.html` (added in Phase 5G). Registered and validated in
 production.
 
-## Future direction — post Gate 2
+## Future direction
 
-- Component extraction: split `src/App.jsx` into `src/components/` files (Phase 7+)
-- Shared hooks: `useCardData`, `useCollection` (Phase 8+)
-- Artist Directory / Add Artist flow (backlog)
-- Set browsing (backlog)
-- Freemium model / public collection pages (deferred)
+See ROADMAP.md for the authoritative sequencing. Architecture-relevant notes:
+
+- Product Surface Map precedes new lens types (Set Lens, Pokémon Lens) so
+  navigation is planned, not accreted.
+- The long-term "collection goals" abstraction (Artist / Set / Pokémon /
+  Custom List / Binder Plan as goal types) should be earned gradually; no
+  schema generalization work yet.
+- Component extraction of `src/App.jsx` and shared hooks remain deferred and
+  require explicit approval.
+- Freemium model / public collection pages remain deferred.
