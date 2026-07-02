@@ -66,9 +66,34 @@ async function fetchArtistCards(entry) {
   const cached = lsGet(ck);
   if (cached && cached.ts && Date.now() - cached.ts < CACHE_TTL) return cached.cards;
 
-  // Build the Supabase query — FK path when artistId present, ILIKE fallback otherwise.
+  // Build the Supabase query.
+  // Order of branches:
+  //   1. Dynamic entries (A-D2b0): exact artist_id OR exact illustrator equality.
+  //   2. FK path: curated entries with artistId.
+  //   3. ILIKE fallback: entries with neither (legacy edge case only).
   let query;
-  if (entry.artistId) {
+  if (entry.isDynamic) {
+    // Dynamic tracked artist (user addition). Match by EITHER exact FK
+    // equality (artist_id) OR exact illustrator string equality — never
+    // substring ILIKE.
+    //   • Before the weekly sync has FK-tagged this artist's cards, the
+    //     exact illustrator match carries the fetch.
+    //   • After the sync — and for card_extras-overridden rows — the
+    //     artist_id match catches everything FK-tagged, so dynamic artists
+    //     converge to FK coverage automatically, with no branch or flag
+    //     change ever required.
+    // A single OR query returns each matching row once (no client dedupe
+    // burden beyond the existing `seen` guard). Names are double-quoted for
+    // the PostgREST in.() list so punctuation in illustrator strings
+    // (commas, parentheses) cannot break the filter. artist_id slugs are
+    // [a-z0-9-] by construction (see add_artist_to_archive) and safe unquoted.
+    const names = [...new Set([entry.name, ...(entry.aliases || [])].filter(Boolean))];
+    const quoted = names.map(n => `"${String(n).replace(/"/g, '\\"')}"`).join(",");
+    query = supabase.from("cards_effective").select(ARTIST_SELECT);
+    query = entry.artistId
+      ? query.or(`artist_id.eq.${entry.artistId},illustrator.in.(${quoted})`)
+      : query.in("illustrator", names); // defensive: dynamic entries always carry artistId in practice
+  } else if (entry.artistId) {
     // FK path: precise equality match on artist_id.
     // Eliminates false positives from substring ILIKE (e.g. 'sui' in 'Misa Tsutsui').
     query = supabase.from("cards_effective")
