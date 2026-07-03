@@ -28,7 +28,8 @@ import { supabase }                                       from './services/supab
 import { loadUserData, saveCollection, saveOverride, savePricePoint }
                                                           from './services/collectionService.js';
 import { fetchSharedCollection }                          from './services/shareService.js';
-import { fetchTrackedArtistIds, fetchArtistIdentities }   from './services/artistService.js'; // A-D2b0
+import { fetchTrackedArtistIds, fetchArtistIdentities,
+         searchIllustratorDirectory, addArtistToArchive } from './services/artistService.js'; // A-D2b0 + A-D2c
 import { fetchArtistCards }                               from './services/cardService.js';
 import { fetchFallbackImage, buildLimitlessGuess }        from './services/imageService.js';
 
@@ -1208,9 +1209,44 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,rost
 // Read-only visual directory of the tracked artist roster ("Explore Artists").
 // Derived entirely from in-memory state — no Supabase calls, no mutation.
 // Tapping an artist opens the existing Artist Page. Track/untrack is A-D2.
-function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArtist,onBack,roster}){
+function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArtist,onBack,roster,onArtistAdded}){
   // A-D2b0: roster = effectiveRoster; defensive fallback to curated ARTISTS.
   const rosterList=roster||ARTISTS;
+  // ── A-D2c: Find an illustrator (quiet doorway, not a database page) ─────────
+  // All hooks unconditional and grouped here — never behind conditionals.
+  const[findQuery,  setFindQuery]  =useState("");
+  const[findResults,setFindResults]=useState(null);   // null = no search yet; [] = no matches
+  const[findStatus, setFindStatus] =useState("idle"); // idle | searching | done | error
+  const[addStatus,  setAddStatus]  =useState({});     // illustrator → adding | added | error
+  // Names already in the archive (curated + dynamic), lowercased, incl. aliases —
+  // used to label "In your archive" and prevent duplicate adds.
+  const trackedNames=useMemo(()=>{
+    const s=new Set();
+    rosterList.forEach(a=>{
+      if(a.name)s.add(String(a.name).toLowerCase());
+      (a.aliases||[]).forEach(al=>s.add(String(al).toLowerCase()));
+    });
+    return s;
+  },[rosterList]);
+  const runFind=useCallback(async()=>{
+    const q=findQuery.trim();
+    if(!q)return;
+    setFindStatus("searching");
+    const results=await searchIllustratorDirectory(q,12); // null = soft-fail
+    if(results===null){setFindResults(null);setFindStatus("error");return;}
+    setFindResults(results);setFindStatus("done");
+  },[findQuery]);
+  const handleAdd=useCallback(async illustrator=>{
+    // Only real illustrator_directory results reach this handler — never free text.
+    setAddStatus(s=>({...s,[illustrator]:"adding"}));
+    const res=await addArtistToArchive(illustrator);
+    if(res.ok){
+      setAddStatus(s=>({...s,[illustrator]:"added"}));
+      onArtistAdded&&onArtistAdded(); // App refetches tracked ids → YOUR ADDITIONS updates
+    }else{
+      setAddStatus(s=>({...s,[illustrator]:"error"}));
+    }
+  },[onArtistAdded]);
   const stats=useMemo(()=>rosterList.map(entry=>{
     const slug=toSlug(entry.name);
     const meta=ARTIST_META[slug]||{};
@@ -1286,6 +1322,62 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
             </div>
           </section>
         ))}
+
+        {/* ── A-D2c: Find an illustrator ─────────────────────────────────────
+            A quiet doorway for growing the archive — results come only from
+            illustrator_directory; adding calls the add_artist_to_archive RPC.
+            Untracked results are not tappable (no untracked Artist Page yet)
+            and carry no intent/favorite/Force Owned actions. */}
+        <section style={{marginTop:"2.5rem",paddingTop:"1.5rem",borderTop:"1px solid #1e1e35"}}>
+          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".4rem"}}>FIND AN ILLUSTRATOR</h3>
+          <p style={{fontSize:".72rem",color:"#4a4a70",marginBottom:".75rem",letterSpacing:".02em"}}>Search every illustrator in the catalog and add them to your archive.</p>
+          <div style={{display:"flex",gap:".5rem",maxWidth:420}}>
+            <input
+              type="search"
+              placeholder="Illustrator name…"
+              value={findQuery}
+              onChange={e=>setFindQuery(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter")runFind();}}
+              style={{flex:1,minWidth:0,background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".45rem .7rem",fontSize:".82rem"}}
+            />
+            <button onClick={runFind} disabled={findStatus==="searching"||!findQuery.trim()} className="btn-ghost" style={{borderRadius:8,padding:".45rem .8rem",fontSize:".74rem",fontWeight:600,color:"#8b6cd8",whiteSpace:"nowrap",opacity:findStatus==="searching"||!findQuery.trim()?.55:1}}>
+              {findStatus==="searching"?<span style={{display:"flex",alignItems:"center",gap:5}}><IcoSpin/> Searching…</span>:"Search"}
+            </button>
+          </div>
+          {findStatus==="error"&&(
+            <p style={{fontSize:".72rem",color:"#f87171",marginTop:".7rem"}}>Search isn't available right now — try again in a moment.</p>
+          )}
+          {findStatus==="done"&&findResults&&findResults.length===0&&(
+            <p style={{fontSize:".72rem",color:"#6b6b90",marginTop:".7rem"}}>No illustrators found for “{findQuery.trim()}”.</p>
+          )}
+          {findResults&&findResults.length>0&&(
+            <div style={{marginTop:".85rem",display:"flex",flexDirection:"column",gap:"2px",maxWidth:520}}>
+              {findResults.map(r=>{
+                const name=r.illustrator;
+                const st=addStatus[name];
+                const count=Number(r.card_count)||0; // bigint counts can serialize as strings
+                const inArchive=trackedNames.has(String(name).toLowerCase())||st==="added";
+                return(
+                  <div key={name} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem",border:"1px solid #1e1e35",borderRadius:10,background:"#0b0b16"}}>
+                    <div style={{minWidth:0,flex:1}}>
+                      <span style={{fontSize:".82rem",fontWeight:600,color:"#e8e8f4"}}>{name}</span>
+                      <span style={{fontSize:".68rem",color:"#6b6b90",marginLeft:".6rem",fontVariantNumeric:"tabular-nums"}}>{count} card{count===1?"":"s"}</span>
+                    </div>
+                    {inArchive?(
+                      <span style={{fontSize:".66rem",color:"#22c55e",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>✓ In your archive</span>
+                    ):st==="adding"?(
+                      <span style={{fontSize:".66rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap",flexShrink:0}}><IcoSpin/> Adding…</span>
+                    ):st==="error"?(
+                      <button onClick={()=>handleAdd(name)} className="btn-ghost" style={{borderRadius:8,padding:".3rem .6rem",fontSize:".66rem",fontWeight:600,color:"#f87171",whiteSpace:"nowrap",flexShrink:0}}>Couldn't add — retry</button>
+                    ):(
+                      <button onClick={()=>handleAdd(name)} className="btn-ghost" style={{borderRadius:8,padding:".3rem .6rem",fontSize:".66rem",fontWeight:600,color:"#8b6cd8",whiteSpace:"nowrap",flexShrink:0}}>Add to Archive</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );
@@ -1314,6 +1406,7 @@ function App(){
   const[csvStatus,     setCsvStatus]    =useState(null);
   const[syncStatus,    setSyncStatus]   =useState("idle");
   const[dynamicArtists,setDynamicArtists]=useState([]); // A-D2b0: user-tracked artists beyond the curated roster
+  const[dynRefresh,    setDynRefresh]    =useState(0);  // A-D2c: bump to re-run the tracked-artist fetch after Add to Archive
   const fileRef=useRef(null),searchRef=useRef(null);
 
   const withSync=async fn=>{setSyncStatus("syncing");try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}};
@@ -1369,10 +1462,14 @@ function App(){
       }
     })();
     return()=>{cancelled=true;};
-  },[user&&user.id]);
+  },[user&&user.id,dynRefresh]); // A-D2c: dynRefresh re-runs this after Add to Archive
 
   // Curated ARTISTS in existing order + dynamic tracked artists appended.
   const effectiveRoster=useMemo(()=>[...ARTISTS,...dynamicArtists],[dynamicArtists]);
+  // A-D2c: full refetch (rather than optimistic append) is deliberate — it
+  // avoids stale state and duplicate roster entries; the incremental
+  // dynamic-card effect + pb8 cache make the re-run cheap.
+  const handleArtistAdded=useCallback(()=>setDynRefresh(n=>n+1),[]);
 
   const handleSendLink=async email=>{const{error}=await supabase.auth.signInWithOtp({email,options:{shouldCreateUser:true}});if(error)throw error;};
   const handleVerifyCode=async(email,token)=>{const{error}=await supabase.auth.verifyOtp({email,token,type:"email"});if(error)throw error;};
@@ -1542,7 +1639,7 @@ function App(){
   </>);
 
   if(view==="artists")return(
-    <ArtistDirectory visibleCardData={visibleCardData} checkOwned={checkOwned} loadingSet={loadingSet} errors={errors} onOpenArtist={slug=>goTo("artist:"+slug)} onBack={()=>setView("dashboard")} roster={effectiveRoster}/>
+    <ArtistDirectory visibleCardData={visibleCardData} checkOwned={checkOwned} loadingSet={loadingSet} errors={errors} onOpenArtist={slug=>goTo("artist:"+slug)} onBack={()=>setView("dashboard")} roster={effectiveRoster} onArtistAdded={handleArtistAdded}/>
   );
 
   const visibleArtists=filterSlug==="all"?effectiveRoster:effectiveRoster.filter(a=>toSlug(a.name)===filterSlug); // A-D2b0
