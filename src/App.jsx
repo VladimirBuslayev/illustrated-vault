@@ -109,7 +109,7 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
       <div className="fade-in" style={{position:"relative",zIndex:10,textAlign:"center",padding:"1rem",width:"100%",maxWidth:400}}>
         <div style={{position:"relative",display:"flex",justifyContent:"center",marginBottom:"1.25rem"}}>
           <div style={{position:"absolute",width:200,height:200,borderRadius:"50%",background:"radial-gradient(circle,rgba(198,87,143,0.5) 0%,rgba(21,3,83,0.35) 55%,transparent 75%)",filter:"blur(18px)",animation:"cosmicBreathe 4.5s ease-in-out infinite",pointerEvents:"none"}}/>
-          <BlazLogo size={80} glow/>
+          <BlazLogo size={64} glow/>
         </div>
         <h1 className="font-display" style={{position:"relative",fontSize:"clamp(2.4rem,9vw,4.2rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".7rem",backgroundImage:"linear-gradient(90deg,#fcd99d 0%,#f38e29 22%,#ea2515 45%,#c6578f 70%,#150353 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",filter:"drop-shadow(0 0 10px rgba(234,37,21,0.15))"}}>
           Illustrated
@@ -194,7 +194,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",rowGap:".45rem"}}>
           <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer",minWidth:0}} onClick={()=>onGoBinder("landing")}>
-            <BlazLogo size={28}/>
+            <BlazLogo size={22}/>
             <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
           </div>
           <div style={{display:"flex",gap:".4rem",alignItems:"center",marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
@@ -224,8 +224,13 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
             ⚠ {Object.keys(errors).length} artist{Object.keys(errors).length>1?"s":""} failed to load — open the binder to see which, and retry.
           </div>
         )}
+        {/* Hotfix: brand mark removed from the hero — it read as a brand stamp
+            on what should be the most personal surface in the app.
+            TODO(hero-visual): the Dashboard hero should eventually feature a
+            personal collection visual instead — a favorite/featured card, a
+            small collage from the user's top artists, or a binder-page
+            preview. Not a brand logo. Build only as a deliberate slice. */}
         <div style={{marginTop:"1.5rem",marginBottom:"1.5rem",background:"radial-gradient(ellipse at 25% 50%,rgba(220,72,64,0.1) 0%,transparent 65%)",border:"1px solid #1e1e35",borderRadius:20,padding:"2rem 1.5rem",display:"flex",flexWrap:"wrap",alignItems:"center",gap:"2rem"}}>
-          <div style={{display:"flex",justifyContent:"center",flexShrink:0}}><BlazLogo size={120} glow/></div>
           <div style={{flex:1,minWidth:180}}>
             <div style={{fontSize:".6rem",letterSpacing:".18em",color:"#5a2e10",marginBottom:".3rem",fontWeight:600}}>{user?.email||"YOUR COLLECTION"}</div>
             <h2 className="font-display" style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".4rem",color:"#f2e9df"}}>YOUR BINDER</h2>
@@ -923,7 +928,7 @@ class ErrorBoundary extends React.Component{
     if(this.state.hasError){
       return(
         <div style={{position:"fixed",inset:0,background:"#07070f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2rem",textAlign:"center",gap:"1rem"}}>
-          <BlazLogo size={48}/>
+          <BlazLogo size={40}/>
           <p style={{color:"#f87171",fontSize:"1rem",fontWeight:700}}>Something went wrong.</p>
           <p style={{color:"#6b6b90",fontSize:".8rem",maxWidth:320,lineHeight:1.5}}>{(this.state.error&&this.state.error.message)||"An unexpected error occurred."}</p>
           <button onClick={()=>window.location.reload()} style={{background:"linear-gradient(135deg,#ff5500,#ff2200)",color:"#fff",border:"none",borderRadius:8,padding:".65rem 1.75rem",cursor:"pointer",fontWeight:700,fontSize:".85rem"}}>Reload</button>
@@ -1033,7 +1038,7 @@ function SharedBinder({token}){
   if(status==="loading")return<div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}><IcoSpin/></div>;
   if(status==="invalid")return(
     <div style={{minHeight:"100dvh",background:"#07070f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",padding:"2rem",textAlign:"center"}}>
-      <BlazLogo size={64}/>
+      <BlazLogo size={52}/>
       <h2 style={{color:"#e8e8f4",fontSize:"1.15rem",fontWeight:800}}>This share link isn't active</h2>
       <p style={{color:"#6b6b90",fontSize:".85rem",maxWidth:320,lineHeight:1.5}}>It may have been revoked, paused, or copied incorrectly. Ask whoever shared it for a fresh link.</p>
     </div>
@@ -1051,7 +1056,7 @@ function SharedBinder({token}){
         <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".6rem",flexWrap:"wrap",gap:".5rem"}}>
             <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
-              <BlazLogo size={26}/>
+              <BlazLogo size={22}/>
               <div style={{display:"flex",alignItems:"baseline",gap:".5rem",flexWrap:"wrap"}}>
                 <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
                 {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
@@ -1218,6 +1223,7 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
   const[findResults,setFindResults]=useState(null);   // null = no search yet; [] = no matches
   const[findStatus, setFindStatus] =useState("idle"); // idle | searching | done | error
   const[addStatus,  setAddStatus]  =useState({});     // illustrator → adding | added | error
+  const[addErrors,  setAddErrors]  =useState({});     // illustrator → short human-readable reason
   // Names already in the archive (curated + dynamic), lowercased, incl. aliases —
   // used to label "In your archive" and prevent duplicate adds.
   const trackedNames=useMemo(()=>{
@@ -1239,12 +1245,14 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
   const handleAdd=useCallback(async illustrator=>{
     // Only real illustrator_directory results reach this handler — never free text.
     setAddStatus(s=>({...s,[illustrator]:"adding"}));
+    setAddErrors(s=>{const n={...s};delete n[illustrator];return n;});
     const res=await addArtistToArchive(illustrator);
     if(res.ok){
       setAddStatus(s=>({...s,[illustrator]:"added"}));
       onArtistAdded&&onArtistAdded(); // App refetches tracked ids → YOUR ADDITIONS updates
     }else{
       setAddStatus(s=>({...s,[illustrator]:"error"}));
+      setAddErrors(s=>({...s,[illustrator]:res.error||"Couldn't add right now."}));
     }
   },[onArtistAdded]);
   const stats=useMemo(()=>rosterList.map(entry=>{
@@ -1286,6 +1294,69 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
       </header>
       <main style={{maxWidth:860,margin:"0 auto",padding:"1.2rem 1rem 3rem"}}>
         <p style={{fontSize:".74rem",color:"#6b6b90",marginBottom:"1.4rem",letterSpacing:".02em"}}>The illustrators in your vault.</p>
+
+        {/* ── A-D2c: Find an illustrator ─────────────────────────────────────
+            A quiet doorway for growing the archive — placed above the roster
+            now that Add to Archive is live, but kept compact so the page
+            stays a gallery, not a database search. Results come only from
+            illustrator_directory; adding calls the add_artist_to_archive RPC.
+            Untracked results are not tappable (no untracked Artist Page yet)
+            and carry no intent/favorite/Force Owned actions. */}
+        <section style={{marginBottom:"2.2rem"}}>
+          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".4rem"}}>FIND AN ILLUSTRATOR</h3>
+          <div style={{display:"flex",gap:".5rem",maxWidth:420}}>
+            <input
+              type="search"
+              placeholder="Illustrator name…"
+              value={findQuery}
+              onChange={e=>setFindQuery(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter")runFind();}}
+              style={{flex:1,minWidth:0,background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".45rem .7rem",fontSize:".82rem"}}
+            />
+            <button onClick={runFind} disabled={findStatus==="searching"||!findQuery.trim()} className="btn-ghost" style={{borderRadius:8,padding:".45rem .8rem",fontSize:".74rem",fontWeight:600,color:"#8b6cd8",whiteSpace:"nowrap",opacity:findStatus==="searching"||!findQuery.trim()?.55:1}}>
+              {findStatus==="searching"?<span style={{display:"flex",alignItems:"center",gap:5}}><IcoSpin/> Searching…</span>:"Search"}
+            </button>
+          </div>
+          {findStatus==="error"&&(
+            <p style={{fontSize:".72rem",color:"#f87171",marginTop:".7rem"}}>Search isn't available right now — try again in a moment.</p>
+          )}
+          {findStatus==="done"&&findResults&&findResults.length===0&&(
+            <p style={{fontSize:".72rem",color:"#6b6b90",marginTop:".7rem"}}>No illustrators found for “{findQuery.trim()}”.</p>
+          )}
+          {findResults&&findResults.length>0&&(
+            <div style={{marginTop:".85rem",display:"flex",flexDirection:"column",gap:"2px",maxWidth:520}}>
+              {findResults.map(r=>{
+                const name=r.illustrator;
+                const st=addStatus[name];
+                const count=Number(r.card_count)||0; // bigint counts can serialize as strings
+                const inArchive=trackedNames.has(String(name).toLowerCase())||st==="added";
+                return(
+                  <div key={name} style={{border:"1px solid #1e1e35",borderRadius:10,background:"#0b0b16",padding:".5rem .75rem"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:".75rem"}}>
+                      <div style={{minWidth:0,flex:1}}>
+                        <span style={{fontSize:".82rem",fontWeight:600,color:"#e8e8f4"}}>{name}</span>
+                        <span style={{fontSize:".68rem",color:"#6b6b90",marginLeft:".6rem",fontVariantNumeric:"tabular-nums"}}>{count} card{count===1?"":"s"}</span>
+                      </div>
+                      {inArchive?(
+                        <span style={{fontSize:".66rem",color:"#22c55e",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>✓ In your archive</span>
+                      ):st==="adding"?(
+                        <span style={{fontSize:".66rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap",flexShrink:0}}><IcoSpin/> Adding…</span>
+                      ):st==="error"?(
+                        <button onClick={()=>handleAdd(name)} className="btn-ghost" style={{borderRadius:8,padding:".3rem .6rem",fontSize:".66rem",fontWeight:600,color:"#f87171",whiteSpace:"nowrap",flexShrink:0}}>Couldn't add — retry</button>
+                      ):(
+                        <button onClick={()=>handleAdd(name)} className="btn-ghost" style={{borderRadius:8,padding:".3rem .6rem",fontSize:".66rem",fontWeight:600,color:"#8b6cd8",whiteSpace:"nowrap",flexShrink:0}}>Add to Archive</button>
+                      )}
+                    </div>
+                    {st==="error"&&addErrors[name]&&(
+                      <div style={{fontSize:".64rem",color:"#b06060",marginTop:".35rem",letterSpacing:".01em"}}>{addErrors[name]}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
         {sections.map(sec=>sec.items.length>0&&(
           <section key={sec.label} style={{marginBottom:"2rem"}}>
             <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>{sec.label}</h3>
@@ -1323,61 +1394,6 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
           </section>
         ))}
 
-        {/* ── A-D2c: Find an illustrator ─────────────────────────────────────
-            A quiet doorway for growing the archive — results come only from
-            illustrator_directory; adding calls the add_artist_to_archive RPC.
-            Untracked results are not tappable (no untracked Artist Page yet)
-            and carry no intent/favorite/Force Owned actions. */}
-        <section style={{marginTop:"2.5rem",paddingTop:"1.5rem",borderTop:"1px solid #1e1e35"}}>
-          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".4rem"}}>FIND AN ILLUSTRATOR</h3>
-          <p style={{fontSize:".72rem",color:"#4a4a70",marginBottom:".75rem",letterSpacing:".02em"}}>Search every illustrator in the catalog and add them to your archive.</p>
-          <div style={{display:"flex",gap:".5rem",maxWidth:420}}>
-            <input
-              type="search"
-              placeholder="Illustrator name…"
-              value={findQuery}
-              onChange={e=>setFindQuery(e.target.value)}
-              onKeyDown={e=>{if(e.key==="Enter")runFind();}}
-              style={{flex:1,minWidth:0,background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".45rem .7rem",fontSize:".82rem"}}
-            />
-            <button onClick={runFind} disabled={findStatus==="searching"||!findQuery.trim()} className="btn-ghost" style={{borderRadius:8,padding:".45rem .8rem",fontSize:".74rem",fontWeight:600,color:"#8b6cd8",whiteSpace:"nowrap",opacity:findStatus==="searching"||!findQuery.trim()?.55:1}}>
-              {findStatus==="searching"?<span style={{display:"flex",alignItems:"center",gap:5}}><IcoSpin/> Searching…</span>:"Search"}
-            </button>
-          </div>
-          {findStatus==="error"&&(
-            <p style={{fontSize:".72rem",color:"#f87171",marginTop:".7rem"}}>Search isn't available right now — try again in a moment.</p>
-          )}
-          {findStatus==="done"&&findResults&&findResults.length===0&&(
-            <p style={{fontSize:".72rem",color:"#6b6b90",marginTop:".7rem"}}>No illustrators found for “{findQuery.trim()}”.</p>
-          )}
-          {findResults&&findResults.length>0&&(
-            <div style={{marginTop:".85rem",display:"flex",flexDirection:"column",gap:"2px",maxWidth:520}}>
-              {findResults.map(r=>{
-                const name=r.illustrator;
-                const st=addStatus[name];
-                const count=Number(r.card_count)||0; // bigint counts can serialize as strings
-                const inArchive=trackedNames.has(String(name).toLowerCase())||st==="added";
-                return(
-                  <div key={name} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem",border:"1px solid #1e1e35",borderRadius:10,background:"#0b0b16"}}>
-                    <div style={{minWidth:0,flex:1}}>
-                      <span style={{fontSize:".82rem",fontWeight:600,color:"#e8e8f4"}}>{name}</span>
-                      <span style={{fontSize:".68rem",color:"#6b6b90",marginLeft:".6rem",fontVariantNumeric:"tabular-nums"}}>{count} card{count===1?"":"s"}</span>
-                    </div>
-                    {inArchive?(
-                      <span style={{fontSize:".66rem",color:"#22c55e",fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>✓ In your archive</span>
-                    ):st==="adding"?(
-                      <span style={{fontSize:".66rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap",flexShrink:0}}><IcoSpin/> Adding…</span>
-                    ):st==="error"?(
-                      <button onClick={()=>handleAdd(name)} className="btn-ghost" style={{borderRadius:8,padding:".3rem .6rem",fontSize:".66rem",fontWeight:600,color:"#f87171",whiteSpace:"nowrap",flexShrink:0}}>Couldn't add — retry</button>
-                    ):(
-                      <button onClick={()=>handleAdd(name)} className="btn-ghost" style={{borderRadius:8,padding:".3rem .6rem",fontSize:".66rem",fontWeight:600,color:"#8b6cd8",whiteSpace:"nowrap",flexShrink:0}}>Add to Archive</button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
       </main>
     </div>
   );
@@ -1609,7 +1625,7 @@ function App(){
   if(view==="loading-data")return(
     <div style={{position:"fixed",inset:0,background:"radial-gradient(ellipse at 50% 110%,#3d0f00 0%,#1a0500 40%,#030100 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",overflow:"hidden"}}>
       <FlameBackground dim/>
-      <div style={{position:"relative",zIndex:10,textAlign:"center"}}><BlazLogo size={64} glow/><p style={{color:"#ff9944",fontSize:".875rem",marginTop:".75rem"}}>Loading your collection…</p></div>
+      <div style={{position:"relative",zIndex:10,textAlign:"center"}}><BlazLogo size={52} glow/><p style={{color:"#ff9944",fontSize:".875rem",marginTop:".75rem"}}>Loading your collection…</p></div>
     </div>
   );
 
@@ -1656,7 +1672,7 @@ function App(){
         <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".6rem"}}>
             <div style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer"}} onClick={()=>setView("dashboard")}>
-              <BlazLogo size={26}/>
+              <BlazLogo size={22}/>
               <div style={{display:"flex",alignItems:"baseline",gap:".5rem"}}>
                 <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
                 {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
