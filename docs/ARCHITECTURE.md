@@ -1,6 +1,6 @@
 # Illustrated Vault — Architecture
 
-Last updated: 2026-07-02
+Last updated: 2026-07-03
 
 ## Production architecture
 
@@ -125,7 +125,7 @@ All network and Supabase I/O. Imported by `src/App.jsx`.
 | `imageService.js` | `fetchFallbackImage`, `buildLimitlessGuess` | pokemontcg.io fallback; Limitless CDN guess |
 | `tcgdexService.js` | `fetchCardBriefs`, `fetchFullCard` | TCGdex only; `fetchCardBriefs` returns `[]` when `entry.isSet` is false |
 | `intentService.js` | `fetchUserIntent`, `setCardIntent`, `clearCardIntent`, `INTENT_STATUSES` | All `user_card_intent` reads/writes; no caching; RLS-enforced `user_id = auth.uid()` |
-| `artistService.js` | `fetchTrackedArtistIds`, `fetchArtistIdentities`, `searchIllustratorDirectory`, `addArtistToArchive` | `user_tracked_artists` / `artists` reads for the dynamic roster (soft-fail to empty; curated ARTISTS remain the safety floor); `illustrator_directory` search and `add_artist_to_archive` RPC write path for A-D2c-lite Find Illustrator / Add to Archive; no caching |
+| `artistService.js` | `fetchTrackedArtistIds`, `fetchTrackedArtistTiers`, `fetchArtistIdentities`, `searchIllustratorDirectory`, `addArtistToArchive`, `updateArtistTier`, `removeArtistFromArchive` | `user_tracked_artists` / `artists` reads for the dynamic roster (soft-fail to empty; curated ARTISTS remain the safety floor); `illustrator_directory` search and `add_artist_to_archive` RPC write path for A-D2c-lite Find Illustrator / Add to Archive; `updateArtistTier` / `removeArtistFromArchive` (A-D2d) are direct RLS-guarded writes to `user_tracked_artists`, not RPCs — scoped to dynamic artists only, since curated entries are never rows in that table; no caching |
 
 ## Data flow — artist card display
 
@@ -202,6 +202,33 @@ effectiveRoster = useMemo([...ARTISTS, ...dynamicArtists])
 Every artistService path soft-fails to empty: missing tables, RLS blocks, or
 network failures render the app curated-only, identical to pre-B0 behavior.
 SharedBinder and ArtistPicker remain curated-only.
+
+## Data flow — manage artist in archive (A-D2d)
+
+```
+ArtistDirectory tile (isDynamic only) → "⋯" Manage popover
+  → Move to Main/Secondary/Your Additions:
+      handleTierChange → App.handleChangeArtistTier(artistId, tier)
+        → updateArtistTier(user.id, artistId, tier)   [artistService.js]
+          → supabase.from('user_tracked_artists').update({tier}).eq(...)
+        → on success: setDynRefresh(n+1) → dynamic-artist effect re-fetches
+          → dynamicArtists[i].tier now reflects the new value
+          → Dashboard / ArtistDirectory section splits (already tier-keyed)
+            reclassify the tile with no component changes
+  → Remove from Archive (window.confirm-gated):
+      handleRemove → App.handleRemoveArtist(artistId)
+        → removeArtistFromArchive(user.id, artistId) [artistService.js]
+          → supabase.from('user_tracked_artists').delete().eq(...)
+        → on success: setDynRefresh(n+1) → artist drops out of dynamicArtists
+          → effectiveRoster / all roster-driven views update on next render
+```
+
+Both mutations are plain RLS-guarded table writes (not RPCs) and are
+reachable only for `isDynamic` tiles — curated `ARTISTS` entries are never
+rows in `user_tracked_artists`, so there is no code path by which a curated
+artist could be tier-changed or removed by this flow. Neither mutation
+touches `artists` (global identity), `cards`, `card_overrides`,
+`card_favorites`, `user_card_intent`, or manual owned/missing state.
 
 ## Data flow — SharedBinder
 
