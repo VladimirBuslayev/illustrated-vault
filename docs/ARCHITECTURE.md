@@ -125,7 +125,7 @@ All network and Supabase I/O. Imported by `src/App.jsx`.
 | `imageService.js` | `fetchFallbackImage`, `buildLimitlessGuess` | pokemontcg.io fallback; Limitless CDN guess |
 | `tcgdexService.js` | `fetchCardBriefs`, `fetchFullCard` | TCGdex only; `fetchCardBriefs` returns `[]` when `entry.isSet` is false |
 | `intentService.js` | `fetchUserIntent`, `setCardIntent`, `clearCardIntent`, `INTENT_STATUSES` | All `user_card_intent` reads/writes; no caching; RLS-enforced `user_id = auth.uid()` |
-| `artistService.js` | `fetchTrackedArtistIds`, `fetchArtistIdentities` | `user_tracked_artists` / `artists` reads for the dynamic roster; every function soft-fails to empty (curated ARTISTS remain the safety floor); no caching |
+| `artistService.js` | `fetchTrackedArtistIds`, `fetchArtistIdentities`, `searchIllustratorDirectory`, `addArtistToArchive` | `user_tracked_artists` / `artists` reads for the dynamic roster (soft-fail to empty; curated ARTISTS remain the safety floor); `illustrator_directory` search and `add_artist_to_archive` RPC write path for A-D2c-lite Find Illustrator / Add to Archive; no caching |
 
 ## Data flow — artist card display
 
