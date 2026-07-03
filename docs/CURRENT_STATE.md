@@ -100,8 +100,18 @@ A-D2b0 (app, complete):
 - Dynamic card fetch (`cardService.js`) uses exact `artist_id` equality OR
   exact `illustrator` equality — never substring ILIKE.
 - SharedBinder and ArtistPicker remain curated-only.
-- No untrack, no untracked Artist Page, no Add-to-Archive UI yet (A-D2c is
-  the next slice).
+
+A-D2c-lite (app, complete):
+- Find Illustrator search lives inside Explore Artists, querying
+  `illustrator_directory` via `searchIllustratorDirectory`.
+- Add to Archive calls `addArtistToArchive` (`add_artist_to_archive` RPC).
+  Added artists appear under "YOUR ADDITIONS" once `onArtistAdded` triggers
+  a tracked-id refetch.
+- SQL hotfix (committed): `add_artist_to_archive` now inserts `display_name`
+  when creating a new `artists` row. This fixed Add to Archive for
+  illustrators without an existing identity row (e.g. Midori Harada), which
+  previously failed the insert.
+- No untrack, no untracked Artist Page yet (A-D2d is the next slice).
 
 ## SharedBinder — read-only share surface
 
@@ -111,6 +121,8 @@ A-D2b0 (app, complete):
 ## Visual polish
 
 V-A Quiet Pass applied: logo glow reduced, flame/button styling calmed, Dashboard hero de-gradiented, footer artist-name text removed, stale comments cleaned, and an incident where CSS was accidentally pasted into `index.html` was fixed. `index.html` must remain a minimal Vite shell (root div + `/src/main.jsx` script). Do not reintroduce loud fire/game UI.
+
+Brand V-B applied: final logo asset (`/illustrated-logo-gradient.svg`) wired into `BlazLogo` (component name kept to avoid touching its 11 call sites), logo sizing reduced across call sites, and the Dashboard hero no longer uses the large brand mark.
 
 ## Completion tracking
 
