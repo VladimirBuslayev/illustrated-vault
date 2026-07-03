@@ -68,3 +68,16 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
 .btn-tap{transition:transform .12s ease,filter .15s ease;}
 .btn-tap:hover{filter:brightness(1.15);}
 .btn-tap:active{transform:scale(.96);}
+
+/* ── V-C.1 Vault Queue (Dashboard hero right side) ──────────────────────────
+   Column of alternate hero candidates on desktop; wraps into a compact row
+   under the feature on narrow screens. Session-swap only — no persistence. */
+.vault-queue{display:flex;flex-direction:column;gap:.55rem;flex-shrink:0;width:170px;}
+.vault-queue-label{width:100%;}
+.vault-queue-item{display:flex;align-items:center;gap:.55rem;background:rgba(255,255,255,0.025);border:1px solid #1a1a30;border-radius:10px;padding:.4rem .55rem;cursor:pointer;text-align:left;transition:background .15s ease,border-color .15s ease,transform .12s ease;}
+.vault-queue-item:hover{background:rgba(139,108,216,0.08);border-color:#2a2a45;}
+.vault-queue-item:active{transform:scale(.97);}
+@media(max-width:680px){
+  .vault-queue{flex-direction:row;flex-wrap:wrap;width:100%;}
+  .vault-queue-item{flex:1 1 45%;min-width:0;}
+}
