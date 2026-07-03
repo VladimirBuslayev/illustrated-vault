@@ -687,3 +687,19 @@ The V-C hero left dead space on the right; showing the other ladder candidates m
 Status:
 
 Accepted. Shipped in the V-C.1 Dashboard polish pass.
+
+---
+
+## 2026-07-03 — Artist Page Slice C: consolidate, don't add; defer Manage to C2
+
+Decision:
+
+Slice C is a pure composition pass on the Artist Page: (1) hero Owned/Missing chips removed and the remaining Hunting / "On the list" chips become tappable shortcuts into the Hunting segment; (2) the About story band and Notable Cards band merge into a single collapsible "FROM THE ARCHIVE" band (default open, local state only); (3) artists with no story and no notable cards get a quiet fallback line instead of a silently missing band; (4) the Hunting segment gains a one-line summary, the ON THE LIST label, and warmer empty-state copy. Manage-in-mini-header for dynamic artists is split into a follow-up slice, Artist Page C2.
+
+Reason:
+
+The page's "grid with controls" feeling came from redundancy, not missing features: Owned/Missing chips duplicated the progress line two rems above them, and About + Notable formed two of five stacked bands before any collection content. Every Slice C move is a reduction or merge over existing state and data — no new state beyond one local collapse boolean, no schema, no service changes, no semantic changes to ownership/intent/favorites. Manage was excluded because it is the only move with structural risk (prop threading plus remove-then-navigate ordering); isolating it keeps both commits narrowly revertible, matching the A-D2c → A-D2d sequencing pattern. The Hunting-segment copy and label changes were verified safe for Binder/SharedBinder, which never set viewMode="hunting".
+
+Status:
+
+Accepted. Shipped as Artist Page Slice C; Manage-in-mini-header queued as Artist Page C2.
