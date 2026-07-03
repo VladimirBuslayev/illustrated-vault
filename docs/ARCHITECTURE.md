@@ -40,6 +40,7 @@ src/
     imageService.js
     tcgdexService.js
     intentService.js
+    artistService.js
   styles/
     index.css
   utils/
@@ -124,6 +125,7 @@ All network and Supabase I/O. Imported by `src/App.jsx`.
 | `imageService.js` | `fetchFallbackImage`, `buildLimitlessGuess` | pokemontcg.io fallback; Limitless CDN guess |
 | `tcgdexService.js` | `fetchCardBriefs`, `fetchFullCard` | TCGdex only; `fetchCardBriefs` returns `[]` when `entry.isSet` is false |
 | `intentService.js` | `fetchUserIntent`, `setCardIntent`, `clearCardIntent`, `INTENT_STATUSES` | All `user_card_intent` reads/writes; no caching; RLS-enforced `user_id = auth.uid()` |
+| `artistService.js` | `fetchTrackedArtistIds`, `fetchArtistIdentities` | `user_tracked_artists` / `artists` reads for the dynamic roster; every function soft-fails to empty (curated ARTISTS remain the safety floor); no caching |
 
 ## Data flow — artist card display
 
@@ -183,6 +185,24 @@ Invariants: intent never affects `checkOwned`, ownership keys, or completion
 counts. Owned cards with stale intent rows are suppressed at render time.
 Intent is not exposed in SharedBinder v1.
 
+## Data flow — dynamic tracked artists (A-D2b0)
+
+```
+App.useEffect (on user change) → fetchTrackedArtistIds(user.id)   [artistService.js]
+  → supabase.from('user_tracked_artists').select('artist_id')
+  → ids not in curated ARTISTS → fetchArtistIdentities(newIds)
+    → supabase.from('artists').select('id, aliases')
+  → setDynamicArtists([{ name, tier:'added', isDynamic, artistId, aliases }])
+
+effectiveRoster = useMemo([...ARTISTS, ...dynamicArtists])
+  → loadEntry per dynamic artist (incremental effect; pb8 cache dedupes)
+  → cardService dynamic branch: artist_id.eq OR illustrator.in(exact names)
+```
+
+Every artistService path soft-fails to empty: missing tables, RLS blocks, or
+network failures render the app curated-only, identical to pre-B0 behavior.
+SharedBinder and ArtistPicker remain curated-only.
+
 ## Data flow — SharedBinder
 
 ```
@@ -213,18 +233,24 @@ mapping is stable and must not be altered without a corresponding schema
 migration.
 
 User-scoped tables: `user_collection`, `card_overrides`, `price_history`,
-`card_favorites` (via `collectionService.js`) and `user_card_intent` (via
-`intentService.js`, RLS `user_id = auth.uid()`). Editorial enrichment lives in
-`card_extras`, merged into `cards_effective`; the normalized `artists` table
-(with alias arrays) backs FK artist identity.
+`card_favorites` (via `collectionService.js`), `user_card_intent` (via
+`intentService.js`) and `user_tracked_artists` (via `artistService.js`) — all
+RLS `user_id = auth.uid()`. Editorial enrichment lives in `card_extras`,
+merged into `cards_effective`; the normalized `artists` table (with alias
+arrays) backs FK artist identity and is formalized as global artist identity
+(20 rows today). `illustrator_directory` is the read-only discovery view
+(illustrator + card count) backing the future Find Illustrator flow.
 
 ## Backend RPC dependencies — unchanged
 
 | RPC | Signature | Used by |
 |---|---|---|
 | `get_shared_collection` | `p_token TEXT` | `fetchSharedCollection` — share/binder read path |
+| `add_artist_to_archive` | `p_illustrator TEXT` | Add to Archive write path (A-D2a); creates/normalizes the `artists` identity row and inserts the `user_tracked_artists` row. UI wiring arrives with A-D2c |
 
-This RPC is the only stored procedure the frontend calls. It powers the public shared binder view. Do not modify its signature or remove it.
+`get_shared_collection` powers the public shared binder view. Do not modify
+its signature or remove it. `add_artist_to_archive` is the single write path
+for archive additions — no ad-hoc client inserts into `user_tracked_artists`.
 
 ## Deployment — current state
 
