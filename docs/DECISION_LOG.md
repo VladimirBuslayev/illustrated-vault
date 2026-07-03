@@ -671,3 +671,19 @@ Do not add broad artist-add or artist directory functionality in Gate 1. The cor
 Status:
 
 Accepted. Deferred to Gate 2 backlog (has not yet been built in Gate 2 either).
+
+---
+
+## 2026-07-03 — V-C.1: Vault Queue is session-only; artist sections collapse locally
+
+Decision:
+
+The Dashboard hero's right side becomes a Vault Queue of alternate hero candidates drawn from the same selection ladder (hunting → want → favorite). Tapping a queue item swaps the featured card via plain component state — no persistence, no manual pinning, no schema, no localStorage. Main Artists and Secondary & Special become collapsible with local-only state (Main open, Secondary & Special collapsed by default, following the Hunt Board MAYBE LATER precedent). The header CSV button is renamed "Import" and softened but keeps its placement.
+
+Reason:
+
+The V-C hero left dead space on the right; showing the other ladder candidates makes the feature feel like a living archive without introducing a carousel, rotation, or any new product system. Session-only swap keeps the feature deterministic on reload (candidate 0 is byte-identical to the pre-V-C.1 pick) and honors the no-persistence guardrail. Local collapse state reduces page weight without a preferences system. Moving import out of the header was judged not worth the risk in a narrow pass; the rename alone corrects its perceived role from daily action to occasional sync.
+
+Status:
+
+Accepted. Shipped in the V-C.1 Dashboard polish pass.
