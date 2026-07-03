@@ -72,12 +72,36 @@ Top-level view `hunt`, reachable from the Dashboard header and Binder header.
 
 ## Explore Artists directory — A-D1 live
 
-Read-only `artists` view over the current 20 tracked roster artists (SQL
-confirmed the `artists` table contains exactly these 20 rows). Entered via the
-"Explore Artists →" link on the Dashboard artist section header; derived
-entirely from in-memory state with no new Supabase calls. Tapping an artist
-opens the existing Artist Page. Track/untrack and untracked-artist behavior
-are deferred to A-D2.
+Read-only `artists` view entered via the "Explore Artists →" link on the
+Dashboard artist section header; derived from in-memory state. Tapping an
+artist opens the existing Artist Page.
+
+## Tracked artists — A-D2a data foundation + A-D2b0 roster spine live
+
+Permanent product rule: **users can look at anything, but can act only on
+what's in their archive.**
+
+A-D2a (SQL, complete):
+- `artists` formalized as global artist identity (currently 20 rows).
+- `user_tracked_artists` (RLS: `user_id = auth.uid()`) is the per-user archive roster.
+- `illustrator_directory` is the discovery source (illustrator + card count).
+- `add_artist_to_archive(p_illustrator text)` RPC is the single Add-to-Archive write path.
+- Only the owner account was seeded with the 20 current artists. Not a
+  universal default; new users are not auto-seeded.
+
+A-D2b0 (app, complete):
+- `src/services/artistService.js` reads `user_tracked_artists` and resolves
+  identities from `artists`. Every function soft-fails to empty.
+- `App.jsx` builds `effectiveRoster = curated ARTISTS + dynamic additions`.
+  Curated ARTISTS remain the unconditional safety floor — any fetch failure
+  renders curated-only, identical to pre-B0 behavior.
+- Dynamic additions appear under "YOUR ADDITIONS" (Dashboard, Explore
+  Artists, Binder artist dropdown) only when non-empty.
+- Dynamic card fetch (`cardService.js`) uses exact `artist_id` equality OR
+  exact `illustrator` equality — never substring ILIKE.
+- SharedBinder and ArtistPicker remain curated-only.
+- No untrack, no untracked Artist Page, no Add-to-Archive UI yet (A-D2c is
+  the next slice).
 
 ## SharedBinder — read-only share surface
 
@@ -100,13 +124,13 @@ Existed before the intent system and is unchanged:
 
 ```
 src/
-  App.jsx              — full React component tree (~1,444 lines); single file, intentional
+  App.jsx              — full React component tree (~1,630 lines); single file, intentional
   main.jsx             — entry point; ErrorBoundary + ?share= routing
   assets/logo.webp
   constants/           — artists.js, config.js, setOrder.js
   services/            — supabaseClient, cardService, collectionService,
                          shareService, cardAdapter, imageService,
-                         tcgdexService, intentService
+                         tcgdexService, intentService, artistService
   styles/index.css
   utils/               — cache, cardUtils, format, imageUrl, keys, slug, sort
 public/                — icons, manifest.json, sw.js
@@ -116,15 +140,15 @@ sync/                  — data sync / backfill scripts
 index.html             — minimal Vite shell
 ```
 
-Components in `src/App.jsx` (in order): icon components, BlazLogo, FlameBackground, LandingPage, Dashboard, CardTile, PriceChart, CardModal, ArtistPage, ArtistSection, ArtistPicker, ShareLinkPanel, SettingsPanel, ErrorBoundary, SharedBinder, HuntStatusDot, HuntBoard, App.
+Components in `src/App.jsx` (in order): icon components, BlazLogo, FlameBackground, LandingPage, Dashboard, CardTile, PriceChart, CardModal, ArtistPage, ArtistSection, ArtistPicker, ShareLinkPanel, SettingsPanel, ErrorBoundary, SharedBinder, HuntStatusDot, HuntBoard, ArtistDirectory, App.
 
 Do not split `App.jsx` unless explicitly approved.
 
 ## Supabase objects
 
-Tables/views in use: `cards`, `card_extras`, `cards_effective` (view), `artists`, `user_collection`, `card_overrides`, `price_history`, `card_favorites`, `user_card_intent`.
+Tables/views in use: `cards`, `card_extras`, `cards_effective` (view), `artists`, `user_tracked_artists`, `illustrator_directory` (view), `user_collection`, `card_overrides`, `price_history`, `card_favorites`, `user_card_intent`.
 
-RPC: `get_shared_collection(p_token)` — the only stored procedure the frontend calls.
+RPCs: `get_shared_collection(p_token)` (shared binder read path) and `add_artist_to_archive(p_illustrator)` (Add to Archive write path; UI arrives with A-D2c).
 
 ## Known limitations / open items
 
