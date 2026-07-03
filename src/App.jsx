@@ -28,8 +28,9 @@ import { supabase }                                       from './services/supab
 import { loadUserData, saveCollection, saveOverride, savePricePoint }
                                                           from './services/collectionService.js';
 import { fetchSharedCollection }                          from './services/shareService.js';
-import { fetchTrackedArtistIds, fetchArtistIdentities,
-         searchIllustratorDirectory, addArtistToArchive } from './services/artistService.js'; // A-D2b0 + A-D2c
+import { fetchTrackedArtistTiers, fetchArtistIdentities,
+         searchIllustratorDirectory, addArtistToArchive,
+         updateArtistTier, removeArtistFromArchive } from './services/artistService.js'; // A-D2b0 + A-D2c + A-D2d
 import { fetchArtistCards }                               from './services/cardService.js';
 import { fetchFallbackImage, buildLimitlessGuess }        from './services/imageService.js';
 
@@ -1214,7 +1215,7 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,rost
 // Read-only visual directory of the tracked artist roster ("Explore Artists").
 // Derived entirely from in-memory state — no Supabase calls, no mutation.
 // Tapping an artist opens the existing Artist Page. Track/untrack is A-D2.
-function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArtist,onBack,roster,onArtistAdded}){
+function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArtist,onBack,roster,onArtistAdded,onChangeTier,onRemoveArtist}){
   // A-D2b0: roster = effectiveRoster; defensive fallback to curated ARTISTS.
   const rosterList=roster||ARTISTS;
   // ── A-D2c: Find an illustrator (quiet doorway, not a database page) ─────────
@@ -1224,6 +1225,12 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
   const[findStatus, setFindStatus] =useState("idle"); // idle | searching | done | error
   const[addStatus,  setAddStatus]  =useState({});     // illustrator → adding | added | error
   const[addErrors,  setAddErrors]  =useState({});     // illustrator → short human-readable reason
+  // A-D2d: Manage control state, keyed by artistId — mirrors the addStatus/
+  // addErrors pattern above. "busy" covers both a tier change and a remove
+  // in flight (only one action per row at a time).
+  const[manageBusy,  setManageBusy]  =useState({});   // artistId → true while a change/remove is in flight
+  const[manageErrors,setManageErrors]=useState({});   // artistId → short human-readable reason
+  const[openManage,  setOpenManage]  =useState(null);  // artistId of the currently-open manage popover, or null
   // Names already in the archive (curated + dynamic), lowercased, incl. aliases —
   // used to label "In your archive" and prevent duplicate adds.
   const trackedNames=useMemo(()=>{
@@ -1255,6 +1262,26 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
       setAddErrors(s=>({...s,[illustrator]:res.error||"Couldn't add right now."}));
     }
   },[onArtistAdded]);
+  // A-D2d: Manage control — tier reassignment and remove, dynamic artists only.
+  const handleTierChange=useCallback(async(artistId,tier)=>{
+    if(!onChangeTier)return;
+    setManageBusy(s=>({...s,[artistId]:true}));
+    setManageErrors(s=>{const n={...s};delete n[artistId];return n;});
+    const res=await onChangeTier(artistId,tier);
+    setManageBusy(s=>{const n={...s};delete n[artistId];return n;});
+    if(res&&res.ok){setOpenManage(null);}
+    else{setManageErrors(s=>({...s,[artistId]:(res&&res.error)||"Couldn't update — try again."}));}
+  },[onChangeTier]);
+  const handleRemove=useCallback(async artistId=>{
+    if(!onRemoveArtist)return;
+    if(!window.confirm("Remove this artist from your archive? This only removes it from your archive — nothing is deleted from your collection."))return;
+    setManageBusy(s=>({...s,[artistId]:true}));
+    setManageErrors(s=>{const n={...s};delete n[artistId];return n;});
+    const res=await onRemoveArtist(artistId);
+    setManageBusy(s=>{const n={...s};delete n[artistId];return n;});
+    if(res&&res.ok){setOpenManage(null);}
+    else{setManageErrors(s=>({...s,[artistId]:(res&&res.error)||"Couldn't remove — try again."}));}
+  },[onRemoveArtist]);
   const stats=useMemo(()=>rosterList.map(entry=>{
     const slug=toSlug(entry.name);
     const meta=ARTIST_META[slug]||{};
@@ -1368,8 +1395,43 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
                   <div key={a.slug} className="artist-row" onClick={()=>onOpenArtist(a.slug)} style={{border:"1px solid #1e1e35",borderLeft:`3px solid ${a.meta.accent||"#8b6cd8"}`,borderRadius:12,padding:".8rem .9rem",background:"#0b0b16",display:"flex",flexDirection:"column",gap:".55rem"}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:".6rem"}}>
                       <div style={{fontSize:".9rem",fontWeight:700,color:a.pct===100&&a.total>0?"#22c55e":"#e8e8f4",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{a.name}{a.pct===100&&a.total>0?" ✓":""}</div>
-                      <div style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",flexShrink:0}}>{err?"—":isLoading?"…":`${a.owned}/${a.total}`}</div>
+                      <div style={{marginLeft:a.isDynamic?0:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",flexShrink:0}}>{err?"—":isLoading?"…":`${a.owned}/${a.total}`}</div>
+                      {/* A-D2d: Manage control — dynamic (user-added) artists only.
+                          Curated tiles get no control at all. */}
+                      {a.isDynamic&&(
+                        <button
+                          onClick={e=>{e.stopPropagation();setOpenManage(m=>m===a.artistId?null:a.artistId);setManageErrors(s=>{const n={...s};delete n[a.artistId];return n;});}}
+                          className="btn-ghost"
+                          style={{marginLeft:"auto",flexShrink:0,borderRadius:7,padding:".2rem .5rem",fontSize:".72rem",color:openManage===a.artistId?"#c0a0f8":"#6b6b90"}}
+                          title="Manage artist"
+                        >⋯</button>
+                      )}
                     </div>
+                    {a.isDynamic&&openManage===a.artistId&&(
+                      <div onClick={e=>e.stopPropagation()} style={{border:"1px solid #2a2a45",borderRadius:9,background:"#0f0f1c",padding:".55rem .6rem",display:"flex",flexDirection:"column",gap:".4rem"}}>
+                        <span style={{fontSize:".6rem",letterSpacing:".08em",color:"#6b6b90",fontWeight:700}}>MOVE TO</span>
+                        <div style={{display:"flex",gap:".35rem",flexWrap:"wrap"}}>
+                          {[["main","Main Artists"],["secondary","Secondary & Special"],["added","Your Additions"]].map(([tierVal,label])=>(
+                            <button
+                              key={tierVal}
+                              disabled={!!manageBusy[a.artistId]||a.tier===tierVal}
+                              onClick={()=>handleTierChange(a.artistId,tierVal)}
+                              className="btn-ghost"
+                              style={{borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:a.tier===tierVal?"#22c55e":"#8b6cd8",opacity:!!manageBusy[a.artistId]?.55:1,whiteSpace:"nowrap"}}
+                            >{a.tier===tierVal?`✓ ${label}`:label}</button>
+                          ))}
+                        </div>
+                        <button
+                          disabled={!!manageBusy[a.artistId]}
+                          onClick={()=>handleRemove(a.artistId)}
+                          className="btn-ghost"
+                          style={{alignSelf:"flex-start",borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:"#f87171",opacity:!!manageBusy[a.artistId]?.55:1}}
+                        >{manageBusy[a.artistId]?<span style={{display:"flex",alignItems:"center",gap:4}}><IcoSpin/> Working…</span>:"Remove from Archive"}</button>
+                        {manageErrors[a.artistId]&&(
+                          <div style={{fontSize:".64rem",color:"#b06060",letterSpacing:".01em"}}>{manageErrors[a.artistId]}</div>
+                        )}
+                      </div>
+                    )}
                     {a.meta.tags&&<div style={{fontSize:".64rem",color:"#6b6b90",letterSpacing:".02em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{a.meta.tags}</div>}
                     {a.picks.length>0&&(
                       <div style={{display:"flex",gap:".4rem"}}>
@@ -1455,7 +1517,11 @@ function App(){
     let cancelled=false;
     (async()=>{
       try{
-        const trackedIds=await fetchTrackedArtistIds(user.id);
+        // A-D2d: fetch per-user tier alongside tracked ids. New helper, not a
+        // change to fetchTrackedArtistIds — that function is left untouched
+        // and still exported for any other/future caller.
+        const trackedTiers=await fetchTrackedArtistTiers(user.id);
+        const trackedIds=new Set(trackedTiers.keys());
         // Curated ids: FK slugs where present, plus display-name slugs as a
         // defensive second key so a curated entry lacking artistId can never
         // be duplicated as a dynamic addition.
@@ -1467,7 +1533,7 @@ function App(){
         if(cancelled)return;
         setDynamicArtists(identities.map(r=>({
           name:(r.aliases&&r.aliases[0])||r.id, // display name: aliases[0] or id fallback
-          tier:"added",
+          tier:trackedTiers.get(r.id)||"added", // A-D2d: real per-user tier; "added" default/fallback
           isDynamic:true,
           artistId:r.id,
           aliases:r.aliases||[],
@@ -1486,6 +1552,24 @@ function App(){
   // avoids stale state and duplicate roster entries; the incremental
   // dynamic-card effect + pb8 cache make the re-run cheap.
   const handleArtistAdded=useCallback(()=>setDynRefresh(n=>n+1),[]);
+  // A-D2d: tier change / remove for dynamic (user-added) artists only.
+  // Curated ARTISTS entries are never rows in user_tracked_artists, so these
+  // handlers are inherently scoped to dynamic additions — there is no path
+  // by which a curated artist's artistId could reach either function.
+  // Same full-refetch-on-success pattern as handleArtistAdded: avoids
+  // optimistic-state drift, and the pb8 cache keeps the re-run cheap.
+  const handleChangeArtistTier=useCallback(async(artistId,tier)=>{
+    if(!user)return{ok:false,error:"Not signed in."};
+    const res=await updateArtistTier(user.id,artistId,tier);
+    if(res.ok)setDynRefresh(n=>n+1);
+    return res;
+  },[user]);
+  const handleRemoveArtist=useCallback(async artistId=>{
+    if(!user)return{ok:false,error:"Not signed in."};
+    const res=await removeArtistFromArchive(user.id,artistId);
+    if(res.ok)setDynRefresh(n=>n+1);
+    return res;
+  },[user]);
 
   const handleSendLink=async email=>{const{error}=await supabase.auth.signInWithOtp({email,options:{shouldCreateUser:true}});if(error)throw error;};
   const handleVerifyCode=async(email,token)=>{const{error}=await supabase.auth.verifyOtp({email,token,type:"email"});if(error)throw error;};
@@ -1655,7 +1739,7 @@ function App(){
   </>);
 
   if(view==="artists")return(
-    <ArtistDirectory visibleCardData={visibleCardData} checkOwned={checkOwned} loadingSet={loadingSet} errors={errors} onOpenArtist={slug=>goTo("artist:"+slug)} onBack={()=>setView("dashboard")} roster={effectiveRoster} onArtistAdded={handleArtistAdded}/>
+    <ArtistDirectory visibleCardData={visibleCardData} checkOwned={checkOwned} loadingSet={loadingSet} errors={errors} onOpenArtist={slug=>goTo("artist:"+slug)} onBack={()=>setView("dashboard")} roster={effectiveRoster} onArtistAdded={handleArtistAdded} onChangeTier={handleChangeArtistTier} onRemoveArtist={handleRemoveArtist}/>
   );
 
   const visibleArtists=filterSlug==="all"?effectiveRoster:effectiveRoster.filter(a=>toSlug(a.name)===filterSlug); // A-D2b0
@@ -1697,10 +1781,15 @@ function App(){
             </div>
             <select value={filterSlug} onChange={e=>setFilterSlug(e.target.value)} style={{...selSt,maxWidth:148}}>
               <option value="all">All Artists</option>
-              <optgroup label="Main">{ARTISTS.filter(a=>a.tier==="main").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
-              <optgroup label="Secondary">{ARTISTS.filter(a=>a.tier==="secondary").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              {/* A-D2d: dynamic artists tiered "main"/"secondary" fold into the
+                  matching curated optgroup; "added" (default) keeps its own
+                  "Your additions" group. Purely additive — curated-only
+                  ARTISTS filtering is unchanged when there are no dynamic
+                  artists at a given tier. */}
+              <optgroup label="Main">{[...ARTISTS.filter(a=>a.tier==="main"),...dynamicArtists.filter(a=>a.tier==="main")].map(a=><option key={a.artistId||a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              <optgroup label="Secondary">{[...ARTISTS.filter(a=>a.tier==="secondary"),...dynamicArtists.filter(a=>a.tier==="secondary")].map(a=><option key={a.artistId||a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
               <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
-              {dynamicArtists.length>0&&<optgroup label="Your additions">{dynamicArtists.map(a=><option key={a.artistId||a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>}
+              {dynamicArtists.some(a=>a.tier==="added")&&<optgroup label="Your additions">{dynamicArtists.filter(a=>a.tier==="added").map(a=><option key={a.artistId||a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>}
             </select>
             <div style={{display:"flex",gap:".3rem",alignItems:"center",flexShrink:0}}>
               <button onClick={()=>setViewMode(viewMode==="missing"?null:"missing")} style={{background:viewMode==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:viewMode==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${viewMode==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="missing"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Missing</button>
