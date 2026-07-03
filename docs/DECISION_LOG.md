@@ -1,6 +1,60 @@
 # Illustrated Vault — Decision Log
 
 ---
+## 2026-07-02 — A-D2a/B0: tracked-artist data foundation and roster spine
+
+Decision:
+
+Formalize per-user artist tracking in two layers, both now live:
+
+A-D2a (SQL, complete):
+- `artists` is formalized as **global artist identity** (id, alias arrays). It
+  currently contains 20 rows — the curated roster — but is no longer
+  conceptually limited to it.
+- `user_tracked_artists` (RLS-enabled) is the **per-user archive roster**.
+- `illustrator_directory` is the **discovery source** for finding illustrators
+  beyond the roster (name + card count over the card catalog).
+- `add_artist_to_archive(p_illustrator text)` RPC is the single write path for
+  adding an illustrator to a user's archive (creates/normalizes the `artists`
+  identity row and inserts the `user_tracked_artists` row).
+- Seeding: **only the owner account** was seeded with the 20 current artists.
+  This is a migration convenience, not a universal default — new users are not
+  auto-seeded.
+
+A-D2b0 (app roster spine, complete):
+- `effectiveRoster = curated ARTISTS + dynamic additions`.
+- The curated `ARTISTS` constant remains the **unconditional safety floor**:
+  every fetch in `artistService.js` soft-fails to empty, so missing tables,
+  RLS blocks, or network failures render the app curated-only, byte-identical
+  to pre-B0 behavior.
+- Dynamic additions append under a "YOUR ADDITIONS" section (Dashboard,
+  Explore Artists, Binder artist dropdown) only when non-empty.
+- Dynamic card fetch uses exact `artist_id` equality OR exact `illustrator`
+  equality — never substring ILIKE.
+- SharedBinder and ArtistPicker remain **curated-only**.
+- No untrack and no untracked Artist Page yet (A-D2d and later).
+
+Permanent product rule established alongside this foundation: **users can look
+at anything, but can act only on what's in their archive.** Discovery surfaces
+(illustrator_directory search) are read-only windows; intent, favorites, Force
+Owned, and all collection actions require the artist/card to be in the user's
+archive.
+
+Reason:
+
+Separating global identity (`artists`), per-user membership
+(`user_tracked_artists`), and discovery (`illustrator_directory`) lets the
+archive grow per-user without touching the curated roster mechanism, keeps
+SharedBinder's public contract stable, and gives Add to Archive a single
+audited write path (RPC) instead of ad-hoc client inserts.
+
+Status:
+
+Accepted. A-D2a SQL ran cleanly in production; A-D2b0 shipped and validated.
+Next slice: A-D2c-lite (Find Illustrator + Add to Archive inside Explore
+Artists), documented separately once validated.
+
+---
 ## 2026-07-02 — A-D1: Explore Artists directory v0 (read-only)
 
 Decision:
