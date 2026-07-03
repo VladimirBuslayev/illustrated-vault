@@ -8,8 +8,9 @@
 // treat an empty result as "no dynamic additions" and fall back to the
 // curated roster.
 //
-// Read-only. Do not add caching. Do not add writes — track/untrack mutation
-// arrives with A-D2c (Add to Archive UI) and A-D2d (untrack), not here.
+// Do not add caching. Writes are limited to the add_artist_to_archive RPC
+// (A-D2c) — the single audited write path for archive additions. Untrack
+// mutation arrives with A-D2d, not here. No direct table inserts, ever.
 
 import { supabase } from './supabaseClient.js';
 
@@ -58,4 +59,52 @@ async function fetchArtistIdentities(ids) {
   }
 }
 
-export { fetchTrackedArtistIds, fetchArtistIdentities };
+// searchIllustratorDirectory(query, limit) → Array<{ illustrator, card_count }> | null
+// A-D2c: quiet discovery search over the illustrator_directory view.
+// Returns null on failure (so the UI can show a quiet inline error) and []
+// for a genuinely empty result. Never throws. Ordered by card count so the
+// most prolific matches surface first.
+async function searchIllustratorDirectory(query, limit = 12) {
+  const q = String(query || '').trim();
+  if (!q) return [];
+  try {
+    const { data, error } = await supabase
+      .from('illustrator_directory')
+      .select('illustrator, card_count')
+      .ilike('illustrator', `%${q}%`)
+      .order('card_count', { ascending: false })
+      .limit(limit);
+    if (error) {
+      console.warn('[artistService] directory search soft-fail:', error.message);
+      return null;
+    }
+    return data || [];
+  } catch (e) {
+    console.warn('[artistService] directory search soft-fail:', (e && e.message) || e);
+    return null;
+  }
+}
+
+// addArtistToArchive(illustrator) → { ok: boolean, error?: string }
+// A-D2c: calls the add_artist_to_archive RPC — the single write path for
+// archive additions. The illustrator string must come from an
+// illustrator_directory result, never free text (enforced by the caller UI).
+// Never throws; the caller decides how to surface { ok: false }.
+async function addArtistToArchive(illustrator) {
+  const name = String(illustrator || '').trim();
+  if (!name) return { ok: false, error: 'No illustrator given' };
+  try {
+    const { error } = await supabase.rpc('add_artist_to_archive', { p_illustrator: name });
+    if (error) {
+      console.warn('[artistService] add-to-archive soft-fail:', error.message);
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    console.warn('[artistService] add-to-archive soft-fail:', msg);
+    return { ok: false, error: msg };
+  }
+}
+
+export { fetchTrackedArtistIds, fetchArtistIdentities, searchIllustratorDirectory, addArtistToArchive };
