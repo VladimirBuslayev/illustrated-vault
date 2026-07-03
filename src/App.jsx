@@ -1417,7 +1417,7 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
                               disabled={!!manageBusy[a.artistId]||a.tier===tierVal}
                               onClick={()=>handleTierChange(a.artistId,tierVal)}
                               className="btn-ghost"
-                              style={{borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:a.tier===tierVal?"#22c55e":"#8b6cd8",opacity:manageBusy[a.artistId]?0.55:1,whiteSpace:"nowrap"}}
+                              style={{borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:a.tier===tierVal?"#22c55e":"#8b6cd8",opacity:!!manageBusy[a.artistId]?.55:1,whiteSpace:"nowrap"}}
                             >{a.tier===tierVal?`✓ ${label}`:label}</button>
                           ))}
                         </div>
@@ -1425,7 +1425,7 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
                           disabled={!!manageBusy[a.artistId]}
                           onClick={()=>handleRemove(a.artistId)}
                           className="btn-ghost"
-                          style={{alignSelf:"flex-start",borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:"#f87171",opacity:manageBusy[a.artistId]?0.55:1}}
+                          style={{alignSelf:"flex-start",borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:"#f87171",opacity:!!manageBusy[a.artistId]?.55:1}}
                         >{manageBusy[a.artistId]?<span style={{display:"flex",alignItems:"center",gap:4}}><IcoSpin/> Working…</span>:"Remove from Archive"}</button>
                         {manageErrors[a.artistId]&&(
                           <div style={{fontSize:".64rem",color:"#b06060",letterSpacing:".01em"}}>{manageErrors[a.artistId]}</div>
