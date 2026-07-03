@@ -1,6 +1,55 @@
 # Illustrated Vault — Decision Log
 
 ---
+## 2026-07-03 — V-C: Vault Feature hero, email de-identification, tagline retirement
+
+Decision:
+
+- **Vault Feature hero.** The Dashboard hero is a single curated
+  "archive moment" built only from existing in-memory data:
+  hunting intent → want intent → unowned favorite → nearest-incomplete
+  artist → empty state. First best candidate wins; ordering is roster
+  order then existing cardData order (release date / set / number).
+  **Price is explicitly not a selection signal** — the hero is about
+  collection meaning, not market value. Daily rotation was considered and
+  dropped for V-C: stable-and-beautiful beats clever. Card tiers require
+  an image (`imgSmall`); imageless candidates are skipped so the panel
+  never renders a blank frame. Ownership is checked at selection time, so
+  Force Owned / stale intent drops a card on the next render — the same
+  suppression rule Hunt Board uses. The memo is strictly read-only over
+  intent, favorites, and ownership.
+- **`intentMap` prop to Dashboard.** Dashboard (not memoized, like
+  HuntBoard) now receives the full `intentMap` read-only. The
+  `React.memo` constraint (pass `intentStatus` strings, never the Map)
+  continues to apply only to `CardTile`, which is unchanged.
+- **Email is not identity.** `user.email` no longer appears on the
+  Dashboard; the hero eyebrow is a static "YOUR VAULT". Email remains
+  only where it is functional (landing sign-out row, account context). A
+  "Vault name" display-name setting was considered and deferred; if ever
+  wanted, the safe path is `user_metadata` via `supabase.auth.updateUser`
+  — no schema.
+- **Tagline retirement.** "The art is the point." appeared three times
+  and had become a slogan sticker. Replaced by a single landing placement
+  of "For collectors who follow the art." The Dashboard carries no
+  tagline — the featured card is the statement.
+- **Copy register.** "Send Magic Link 🔥" → "Send sign-in link";
+  "No password. One click and you're in." → "No password — a link arrives
+  in your email."; "🎉 You own every card…" → "Every card on your list is
+  home." (quiet neutral styling); "ENTER BINDER" → "Enter the Vault" on
+  the landing button only. The Dashboard route, view key, and component
+  are **not** renamed.
+
+Scope guardrails honored: no schema, no new dependencies, no profile
+system, no pinning, no Hunt Board / SharedBinder / ownership / intent
+semantic changes, `index.css` untouched, ARCHITECTURE.md untouched (no
+meaningful data-flow change — one read-only prop).
+
+Status:
+
+Accepted. Implemented in V-C.
+
+---
+
 ## 2026-07-03 — A-D2d: Manage Artist in Archive (tier + remove)
 
 Decision:
