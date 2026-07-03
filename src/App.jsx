@@ -27,6 +27,7 @@ import { supabase }                                       from './services/supab
 import { loadUserData, saveCollection, saveOverride, savePricePoint }
                                                           from './services/collectionService.js';
 import { fetchSharedCollection }                          from './services/shareService.js';
+import { fetchTrackedArtistIds, fetchArtistIdentities }   from './services/artistService.js'; // A-D2b0
 import { fetchArtistCards }                               from './services/cardService.js';
 import { fetchFallbackImage, buildLimitlessGuess }        from './services/imageService.js';
 
@@ -151,31 +152,37 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors,onCardClick}){
+function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors,onCardClick,roster}){
+  // A-D2b0: roster = effectiveRoster (curated ARTISTS + dynamic additions).
+  // Defensive fallback keeps the dashboard rendering even if the prop is omitted.
+  const rosterList=roster||ARTISTS;
   const totalCards=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.length,0),[cardData]);
   const totalOwned=useMemo(()=>Object.values(cardData).reduce((s,a)=>s+a.filter(checkOwned).length,0),[cardData,checkOwned]);
   const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
 
-  const artistStats=useMemo(()=>ARTISTS.map(entry=>{
+  const artistStats=useMemo(()=>rosterList.map(entry=>{
     const cards=cardData[toSlug(entry.name)]||[];
     const owned=cards.filter(checkOwned).length;
     return{...entry,cards,total:cards.length,owned,pct:cards.length?Math.round((owned/cards.length)*100):0};
-  }).filter(a=>a.total>0),[cardData,checkOwned]);
+  }).filter(a=>a.total>0),[cardData,checkOwned,rosterList]);
 
   const mostWanted=useMemo(()=>{
     const w=[];
-    ARTISTS.forEach(entry=>{
+    rosterList.forEach(entry=>{
       (cardData[toSlug(entry.name)]||[]).forEach(card=>{
         if(favorites.has(card.id)&&!checkOwned(card))w.push({card,artist:entry});
       });
     });
     return w;
-  },[cardData,favorites,checkOwned]);
+  },[cardData,favorites,checkOwned,rosterList]);
 
   const[showAllWanted,setShowAllWanted]=useState(false);
   const visibleWanted=showAllWanted?mostWanted:mostWanted.slice(0,3);
-  const mainStats=artistStats.filter(a=>a.tier==="main");
-  const secStats =artistStats.filter(a=>a.tier!=="main");
+  // A-D2b0: explicit tier split. secondary+special partition identically to the
+  // old tier!=="main" filter when no "added" entries exist.
+  const mainStats =artistStats.filter(a=>a.tier==="main");
+  const secStats  =artistStats.filter(a=>a.tier==="secondary"||a.tier==="special");
+  const addedStats=artistStats.filter(a=>a.tier==="added");
   const syncIcon =syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓</span>:null;
 
   return(
@@ -205,7 +212,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
         {loadingSet&&loadingSet.size>0&&(
           <div style={{marginTop:"1.5rem",padding:".7rem 1rem",background:"rgba(139,108,216,0.08)",border:"1px solid rgba(139,108,216,0.25)",borderRadius:10,display:"flex",alignItems:"center",gap:".6rem",fontSize:".8rem",color:"#9b9bc0"}}>
             <IcoSpin/>
-            <span>Loading card data — {ARTISTS.length-loadingSet.size}/{ARTISTS.length} artists ready. First load can take up to a minute, this page will fill in automatically.</span>
+            <span>Loading card data — {rosterList.length-loadingSet.size}/{rosterList.length} artists ready. First load can take up to a minute, this page will fill in automatically.</span>
           </div>
         )}
         {errors&&Object.keys(errors).length>0&&(
@@ -303,6 +310,22 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
             <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>SECONDARY & SPECIAL</h3>
             <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
               {secStats.map(entry=>(
+                <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem"}}>
+                  <div style={{width:145,flexShrink:0}}><span style={{fontSize:".8rem",color:entry.pct===100?"#22c55e":"#8888a8"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
+                  <div style={{flex:1,minWidth:0}}><div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"#4a3880"}}/></div></div>
+                  <div style={{fontSize:".68rem",color:"#3a3a60",fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:50,textAlign:"right"}}>{entry.owned}/{entry.total}</div>
+                  <div style={{fontSize:".65rem",color:"#1e1e30",flexShrink:0}}>→</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {addedStats.length>0&&(
+          <section style={{marginBottom:"1.5rem"}}>
+            <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>YOUR ADDITIONS</h3>
+            <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+              {addedStats.map(entry=>(
                 <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem"}}>
                   <div style={{width:145,flexShrink:0}}><span style={{fontSize:".8rem",color:entry.pct===100?"#22c55e":"#8888a8"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
                   <div style={{flex:1,minWidth:0}}><div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden"}}><div className="prog-fill" style={{width:`${entry.pct}%`,height:"100%",borderRadius:2,background:entry.pct===100?"#22c55e":"#4a3880"}}/></div></div>
@@ -1089,12 +1112,14 @@ function HuntStatusDot({status}){
   if(status==="want")return<div style={{...st,background:"transparent",border:"1.5px solid #9b7fe8"}}/>;
   return<div style={{...st,background:"transparent",border:"1.5px solid #4a4a70"}}/>;
 }
-function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack}){
+function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,roster}){
+  // A-D2b0: roster = effectiveRoster; defensive fallback to curated ARTISTS.
+  const rosterList=roster||ARTISTS;
   const groups=useMemo(()=>{
     const out={hunting:[],want:[],maybe:[]};
     if(!intentMap||!intentMap.size)return out;
     const seen=new Set();
-    ARTISTS.forEach(entry=>{
+    rosterList.forEach(entry=>{
       const slug=toSlug(entry.name);
       const bucket={hunting:[],want:[],maybe:[]};
       (visibleCardData[slug]||[]).forEach(card=>{
@@ -1116,7 +1141,7 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack}){
       });
     });
     return out;
-  },[visibleCardData,intentMap,checkOwned]);
+  },[visibleCardData,intentMap,checkOwned,rosterList]);
   const total=HUNT_SECTIONS.reduce((s,{key})=>s+groups[key].reduce((n,g)=>n+g.cards.length,0),0);
   const [collapsed,setCollapsed]=useState({maybe:true});
   const toggleSection=key=>setCollapsed(c=>({...c,[key]:!c[key]}));
@@ -1180,8 +1205,10 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack}){
 // Read-only visual directory of the tracked artist roster ("Explore Artists").
 // Derived entirely from in-memory state — no Supabase calls, no mutation.
 // Tapping an artist opens the existing Artist Page. Track/untrack is A-D2.
-function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArtist,onBack}){
-  const stats=useMemo(()=>ARTISTS.map(entry=>{
+function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArtist,onBack,roster}){
+  // A-D2b0: roster = effectiveRoster; defensive fallback to curated ARTISTS.
+  const rosterList=roster||ARTISTS;
+  const stats=useMemo(()=>rosterList.map(entry=>{
     const slug=toSlug(entry.name);
     const meta=ARTIST_META[slug]||{};
     const cards=visibleCardData[slug]||[];
@@ -1200,10 +1227,14 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
       if(!used.has(withImg[i].id)){picks.push(withImg[i]);used.add(withImg[i].id);}
     }
     return{...entry,slug,meta,total:cards.length,owned,pct,picks};
-  }),[visibleCardData,checkOwned]);
+  }),[visibleCardData,checkOwned,rosterList]);
+  // A-D2b0: explicit tier split; "YOUR ADDITIONS" renders only when non-empty
+  // (the existing sec.items.length>0 guard below). secondary+special partition
+  // identically to the old tier!=="main" filter when no "added" entries exist.
   const sections=[
     {label:"MAIN ARTISTS",items:stats.filter(a=>a.tier==="main")},
-    {label:"SECONDARY & SPECIAL",items:stats.filter(a=>a.tier!=="main")},
+    {label:"SECONDARY & SPECIAL",items:stats.filter(a=>a.tier==="secondary"||a.tier==="special")},
+    {label:"YOUR ADDITIONS",items:stats.filter(a=>a.tier==="added")},
   ];
   return(
     <div style={{minHeight:"100dvh",background:"#07070f"}}>
@@ -1211,7 +1242,7 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
         <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem",display:"flex",alignItems:"center",gap:".8rem"}}>
           <button onClick={onBack} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".35rem .55rem",fontSize:".74rem",display:"flex",alignItems:"center",gap:".3rem",whiteSpace:"nowrap"}}>← Dashboard</button>
           <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Artists</span>
-          <span style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{ARTISTS.length} artists</span>
+          <span style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{rosterList.length} artists</span>
         </div>
       </header>
       <main style={{maxWidth:860,margin:"0 auto",padding:"1.2rem 1rem 3rem"}}>
@@ -1279,6 +1310,7 @@ function App(){
   const[showAllColor, setShowAllColor] =useState(()=>{const v=lsGet("pb_show_all_color");return v===null?false:v;});
   const[csvStatus,     setCsvStatus]    =useState(null);
   const[syncStatus,    setSyncStatus]   =useState("idle");
+  const[dynamicArtists,setDynamicArtists]=useState([]); // A-D2b0: user-tracked artists beyond the curated roster
   const fileRef=useRef(null),searchRef=useRef(null);
 
   const withSync=async fn=>{setSyncStatus("syncing");try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}};
@@ -1301,6 +1333,44 @@ function App(){
     return()=>subscription.unsubscribe();
   },[]);
 
+  // ── A-D2b0: dynamic tracked artists ──────────────────────────────────────────
+  // Fetch the user's tracked roster and resolve only ids NOT already in the
+  // curated ARTISTS constant. Every path soft-fails to []: missing tables,
+  // RLS blocks, or network failures leave the app rendering curated-only.
+  // ARTISTS remains the unconditional safety floor.
+  useEffect(()=>{
+    if(!user){setDynamicArtists([]);return;}
+    let cancelled=false;
+    (async()=>{
+      try{
+        const trackedIds=await fetchTrackedArtistIds(user.id);
+        // Curated ids: FK slugs where present, plus display-name slugs as a
+        // defensive second key so a curated entry lacking artistId can never
+        // be duplicated as a dynamic addition.
+        const curatedIds=new Set();
+        ARTISTS.forEach(a=>{if(a.artistId)curatedIds.add(a.artistId);curatedIds.add(toSlug(a.name));});
+        const newIds=[...trackedIds].filter(id=>!curatedIds.has(id));
+        if(!newIds.length){if(!cancelled)setDynamicArtists([]);return;}
+        const identities=await fetchArtistIdentities(newIds);
+        if(cancelled)return;
+        setDynamicArtists(identities.map(r=>({
+          name:(r.aliases&&r.aliases[0])||r.id, // display name: aliases[0] or id fallback
+          tier:"added",
+          isDynamic:true,
+          artistId:r.id,
+          aliases:r.aliases||[],
+        })));
+      }catch(e){
+        console.warn("[App] dynamic artist load soft-fail:",(e&&e.message)||e);
+        if(!cancelled)setDynamicArtists([]);
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[user&&user.id]);
+
+  // Curated ARTISTS in existing order + dynamic tracked artists appended.
+  const effectiveRoster=useMemo(()=>[...ARTISTS,...dynamicArtists],[dynamicArtists]);
+
   const handleSendLink=async email=>{const{error}=await supabase.auth.signInWithOtp({email,options:{shouldCreateUser:true}});if(error)throw error;};
   const handleVerifyCode=async(email,token)=>{const{error}=await supabase.auth.verifyOtp({email,token,type:"email"});if(error)throw error;};
   const handleSignOut=()=>supabase.auth.signOut();
@@ -1316,13 +1386,32 @@ function App(){
   // batched per-card fetches) at once — a full burst can spike to 150-200+
   // simultaneous Supabase queries and risks connection pool pressure.
   const ARTIST_CONCURRENCY=4;
+  // A-D2b0: iterates effectiveRoster so full reloads (e.g. Clear card cache)
+  // cover dynamic additions too. The mount effect below intentionally keeps
+  // its [] deps: it captures the initial (curated-only) roster, so first load
+  // is byte-identical to pre-B0 behavior. Dynamic entries arriving later are
+  // loaded incrementally by the effect after it — never by re-running the
+  // full loop mid-flight.
   const loadAllEntries=useCallback(async()=>{
-    for(let i=0;i<ARTISTS.length;i+=ARTIST_CONCURRENCY){
-      const chunk=ARTISTS.slice(i,i+ARTIST_CONCURRENCY);
+    for(let i=0;i<effectiveRoster.length;i+=ARTIST_CONCURRENCY){
+      const chunk=effectiveRoster.slice(i,i+ARTIST_CONCURRENCY);
       await Promise.all(chunk.map(loadEntry));
     }
-  },[loadEntry]);
+  },[loadEntry,effectiveRoster]);
   useEffect(()=>{loadAllEntries();},[]);
+  // A-D2b0: incremental card load for dynamic artists once they resolve.
+  // loadEntry + the pb8 cache dedupe repeat fetches; empty roster is a no-op.
+  useEffect(()=>{
+    if(!dynamicArtists.length)return;
+    let cancelled=false;
+    (async()=>{
+      for(let i=0;i<dynamicArtists.length;i+=ARTIST_CONCURRENCY){
+        if(cancelled)return;
+        await Promise.all(dynamicArtists.slice(i,i+ARTIST_CONCURRENCY).map(loadEntry));
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[dynamicArtists,loadEntry]);
 
   const handleCSV=useCallback(file=>{
     setCsvStatus("loading");
@@ -1355,9 +1444,13 @@ function App(){
   },[user]);
 
   const clearCache=()=>{
-    ARTISTS.forEach(e=>{
-      lsDel(`pb6_cards_${toSlug(e.name)}`);  // old TCGdex cache
-      lsDel(`pb7_supa_${toSlug(e.name)}`);   // current Supabase cache
+    // A-D2b0: iterates effectiveRoster so dynamic-artist caches clear too, and
+    // adds the pb8 key (Gate 3D bumped pb7→pb8 in cardService; without this
+    // line "Clear card cache" silently no-ops on the live caches).
+    effectiveRoster.forEach(e=>{
+      lsDel(`pb6_cards_${toSlug(e.name)}`);            // old TCGdex cache
+      lsDel(`pb7_supa_${toSlug(e.name)}`);             // stale Gate 2 ILIKE cache
+      lsDel(`pb8_supa_${e.artistId??toSlug(e.name)}`); // current Supabase cache (Gate 3D key)
     });
     // Purge per-card fallback image cache so stale "not found" results
     // don't persist after TCGdex gains images for previously imageless cards.
@@ -1407,9 +1500,9 @@ function App(){
     if(target==="binder"){setView("binder");return;}
     if(target==="artists"){setView("artists");return;}
     if(target.startsWith("artist:")){const slug=target.replace("artist:","");setArtistSlug(slug);setView("artist");return;}
-    if(ARTISTS.some(a=>toSlug(a.name)===target)){setFilterSlug(target);setView("binder");return;}
+    if(effectiveRoster.some(a=>toSlug(a.name)===target)){setFilterSlug(target);setView("binder");return;}
     setView(target);
-  },[]);
+  },[effectiveRoster]);
 
   if(view==="checking-auth")return<div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}><IcoSpin/></div>;
 
@@ -1424,14 +1517,14 @@ function App(){
 
   if(view==="dashboard")return(
     <>
-      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard}/>
+      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard} roster={effectiveRoster}/>
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>
   );
 
   if(view==="artist"&&artistSlug){
-    const entry=ARTISTS.find(a=>toSlug(a.name)===artistSlug);
+    const entry=effectiveRoster.find(a=>toSlug(a.name)===artistSlug);
     const cards=visibleCardData[artistSlug]||[];
     return(<>
       <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} intentMap={intentMap} showAllColor={showAllColor} toggleShowAllColor={toggleShowAllColor} onBack={()=>setView("dashboard")}/>
@@ -1441,15 +1534,15 @@ function App(){
   }
 
   if(view==="hunt")return(<>
-    <HuntBoard visibleCardData={visibleCardData} intentMap={intentMap} checkOwned={checkOwned} onCardClick={setSelectedCard} onBack={()=>setView("dashboard")}/>
+    <HuntBoard visibleCardData={visibleCardData} intentMap={intentMap} checkOwned={checkOwned} onCardClick={setSelectedCard} onBack={()=>setView("dashboard")} roster={effectiveRoster}/>
     {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
   </>);
 
   if(view==="artists")return(
-    <ArtistDirectory visibleCardData={visibleCardData} checkOwned={checkOwned} loadingSet={loadingSet} errors={errors} onOpenArtist={slug=>goTo("artist:"+slug)} onBack={()=>setView("dashboard")}/>
+    <ArtistDirectory visibleCardData={visibleCardData} checkOwned={checkOwned} loadingSet={loadingSet} errors={errors} onOpenArtist={slug=>goTo("artist:"+slug)} onBack={()=>setView("dashboard")} roster={effectiveRoster}/>
   );
 
-  const visibleArtists=filterSlug==="all"?ARTISTS:ARTISTS.filter(a=>toSlug(a.name)===filterSlug);
+  const visibleArtists=filterSlug==="all"?effectiveRoster:effectiveRoster.filter(a=>toSlug(a.name)===filterSlug); // A-D2b0
   const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
   const totalOwned=Object.values(visibleCardData).reduce((s,cards)=>s+cards.filter(checkOwned).length,0);
   const totalPct=totalCards?Math.round((totalOwned/totalCards)*100):0;
@@ -1491,6 +1584,7 @@ function App(){
               <optgroup label="Main">{ARTISTS.filter(a=>a.tier==="main").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
               <optgroup label="Secondary">{ARTISTS.filter(a=>a.tier==="secondary").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
               <optgroup label="Special">{ARTISTS.filter(a=>a.tier==="special").map(a=><option key={a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>
+              {dynamicArtists.length>0&&<optgroup label="Your additions">{dynamicArtists.map(a=><option key={a.artistId||a.name} value={toSlug(a.name)}>{a.name}</option>)}</optgroup>}
             </select>
             <div style={{display:"flex",gap:".3rem",alignItems:"center",flexShrink:0}}>
               <button onClick={()=>setViewMode(viewMode==="missing"?null:"missing")} style={{background:viewMode==="missing"?"rgba(139,108,216,0.2)":"#0f0f1c",color:viewMode==="missing"?"#c0a0f8":"#6b6b90",border:`1px solid ${viewMode==="missing"?"#8b6cd8":"#1e1e35"}`,borderRadius:7,padding:".38rem .65rem",cursor:"pointer",fontSize:".74rem",fontWeight:viewMode==="missing"?700:500,transition:"all .15s",whiteSpace:"nowrap"}}>Missing</button>
