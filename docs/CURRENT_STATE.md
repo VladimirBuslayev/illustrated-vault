@@ -148,6 +148,25 @@ V-A Quiet Pass applied: logo glow reduced, flame/button styling calmed, Dashboar
 
 Brand V-B applied: final logo asset (`/illustrated-logo-gradient.svg`) wired into `BlazLogo` (component name kept to avoid touching its 11 call sites), logo sizing reduced across call sites, and the Dashboard hero no longer uses the large brand mark.
 
+Dashboard / Brand Copy V-C applied: the Dashboard hero is now the **Vault
+Feature** — an editorial split panel that features one card from the user's
+own collection data. Selection ladder: `hunting` intent → `want` intent →
+unowned favorite → nearest-incomplete artist ("Artist Focus") → quiet empty
+state pointing at Explore Artists. Selection is deterministic (roster order,
+then existing cardData order), price-blind, rotation-free, and read-only over
+intent/favorites/ownership; owned cards and imageless cards are skipped at
+selection time. The old stat block is demoted to a quiet single row under the
+feature, and the rainbow progress bar is calmed to a two-stop amber→plum
+gradient. `Dashboard` now receives `intentMap` (read-only). Copy pass in the
+same slice: email removed as Dashboard identity (static "YOUR VAULT" eyebrow;
+email remains only in the landing sign-out row / account context), "The art
+is the point." replaced by a single landing placement of "For collectors who
+follow the art." (no Dashboard tagline), "ENTER BINDER" → "Enter the Vault"
+(landing button only — no route/component rename), "Send Magic Link 🔥" →
+"Send sign-in link", "No password. One click and you're in." → "No password —
+a link arrives in your email.", and the Most Wanted all-owned state → "Every
+card on your list is home." in quiet neutral styling. `index.css` untouched.
+
 ## Completion tracking
 
 Existed before the intent system and is unchanged:
@@ -160,7 +179,7 @@ Existed before the intent system and is unchanged:
 
 ```
 src/
-  App.jsx              — full React component tree (~1,630 lines); single file, intentional
+  App.jsx              — full React component tree (~1,900 lines); single file, intentional
   main.jsx             — entry point; ErrorBoundary + ?share= routing
   assets/logo.webp
   constants/           — artists.js, config.js, setOrder.js
