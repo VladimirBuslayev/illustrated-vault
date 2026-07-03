@@ -1,6 +1,68 @@
 # Illustrated Vault — Decision Log
 
 ---
+## 2026-07-03 — A-D2d: Manage Artist in Archive (tier + remove)
+
+Decision:
+
+Added a small management surface for dynamically-tracked (user-added)
+artists only:
+
+- **Schema:** `user_tracked_artists` gets a `tier text NOT NULL DEFAULT
+  'added'` column with `CHECK (tier IN ('main','secondary','added'))`, plus
+  a new `uta_update_own` RLS UPDATE policy (none existed before). No changes
+  to `artists`, `cards_effective`, or any other table.
+- **Write path:** unlike `add_artist_to_archive`, the two new mutations
+  (`updateArtistTier`, `removeArtistFromArchive` in `artistService.js`) are
+  **plain RLS-guarded client calls, not RPCs** — neither touches global
+  artist identity nor needs catalog validation, so a `SECURITY DEFINER`
+  function would be unnecessary ceremony. `add_artist_to_archive` itself is
+  unchanged; its `INSERT` now implicitly relies on the new column's
+  `DEFAULT 'added'`.
+- **Scope is dynamic-only by construction, not by convention:** curated
+  `ARTISTS` entries are a hardcoded JS constant and are never rows in
+  `user_tracked_artists`. There is no code path by which a curated artist's
+  id could reach `updateArtistTier` or `removeArtistFromArchive`, so
+  "curated tiering" was never a smaller/larger option here — it's simply
+  outside what this table can express. The Manage control in
+  `ArtistDirectory` is rendered only on `isDynamic` tiles as an additional
+  belt-and-suspenders guard.
+- **UI:** a small "⋯" Manage popover on dynamic artist tiles in Explore
+  Artists offers Main Artists / Secondary & Special / Your Additions
+  (tier reassignment) and Remove from Archive (`window.confirm`-gated, no
+  custom modal). `Dashboard`'s existing `mainStats`/`secStats`/`addedStats`
+  split — already keyed on `entry.tier` — required **no changes**; a
+  dynamic artist's real tier now flows through automatically. Same for
+  `ArtistDirectory`'s own section split.
+- **Binder artist-filter dropdown:** dynamic artists now fold into the
+  matching Main/Secondary optgroup by tier, with "Your additions" kept for
+  anything still at the `added` default. Small, additive, included in this
+  slice since it reused the tier data with no new state.
+- **fetchTrackedArtistIds is untouched.** A new `fetchTrackedArtistTiers`
+  helper was added alongside it (returns `Map<artistId, tier>`) rather than
+  widening the existing function's return shape, to keep the one existing
+  caller's risk at zero.
+- **Remove from Archive** deletes only the caller's own
+  `user_tracked_artists` row (`DELETE ... WHERE user_id = auth.uid() AND
+  artist_id = ...`). It cannot cascade into `artists`, `cards`,
+  `card_overrides`, `card_favorites`, `user_card_intent`, or manual
+  owned/missing state, since none of those reference
+  `user_tracked_artists`.
+
+Reason:
+
+Users can now add artists to their archive (A-D2c-lite) but had no way to
+say where an addition belongs, or to undo an add. A-D2d closes that loop
+with the smallest schema and write-path footprint the existing table
+supports, without reopening the (explicitly deferred) question of curated
+Main/Secondary/Special tiering.
+
+Status:
+
+Accepted. SQL migration `a-d2d-tier-and-manage.sql` and app changes ship
+together. Next slice: TBD (see ROADMAP.md near-term priority order).
+
+---
 ## 2026-07-02 — A-D2c-lite: Find Illustrator + Add to Archive, display_name hotfix, Brand V-B
 
 Decision:
