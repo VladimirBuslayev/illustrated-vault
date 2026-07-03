@@ -5,7 +5,8 @@
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Papa from 'papaparse';
-import logoSrc from './assets/logo.webp';
+// Brand V-B: final logo asset lives in /public (served at site root by Vite).
+const logoSrc = '/illustrated-logo-gradient.svg';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 import { ARTISTS, ARTIST_FACTS, ARTIST_META } from './constants/artists.js';
@@ -48,7 +49,9 @@ const IcoInfo=()=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" st
 const IcoEye=()=><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>;
 const IcoContrast=()=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>;
 
-// ── BLAZIKEN LOGO ──────────────────────────────────────────────────────────────
+// ── LOGO ───────────────────────────────────────────────────────────────────────
+// Renders the Illustrated Vault brushstroke-flame mark (public SVG asset).
+// Component name kept as BlazLogo to avoid touching its 11 call sites.
 function BlazLogo({size=32,glow=false}){
   return(
     <img src={logoSrc} width={size} height={size} alt="Illustrated"
