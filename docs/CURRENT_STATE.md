@@ -70,6 +70,31 @@ Top-level view `hunt`, reachable from the Dashboard header and Binder header.
 - Color-mode toggle reuses the persisted `showAllColor` state shared with Binder view.
 - Missing/Owned segments are literal because `soloSections` is passed; Binder/SharedBinder retain legacy paired-section behavior (they do not pass `soloSections`).
 
+Artist Page Slice C (editorial polish) applied:
+- Hero chip diet: Owned/Missing chips removed (they duplicated the progress
+  line). Only Hunting / "On the list" chips remain, shown when non-zero, and
+  they are now tappable shortcuts that activate the Hunting segment (same
+  `viewMode` state as the sticky controls — no new state, intent read-only).
+- About + Notable Cards merged into one collapsible "FROM THE ARCHIVE" band
+  (default open; local state only, not persisted; V-C.1 chevron pattern).
+  Instructional copy ("Tap to inspect · owned cards glow") removed; owned
+  signal quieted to accent ring + ✓ with neutral captions. No curation or
+  reordering system.
+- Dynamic-artist fallback: artists with no story and no notable cards (all
+  dynamic artists today) render a quiet one-line band — "One of your
+  additions · N cards in the archive." — instead of silently dropping the
+  band, so added-artist pages keep the same skeleton as curated ones.
+- Hunting segment framing: a quiet summary line ("N active targets · M on
+  the list") renders between the controls and the grid, hidden while
+  searching so counts never disagree with the filtered grid. The WANT group
+  label inside the segment is renamed ON THE LIST (Hunt Board vocabulary),
+  and the empty state now reads "No hunt targets for this artist yet — mark
+  a missing card as Hunting and it will gather here." Both strings are only
+  reachable from the Artist Page: Binder/SharedBinder never pass
+  `viewMode="hunting"`.
+- Manage-in-mini-header for dynamic artists is deliberately NOT in this
+  slice — deferred to Artist Page C2.
+
 ## Explore Artists directory — A-D1 live
 
 Read-only `artists` view entered via the "Explore Artists →" link on the
