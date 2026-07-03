@@ -8,9 +8,18 @@
 // treat an empty result as "no dynamic additions" and fall back to the
 // curated roster.
 //
-// Do not add caching. Writes are limited to the add_artist_to_archive RPC
-// (A-D2c) — the single audited write path for archive additions. Untrack
-// mutation arrives with A-D2d, not here. No direct table inserts, ever.
+// Do not add caching.
+//
+// Writes, and why each one is (or isn't) an RPC:
+//   - addArtistToArchive (A-D2c) — RPC. Must validate against the card
+//     catalog and may create a global artists identity row: needs
+//     SECURITY DEFINER, so it stays server-side.
+//   - updateArtistTier / removeArtistFromArchive (A-D2d) — direct
+//     RLS-guarded table writes, not RPCs. Neither touches global artist
+//     identity or needs catalog validation, so a plain client-side
+//     update/delete under RLS is sufficient and simplest. Both are
+//     inherently scoped to dynamic (user-added) artists, since curated
+//     ARTISTS entries are never rows in user_tracked_artists.
 
 import { supabase } from './supabaseClient.js';
 
@@ -32,6 +41,30 @@ async function fetchTrackedArtistIds(userId) {
   } catch (e) {
     console.warn('[artistService] tracked-roster fetch soft-fail:', (e && e.message) || e);
     return new Set();
+  }
+}
+
+// fetchTrackedArtistTiers(userId) → Map<artistId, tier>
+// A-D2d: per-user tier for every tracked (dynamic) artist row, keyed by
+// artist_id. tier is one of 'main' | 'secondary' | 'added' (DB default
+// 'added', enforced by a CHECK constraint). Added alongside — not in place
+// of — fetchTrackedArtistIds so existing callers/behavior are untouched.
+// Empty Map on any failure, including the column not existing yet.
+async function fetchTrackedArtistTiers(userId) {
+  if (!userId) return new Map();
+  try {
+    const { data, error } = await supabase
+      .from('user_tracked_artists')
+      .select('artist_id, tier')
+      .eq('user_id', userId);
+    if (error) {
+      console.warn('[artistService] tracked-tiers fetch soft-fail:', error.message);
+      return new Map();
+    }
+    return new Map((data || []).map(r => [r.artist_id, r.tier || 'added']));
+  } catch (e) {
+    console.warn('[artistService] tracked-tiers fetch soft-fail:', (e && e.message) || e);
+    return new Map();
   }
 }
 
@@ -126,4 +159,69 @@ async function addArtistToArchive(illustrator) {
   }
 }
 
-export { fetchTrackedArtistIds, fetchArtistIdentities, searchIllustratorDirectory, addArtistToArchive };
+// updateArtistTier(userId, artistId, tier) → { ok: boolean, error?: string }
+// A-D2d: reassigns a dynamically-tracked artist's display tier
+// ('main' | 'secondary' | 'added'). Direct RLS-guarded UPDATE — no RPC
+// needed, since this mutation (unlike Add to Archive) never touches global
+// artist identity or requires catalog validation; the DB CHECK constraint
+// is the source of truth for valid tier values. Only ever called for
+// artistIds already present in the caller's own user_tracked_artists rows
+// (curated artists are never rows here, so this is inherently scoped to
+// dynamic additions). Never throws.
+async function updateArtistTier(userId, artistId, tier) {
+  if (!userId || !artistId) return { ok: false, error: 'Missing user or artist.' };
+  if (!['main', 'secondary', 'added'].includes(tier)) return { ok: false, error: 'Invalid tier.' };
+  try {
+    const { error } = await supabase
+      .from('user_tracked_artists')
+      .update({ tier })
+      .eq('user_id', userId)
+      .eq('artist_id', artistId);
+    if (error) {
+      console.warn('[artistService] tier update failed:', error.message);
+      return { ok: false, error: 'Could not update — try again.' };
+    }
+    return { ok: true };
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    console.warn('[artistService] tier update failed (thrown):', msg);
+    return { ok: false, error: 'Network problem — try again.' };
+  }
+}
+
+// removeArtistFromArchive(userId, artistId) → { ok: boolean, error?: string }
+// A-D2d: deletes only the caller's own user_tracked_artists membership row.
+// Direct RLS-guarded DELETE (uta_delete_own already restricts to
+// auth.uid() = user_id). Does NOT touch the global artists identity row,
+// cards, card_overrides, card_favorites, user_card_intent, or manual
+// owned/missing state — none of those reference user_tracked_artists.
+// Never throws.
+async function removeArtistFromArchive(userId, artistId) {
+  if (!userId || !artistId) return { ok: false, error: 'Missing user or artist.' };
+  try {
+    const { error } = await supabase
+      .from('user_tracked_artists')
+      .delete()
+      .eq('user_id', userId)
+      .eq('artist_id', artistId);
+    if (error) {
+      console.warn('[artistService] remove failed:', error.message);
+      return { ok: false, error: 'Could not remove — try again.' };
+    }
+    return { ok: true };
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    console.warn('[artistService] remove failed (thrown):', msg);
+    return { ok: false, error: 'Network problem — try again.' };
+  }
+}
+
+export {
+  fetchTrackedArtistIds,
+  fetchTrackedArtistTiers,
+  fetchArtistIdentities,
+  searchIllustratorDirectory,
+  addArtistToArchive,
+  updateArtistTier,
+  removeArtistFromArchive,
+};
