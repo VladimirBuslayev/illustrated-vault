@@ -1,6 +1,43 @@
 # Illustrated Vault — Decision Log
 
 ---
+## 2026-07-02 — A-D2c-lite: Find Illustrator + Add to Archive, display_name hotfix, Brand V-B
+
+Decision:
+
+Three small, independently-shipped items closing out the sprint:
+
+- **A-D2c-lite (app):** Find Illustrator search added inside Explore
+  Artists, querying `illustrator_directory` via
+  `searchIllustratorDirectory`. Add to Archive wired to
+  `addArtistToArchive` (the `add_artist_to_archive` RPC). Newly added
+  artists surface under "YOUR ADDITIONS" once the parent refetches tracked
+  ids (`onArtistAdded`). This is the UI half of A-D2a/B0's write path.
+- **SQL hotfix:** `add_artist_to_archive` was updated to insert
+  `display_name` when creating a new `artists` row. Without it, adding an
+  illustrator with no existing identity row (e.g. Midori Harada) failed the
+  insert. Verified via `a-d2c-fix-add-artist-display-name.sql` against the
+  owner account inside a rolled-back transaction.
+- **Brand V-B:** the final logo asset (`/illustrated-logo-gradient.svg`) is
+  wired into `BlazLogo` (component name kept as-is to avoid touching its 11
+  call sites), logo sizing reduced across call sites, and the Dashboard
+  hero no longer uses the large brand mark.
+
+Reason:
+
+A-D2c-lite completes the loop A-D2a/B0 opened (discovery + write path
+existed in SQL/services but had no UI). The display_name gap was a latent
+bug in the RPC only surfaced once real Add-to-Archive traffic hit
+illustrators with no prior `artists` row. Brand V-B was scoped as the
+lightweight "feel" pass noted as a flexible slot in the roadmap-sequencing
+decision below.
+
+Status:
+
+Accepted. All three live in production. Next slice: A-D2d (untrack /
+remove from archive).
+
+---
 ## 2026-07-02 — A-D2a/B0: tracked-artist data foundation and roster spine
 
 Decision:
