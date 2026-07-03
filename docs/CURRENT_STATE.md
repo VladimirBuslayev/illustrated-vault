@@ -167,6 +167,27 @@ follow the art." (no Dashboard tagline), "ENTER BINDER" → "Enter the Vault"
 a link arrives in your email.", and the Most Wanted all-owned state → "Every
 card on your list is home." in quiet neutral styling. `index.css` untouched.
 
+Dashboard V-C.1 polish applied: (1) **Vault Queue** — the Vault Feature
+ladder now collects up to 4 candidates (same hunting → want → favorite
+priority, same roster/cardData order; candidate 0 is identical to the old
+single pick). The hero's right side shows the other 2–3 candidates as
+tappable "UP NEXT" thumbs; tapping swaps the featured card for the current
+session only (plain `useState`, no persistence, no schema, no localStorage).
+With no alternates, a quiet "IN YOUR VAULT" artist-progress note fills the
+space instead of placeholders. (2) Header logo mark reduced 22 → 18 in the
+Dashboard and Binder headers (SharedBinder untouched). (3) Most Wanted
+expand/collapse labels are now "Show all N →" / "Collapse ▲" (same
+show-3-by-default logic). (4) Main Artists and Secondary & Special section
+headers are collapse toggles (chevron + count when collapsed; Main defaults
+open, Secondary & Special defaults collapsed, Hunt Board precedent; local
+state only). (5) A quiet full-width "Find an illustrator →" ghost row sits
+after the artist sections; the Main Artists header link remains. (6) The
+header "CSV" button is renamed "Import" and visually softened; placement and
+import behavior are unchanged. `index.css` gained one clearly-marked V-C.1
+block (`.vault-queue` + one mobile media query) — its only change since the
+Gate 2 verbatim copy. Ownership, intent, favorites, Hunt Board,
+SharedBinder, Artist Page, and A-D2c/A-D2d behavior untouched.
+
 ## Completion tracking
 
 Existed before the intent system and is unchanged:
