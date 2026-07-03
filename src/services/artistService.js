@@ -90,20 +90,39 @@ async function searchIllustratorDirectory(query, limit = 12) {
 // archive additions. The illustrator string must come from an
 // illustrator_directory result, never free text (enforced by the caller UI).
 // Never throws; the caller decides how to surface { ok: false }.
+//
+// Hotfix (post-A-D2c): the RPC error was previously reduced to error.message,
+// which hid the Postgres error code needed to diagnose failures. Now logs the
+// full { code, message, details, hint } and returns a short human-readable
+// reason. Error code 23505 (unique violation = already tracked) is treated as
+// success — the add is idempotent from the user's point of view.
+function describeAddError(error) {
+  const code = (error && error.code) || '';
+  const msg  = (error && error.message) || '';
+  if (code === 'PGRST202') return 'App and database are out of sync (function or argument name mismatch).';
+  if (code === '42501' || /permission denied/i.test(msg)) return 'The database refused the write (permissions rule needs updating).';
+  if (code === '42P01') return 'A required table is missing.';
+  if (/JWT|token|not authenticated/i.test(msg)) return 'Your session may have expired — sign out and back in.';
+  return 'Something went wrong on the server.';
+}
+
 async function addArtistToArchive(illustrator) {
   const name = String(illustrator || '').trim();
   if (!name) return { ok: false, error: 'No illustrator given' };
   try {
     const { error } = await supabase.rpc('add_artist_to_archive', { p_illustrator: name });
     if (error) {
-      console.warn('[artistService] add-to-archive soft-fail:', error.message);
-      return { ok: false, error: error.message };
+      console.warn('[artistService] add-to-archive failed:', {
+        code: error.code, message: error.message, details: error.details, hint: error.hint,
+      });
+      if (error.code === '23505') return { ok: true }; // already in archive → success
+      return { ok: false, error: describeAddError(error) };
     }
     return { ok: true };
   } catch (e) {
     const msg = (e && e.message) || String(e);
-    console.warn('[artistService] add-to-archive soft-fail:', msg);
-    return { ok: false, error: msg };
+    console.warn('[artistService] add-to-archive failed (thrown):', msg);
+    return { ok: false, error: 'Network problem — try again.' };
   }
 }
 
