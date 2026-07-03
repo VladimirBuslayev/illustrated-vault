@@ -117,10 +117,10 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
         </h1>
         {isLoggedIn?(
           <>
-            <p style={{fontSize:".78rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"2.25rem",letterSpacing:".04em"}}>The art is the point.</p>
-            <button onClick={e=>{e.stopPropagation();enter();}} style={{background:"linear-gradient(160deg,#a8330e,#cf5417)",color:"#fff3ea",border:"none",borderRadius:50,padding:".9rem 3rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".1em",boxShadow:"0 4px 18px rgba(190,70,20,0.28)"}}
+            <p style={{fontSize:".78rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"2.25rem",letterSpacing:".04em"}}>For collectors who follow the art.</p>
+            <button onClick={e=>{e.stopPropagation();enter();}} style={{background:"linear-gradient(160deg,#a8330e,#cf5417)",color:"#fff3ea",border:"none",borderRadius:50,padding:".9rem 3rem",fontSize:"1rem",fontWeight:800,cursor:"pointer",letterSpacing:".04em",boxShadow:"0 4px 18px rgba(190,70,20,0.28)"}}
               onMouseEnter={e=>e.currentTarget.style.transform="scale(1.06)"} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>
-              ENTER BINDER
+              Enter the Vault
             </button>
             <div style={{marginTop:"1.5rem",display:"flex",alignItems:"center",justifyContent:"center",gap:".75rem"}}>
               <span style={{fontSize:".68rem",color:"#4a2010"}}>{user.email}</span>
@@ -142,13 +142,13 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
           </div>
         ):(
           <div onClick={e=>e.stopPropagation()} style={{...cardStyle,marginTop:"1rem"}}>
-            <p style={{fontSize:".82rem",color:"#c87040",marginBottom:"1rem",lineHeight:1.5,fontStyle:"italic"}}>The art is the point.</p>
+            <p style={{fontSize:".82rem",color:"#c87040",marginBottom:"1rem",lineHeight:1.5,fontStyle:"italic"}}>For collectors who follow the art.</p>
             <input type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} style={inputStyle} autoFocus/>
             {error&&<p style={{fontSize:".72rem",color:"#f87171",marginBottom:".5rem"}}>{error}</p>}
             <button onClick={send} disabled={sending||!email.trim()} style={{width:"100%",background:"linear-gradient(160deg,#a8330e,#cf5417)",color:"#fff3ea",border:"none",borderRadius:10,padding:".75rem",fontSize:".95rem",fontWeight:800,cursor:"pointer",boxShadow:"0 4px 14px rgba(190,70,20,0.25)",opacity:(sending||!email.trim())?.45:1}}>
-              {sending?"Sending…":"Send Magic Link 🔥"}
+              {sending?"Sending…":"Send sign-in link"}
             </button>
-            <p style={{marginTop:".65rem",fontSize:".65rem",color:"#4a2810",lineHeight:1.4}}>No password. One click and you're in.</p>
+            <p style={{marginTop:".65rem",fontSize:".65rem",color:"#4a2810",lineHeight:1.4}}>No password — a link arrives in your email.</p>
           </div>
         )}
       </div>
@@ -157,7 +157,7 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors,onCardClick,roster}){
+function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors,onCardClick,roster}){
   // A-D2b0: roster = effectiveRoster (curated ARTISTS + dynamic additions).
   // Defensive fallback keeps the dashboard rendering even if the prop is omitted.
   const rosterList=roster||ARTISTS;
@@ -188,6 +188,40 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
   const mainStats =artistStats.filter(a=>a.tier==="main");
   const secStats  =artistStats.filter(a=>a.tier==="secondary"||a.tier==="special");
   const addedStats=artistStats.filter(a=>a.tier==="added");
+  // V-C: Vault Feature — one curated archive moment for the Dashboard hero.
+  // Priority ladder: hunting > want > most-wanted favorite > artist focus > empty.
+  // Deterministic and stable: roster order, then existing cardData order
+  // (release date / set / number). No price signal, no rotation — the first
+  // best candidate wins. Card tiers require art (imgSmall); imageless
+  // candidates are skipped so the panel never renders a blank frame. Ownership
+  // is checked at selection time, so Force Owned or stale intent drops a card
+  // from candidacy on the next render (same suppression rule as Hunt Board).
+  // Intent semantics are read-only here — this memo never writes intent.
+  const vaultFeature=useMemo(()=>{
+    const pickCard=mode=>{
+      for(const entry of rosterList){
+        const cards=cardData[toSlug(entry.name)]||[];
+        for(const card of cards){
+          if(checkOwned(card))continue;
+          if(mode==="fav"){if(!favorites.has(card.id))continue;}
+          else if(!intentMap||intentMap.get(card.id)!==mode)continue;
+          if(!imgSmall(card))continue;
+          return{card,artist:entry};
+        }
+      }
+      return null;
+    };
+    const hunt=pickCard("hunting");
+    if(hunt)return{kind:"card",label:"CURRENT HUNT",...hunt};
+    const want=pickCard("want");
+    if(want)return{kind:"card",label:"ON THE LIST",...want};
+    const fav=pickCard("fav");
+    if(fav)return{kind:"card",label:"MOST WANTED",...fav};
+    const focus=artistStats.filter(a=>a.pct<100).sort((a,b)=>b.pct-a.pct||b.owned-a.owned)[0];
+    if(focus)return{kind:"artist",artist:focus};
+    return{kind:"empty"};
+  },[cardData,checkOwned,favorites,intentMap,rosterList,artistStats]);
+
   const syncIcon =syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓</span>:null;
 
   return(
@@ -225,36 +259,69 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
             ⚠ {Object.keys(errors).length} artist{Object.keys(errors).length>1?"s":""} failed to load — open the binder to see which, and retry.
           </div>
         )}
-        {/* Hotfix: brand mark removed from the hero — it read as a brand stamp
-            on what should be the most personal surface in the app.
-            TODO(hero-visual): the Dashboard hero should eventually feature a
-            personal collection visual instead — a favorite/featured card, a
-            small collage from the user's top artists, or a binder-page
-            preview. Not a brand logo. Build only as a deliberate slice. */}
-        <div style={{marginTop:"1.5rem",marginBottom:"1.5rem",background:"radial-gradient(ellipse at 25% 50%,rgba(220,72,64,0.1) 0%,transparent 65%)",border:"1px solid #1e1e35",borderRadius:20,padding:"2rem 1.5rem",display:"flex",flexWrap:"wrap",alignItems:"center",gap:"2rem"}}>
-          <div style={{flex:1,minWidth:180}}>
-            <div style={{fontSize:".6rem",letterSpacing:".18em",color:"#5a2e10",marginBottom:".3rem",fontWeight:600}}>{user?.email||"YOUR COLLECTION"}</div>
-            <h2 className="font-display" style={{fontSize:"clamp(1.6rem,5vw,2.6rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1,marginBottom:".4rem",color:"#f2e9df"}}>YOUR BINDER</h2>
-            <p style={{fontSize:".7rem",color:"#5a2a10",fontStyle:"italic",marginBottom:"1.25rem",letterSpacing:".03em"}}>The art is the point.</p>
-            <div style={{display:"flex",flexWrap:"wrap",gap:"1.5rem",marginBottom:"1.25rem"}}>
-              <div>
-                <div style={{fontSize:"clamp(2rem,6vw,3.2rem)",fontWeight:900,color:"#FF8833",letterSpacing:"-.04em",lineHeight:1}}>{totalPct}<span style={{fontSize:".5em",opacity:.7}}>%</span></div>
-                <div style={{fontSize:".65rem",color:"#6b6b90",marginTop:2}}>Complete</div>
+        {/* V-C: Vault Feature hero — a curated archive moment built from the
+            user's own collection data (hunting > want > favorite > artist
+            focus > empty). Replaces the stat-block hero and resolves the old
+            TODO(hero-visual): personal collection visual, not a brand mark. */}
+        <div style={{marginTop:"1.5rem",marginBottom:"1.5rem",background:"linear-gradient(150deg,#0e0b13 0%,#0a0810 55%,#0c0a13 100%)",border:"1px solid #1e1e35",borderRadius:20,padding:"1.75rem 1.5rem 1.5rem"}}>
+          <div style={{fontSize:".6rem",letterSpacing:".18em",color:"#7a6a56",fontWeight:700,marginBottom:"1.15rem"}}>YOUR VAULT</div>
+
+          {vaultFeature.kind==="card"&&(
+            <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"1.75rem",marginBottom:"1.5rem"}}>
+              <div onClick={()=>onCardClick&&onCardClick(vaultFeature.card)} style={{position:"relative",flexShrink:0,cursor:"pointer",width:"clamp(118px,26vw,164px)"}}>
+                <div style={{position:"absolute",inset:"-16%",borderRadius:"50%",background:"radial-gradient(circle,rgba(139,108,216,0.20) 0%,rgba(207,84,23,0.07) 55%,transparent 78%)",filter:"blur(14px)",pointerEvents:"none"}}/>
+                <img src={imgLarge(vaultFeature.card)||imgSmall(vaultFeature.card)} alt={vaultFeature.card.name} loading="lazy" decoding="async" style={{position:"relative",display:"block",width:"100%",height:"auto",borderRadius:10,border:"1px solid rgba(255,255,255,0.08)",boxShadow:"0 10px 30px rgba(0,0,0,0.5)"}}/>
               </div>
-              <div>
-                <div style={{fontSize:"clamp(2rem,6vw,3.2rem)",fontWeight:900,color:"#e8e8f4",letterSpacing:"-.04em",lineHeight:1}}>{totalOwned.toLocaleString()}</div>
-                <div style={{fontSize:".65rem",color:"#6b6b90",marginTop:2}}>Cards Owned</div>
+              <div style={{flex:1,minWidth:200}}>
+                <div style={{fontSize:".6rem",letterSpacing:".2em",color:"#c8925a",fontWeight:700,marginBottom:".55rem"}}>{vaultFeature.label}</div>
+                <h2 className="font-display" style={{fontSize:"clamp(1.5rem,4.5vw,2.3rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1.08,color:"#f2e9df",marginBottom:".45rem"}}>{vaultFeature.card.name}</h2>
+                <div style={{fontSize:".78rem",color:"#8888a8",marginBottom:"1.15rem"}}>{vaultFeature.artist.name}{vaultFeature.card.set?.name?<> · {vaultFeature.card.set.name}</>:null}</div>
+                <button onClick={()=>onCardClick&&onCardClick(vaultFeature.card)} className="btn-ghost" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".78rem",fontWeight:600}}>View card →</button>
               </div>
-              {favorites.size>0&&(
-                <div>
-                  <div style={{fontSize:"clamp(2rem,6vw,3.2rem)",fontWeight:900,color:"#E8C030",letterSpacing:"-.04em",lineHeight:1}}>{mostWanted.length}</div>
-                  <div style={{fontSize:".65rem",color:"#6b6b90",marginTop:2}}>Still Wanted</div>
-                </div>
-              )}
             </div>
-            <div style={{height:5,background:"#1e1e35",borderRadius:3,overflow:"hidden",maxWidth:300}}>
-              <div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",borderRadius:3,background:"linear-gradient(90deg,#ff4400,#ff8800 50%,#c0589e 80%,#8b6cd8 100%)"}}/>
+          )}
+
+          {vaultFeature.kind==="artist"&&(
+            <div style={{marginBottom:"1.5rem"}}>
+              <div style={{fontSize:".6rem",letterSpacing:".2em",color:"#c8925a",fontWeight:700,marginBottom:".55rem"}}>ARTIST FOCUS</div>
+              <h2 className="font-display" style={{fontSize:"clamp(1.5rem,4.5vw,2.3rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1.08,color:"#f2e9df",marginBottom:".45rem"}}>{vaultFeature.artist.name}</h2>
+              <div style={{fontSize:".78rem",color:"#8888a8",marginBottom:".85rem"}}>{vaultFeature.artist.owned}/{vaultFeature.artist.total} cards · {vaultFeature.artist.pct}% complete</div>
+              <div style={{height:4,background:"#1e1e35",borderRadius:2,overflow:"hidden",maxWidth:260,marginBottom:"1.15rem"}}>
+                <div className="prog-fill" style={{width:`${vaultFeature.artist.pct}%`,height:"100%",borderRadius:2,background:"linear-gradient(90deg,#cf5417,#8b6cd8)"}}/>
+              </div>
+              <button onClick={()=>onGoBinder("artist:"+toSlug(vaultFeature.artist.name))} className="btn-ghost" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".78rem",fontWeight:600}}>Continue this artist →</button>
             </div>
+          )}
+
+          {vaultFeature.kind==="empty"&&(
+            loadingSet&&loadingSet.size>0?(
+              <div style={{fontSize:".82rem",color:"#4a4a70",marginBottom:"1.5rem"}}>Your vault is loading…</div>
+            ):(
+              <div style={{marginBottom:"1.5rem"}}>
+                <h2 className="font-display" style={{fontSize:"clamp(1.35rem,4vw,1.9rem)",fontWeight:700,letterSpacing:"-.02em",lineHeight:1.15,color:"#f2e9df",marginBottom:"1rem"}}>Your archive starts with an artist.</h2>
+                <button onClick={()=>onGoBinder("artists")} className="btn-ghost" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".78rem",fontWeight:600}}>Explore Artists →</button>
+              </div>
+            )
+          )}
+
+          <div style={{display:"flex",flexWrap:"wrap",alignItems:"baseline",gap:"1.5rem",borderTop:"1px solid #16162a",paddingTop:"1.1rem"}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:".35rem"}}>
+              <span style={{fontSize:"1.2rem",fontWeight:800,color:"#FF8833",letterSpacing:"-.02em"}}>{totalPct}%</span>
+              <span style={{fontSize:".65rem",color:"#6b6b90"}}>complete</span>
+            </div>
+            <div style={{display:"flex",alignItems:"baseline",gap:".35rem"}}>
+              <span style={{fontSize:"1.2rem",fontWeight:800,color:"#e8e8f4",letterSpacing:"-.02em"}}>{totalOwned.toLocaleString()}</span>
+              <span style={{fontSize:".65rem",color:"#6b6b90"}}>cards owned</span>
+            </div>
+            {favorites.size>0&&(
+              <div style={{display:"flex",alignItems:"baseline",gap:".35rem"}}>
+                <span style={{fontSize:"1.2rem",fontWeight:800,color:"#E8C030",letterSpacing:"-.02em"}}>{mostWanted.length}</span>
+                <span style={{fontSize:".65rem",color:"#6b6b90"}}>still wanted</span>
+              </div>
+            )}
+          </div>
+          <div style={{height:4,background:"#1e1e35",borderRadius:2,overflow:"hidden",maxWidth:320,marginTop:".75rem"}}>
+            <div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",borderRadius:2,background:"linear-gradient(90deg,#cf5417,#8b6cd8)"}}/>
           </div>
         </div>
 
@@ -266,7 +333,7 @@ function Dashboard({cardData,checkOwned,favorites,user,onGoBinder,onUploadCSV,cs
               <span style={{fontSize:".72rem",color:"#2a2a4a"}}>Your wishlist for the next card show.</span>
             </div>
           ):mostWanted.length===0?(
-            <div style={{fontSize:".82rem",color:"#22c55e",padding:"1.25rem",textAlign:"center",border:"1px solid rgba(34,197,94,0.2)",borderRadius:12}}>🎉 You own every card on your Most Wanted list.</div>
+            <div style={{fontSize:".82rem",color:"#8fae98",padding:"1.25rem",textAlign:"center",border:"1px solid #1e1e35",borderRadius:12,letterSpacing:".01em"}}>Every card on your list is home.</div>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
               {visibleWanted.map(({card,artist},i)=>{
@@ -1717,7 +1784,7 @@ function App(){
 
   if(view==="dashboard")return(
     <>
-      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard} roster={effectiveRoster}/>
+      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} intentMap={intentMap} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard} roster={effectiveRoster}/>
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>
