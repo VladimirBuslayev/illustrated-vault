@@ -1,6 +1,6 @@
 # Illustrated Vault — Current State
 
-Last updated: 2026-07-02
+Last updated: 2026-07-03
 
 ## Production
 
@@ -111,7 +111,31 @@ A-D2c-lite (app, complete):
   when creating a new `artists` row. This fixed Add to Archive for
   illustrators without an existing identity row (e.g. Midori Harada), which
   previously failed the insert.
-- No untrack, no untracked Artist Page yet (A-D2d is the next slice).
+- No untracked Artist Page yet.
+
+A-D2d (SQL + app, complete):
+- `user_tracked_artists` gained a `tier text NOT NULL DEFAULT 'added'`
+  column (`CHECK` restricts it to `main` / `secondary` / `added`) and a new
+  `uta_update_own` RLS UPDATE policy. Scope is inherently dynamic-only:
+  curated `ARTISTS` entries are never rows in this table.
+- `artistService.js` gained `fetchTrackedArtistTiers` (new, alongside the
+  unchanged `fetchTrackedArtistIds`), `updateArtistTier`, and
+  `removeArtistFromArchive`. The latter two are plain RLS-guarded table
+  writes, not RPCs — neither needs catalog validation or touches global
+  artist identity.
+- Dynamic artists in `effectiveRoster` now carry their real per-user tier
+  instead of a hardcoded `"added"`. `Dashboard` and `ArtistDirectory`'s
+  existing tier-based section splits required no changes.
+- Explore Artists: a "⋯" Manage control on dynamic artist tiles only offers
+  tier reassignment (Main Artists / Secondary & Special / Your Additions)
+  and Remove from Archive (`window.confirm`-gated). Curated tiles are
+  visually and functionally untouched.
+- Removing an artist deletes only the caller's own `user_tracked_artists`
+  row — never global artist identity, cards, overrides, favorites, hunt
+  intent, or manual owned/missing state.
+- Binder artist-filter dropdown: dynamic artists now fold into the matching
+  Main/Secondary optgroup by tier; "Your additions" remains for artists
+  still at the `added` default.
 
 ## SharedBinder — read-only share surface
 
@@ -158,7 +182,7 @@ Do not split `App.jsx` unless explicitly approved.
 
 ## Supabase objects
 
-Tables/views in use: `cards`, `card_extras`, `cards_effective` (view), `artists`, `user_tracked_artists`, `illustrator_directory` (view), `user_collection`, `card_overrides`, `price_history`, `card_favorites`, `user_card_intent`.
+Tables/views in use: `cards`, `card_extras`, `cards_effective` (view), `artists`, `user_tracked_artists` (now with a per-user `tier` column, A-D2d), `illustrator_directory` (view), `user_collection`, `card_overrides`, `price_history`, `card_favorites`, `user_card_intent`.
 
 RPCs: `get_shared_collection(p_token)` (shared binder read path) and `add_artist_to_archive(p_illustrator)` (Add to Archive write path; UI arrives with A-D2c).
 
