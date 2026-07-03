@@ -183,6 +183,11 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
 
   const[showAllWanted,setShowAllWanted]=useState(false);
   const visibleWanted=showAllWanted?mostWanted:mostWanted.slice(0,3);
+  // V-C.1: collapsible artist sections. Main defaults open, Secondary &
+  // Special defaults collapsed (Hunt Board "MAYBE LATER" precedent). Local
+  // state only — not persisted.
+  const[mainOpen,setMainOpen]=useState(true);
+  const[secOpen,setSecOpen]=useState(false);
   // A-D2b0: explicit tier split. secondary+special partition identically to the
   // old tier!=="main" filter when no "added" entries exist.
   const mainStats =artistStats.filter(a=>a.tier==="main");
@@ -197,30 +202,58 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
   // is checked at selection time, so Force Owned or stale intent drops a card
   // from candidacy on the next render (same suppression rule as Hunt Board).
   // Intent semantics are read-only here — this memo never writes intent.
-  const vaultFeature=useMemo(()=>{
-    const pickCard=mode=>{
+  //
+  // V-C.1: the ladder now collects up to 4 candidates (feature + Vault Queue)
+  // in the same order the old single-pick walked. Candidate [0] is therefore
+  // byte-identical to the pre-V-C.1 featured card. Tapping a queue item sets a
+  // session-only heroPick (card id, plain useState — no persistence, no
+  // schema, no localStorage); an invalid/stale pick silently falls back to
+  // candidate [0].
+  const vaultCandidates=useMemo(()=>{
+    const seen=new Set();
+    const out=[];
+    const collect=(mode,label)=>{
       for(const entry of rosterList){
         const cards=cardData[toSlug(entry.name)]||[];
         for(const card of cards){
+          if(out.length>=4)return;
+          if(seen.has(card.id))continue;
           if(checkOwned(card))continue;
           if(mode==="fav"){if(!favorites.has(card.id))continue;}
           else if(!intentMap||intentMap.get(card.id)!==mode)continue;
           if(!imgSmall(card))continue;
-          return{card,artist:entry};
+          seen.add(card.id);
+          out.push({card,artist:entry,label});
         }
+        if(out.length>=4)return;
       }
-      return null;
     };
-    const hunt=pickCard("hunting");
-    if(hunt)return{kind:"card",label:"CURRENT HUNT",...hunt};
-    const want=pickCard("want");
-    if(want)return{kind:"card",label:"ON THE LIST",...want};
-    const fav=pickCard("fav");
-    if(fav)return{kind:"card",label:"MOST WANTED",...fav};
+    collect("hunting","CURRENT HUNT");
+    if(out.length<4)collect("want","ON THE LIST");
+    if(out.length<4)collect("fav","MOST WANTED");
+    return out;
+  },[cardData,checkOwned,favorites,intentMap,rosterList]);
+
+  const[heroPick,setHeroPick]=useState(null); // V-C.1 session-only queue selection (card id)
+
+  const vaultFeature=useMemo(()=>{
+    if(vaultCandidates.length>0){
+      const picked=(heroPick&&vaultCandidates.find(c=>c.card.id===heroPick))||vaultCandidates[0];
+      return{kind:"card",...picked};
+    }
     const focus=artistStats.filter(a=>a.pct<100).sort((a,b)=>b.pct-a.pct||b.owned-a.owned)[0];
     if(focus)return{kind:"artist",artist:focus};
     return{kind:"empty"};
-  },[cardData,checkOwned,favorites,intentMap,rosterList,artistStats]);
+  },[vaultCandidates,heroPick,artistStats]);
+
+  // Queue = the other candidates orbiting the current feature (max 3).
+  const vaultQueue=vaultFeature.kind==="card"
+    ?vaultCandidates.filter(c=>c.card.id!==vaultFeature.card.id).slice(0,3)
+    :[];
+  // Quiet archive context for the hero's right side when no alternates exist.
+  const featureArtistStat=vaultFeature.kind==="card"
+    ?artistStats.find(a=>a.name===vaultFeature.artist.name)||null
+    :null;
 
   const syncIcon =syncStatus==="syncing"?<IcoSpin/>:syncStatus==="synced"?<span style={{color:"#22c55e",fontSize:".65rem"}}>✓</span>:null;
 
@@ -229,15 +262,15 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",rowGap:".45rem"}}>
           <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer",minWidth:0}} onClick={()=>onGoBinder("landing")}>
-            <BlazLogo size={22}/>
+            <BlazLogo size={18}/>
             <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
           </div>
           <div style={{display:"flex",gap:".4rem",alignItems:"center",marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
             {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
             {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count} cards</span>}
             {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
-            <button onClick={onUploadCSV} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:".3rem",color:"#8b6cd8",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600}}>
-              <IcoUpload/> CSV
+            <button onClick={onUploadCSV} className="btn-ghost" title="Import your Collectr CSV export" style={{display:"flex",alignItems:"center",gap:".3rem",color:"#7a7aa0",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600}}>
+              <IcoUpload/> Import
             </button>
             <button onClick={()=>onGoBinder("hunt")} className="btn-ghost" style={{color:"#9b7fe8",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600,whiteSpace:"nowrap"}}>Hunt Board</button>
             <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:8,padding:".35rem .75rem",fontSize:".72rem",fontWeight:700,letterSpacing:".03em"}}>
@@ -278,6 +311,33 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
                 <div style={{fontSize:".78rem",color:"#8888a8",marginBottom:"1.15rem"}}>{vaultFeature.artist.name}{vaultFeature.card.set?.name?<> · {vaultFeature.card.set.name}</>:null}</div>
                 <button onClick={()=>onCardClick&&onCardClick(vaultFeature.card)} className="btn-ghost" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".78rem",fontWeight:600}}>View card →</button>
               </div>
+              {/* V-C.1: Vault Queue — the other hero candidates, session-swap
+                  only. When no alternates exist, a quiet archive-context note
+                  fills the space instead of empty placeholders. */}
+              {vaultQueue.length>0?(
+                <div className="vault-queue">
+                  <div className="vault-queue-label" style={{fontSize:".56rem",letterSpacing:".18em",color:"#54547a",fontWeight:700}}>UP NEXT</div>
+                  {vaultQueue.map(q=>(
+                    <button key={q.card.id} className="vault-queue-item" onClick={()=>setHeroPick(q.card.id)}>
+                      <img src={imgSmall(q.card)} alt={q.card.name} loading="lazy" decoding="async" style={{width:34,height:"auto",borderRadius:4,flexShrink:0,display:"block"}}/>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:".7rem",color:"#c8c8e0",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{q.card.name}</div>
+                        <div style={{fontSize:".58rem",color:"#54547a",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{q.artist.name}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ):featureArtistStat?(
+                <div className="vault-queue" style={{justifyContent:"center"}}>
+                  <div className="vault-queue-label" style={{fontSize:".56rem",letterSpacing:".18em",color:"#54547a",fontWeight:700}}>IN YOUR VAULT</div>
+                  <div style={{fontSize:".74rem",color:"#8888a8",lineHeight:1.45}}>
+                    <span style={{color:"#c8c8e0",fontWeight:600}}>{featureArtistStat.owned}/{featureArtistStat.total}</span> {featureArtistStat.name}
+                  </div>
+                  <div style={{height:3,background:"#1e1e35",borderRadius:2,overflow:"hidden",width:"100%",maxWidth:150}}>
+                    <div className="prog-fill" style={{width:`${featureArtistStat.pct}%`,height:"100%",borderRadius:2,background:"#4a3880"}}/>
+                  </div>
+                </div>
+              ):null}
             </div>
           )}
 
@@ -356,7 +416,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
               })}
               {mostWanted.length>3&&(
                 <button onClick={()=>setShowAllWanted(v=>!v)} style={{marginTop:"4px",width:"100%",background:"none",border:"1px dashed #1e1e35",borderRadius:8,padding:".55rem",cursor:"pointer",color:"#4a4a70",fontSize:".72rem",fontWeight:600,letterSpacing:".06em",transition:"color .15s,border-color .15s"}} onMouseEnter={e=>{e.currentTarget.style.color="#9b7ce8";e.currentTarget.style.borderColor="#9b7ce8";}} onMouseLeave={e=>{e.currentTarget.style.color="#4a4a70";e.currentTarget.style.borderColor="#1e1e35";}}>
-                  {showAllWanted?`▲ SHOW LESS`:`▼ SEE ${mostWanted.length-3} MORE`}
+                  {showAllWanted?`Collapse ▲`:`Show all ${mostWanted.length} →`}
                 </button>
               )}
             </div>
@@ -364,11 +424,13 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
         </section>
 
         <section style={{marginBottom:"1.5rem"}}>
-          <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35",display:"flex",alignItems:"baseline",gap:".6rem"}}>
+          <h3 onClick={()=>setMainOpen(v=>!v)} style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:mainOpen?".75rem":0,padding:".35rem 0 .5rem",borderBottom:"1px solid #1e1e35",display:"flex",alignItems:"baseline",gap:".6rem",cursor:"pointer",userSelect:"none"}}>
+            <span style={{fontSize:".55rem",color:"#4a4a70"}}>{mainOpen?"▼":"▶"}</span>
             <span>MAIN ARTISTS</span>
-            <button onClick={()=>onGoBinder("artists")} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".64rem",fontWeight:700,letterSpacing:".04em",padding:0,whiteSpace:"nowrap"}}>Explore Artists →</button>
+            {!mainOpen&&<span style={{color:"#3a3a5a",fontWeight:600,letterSpacing:0}}>· {mainStats.length}</span>}
+            <button onClick={e=>{e.stopPropagation();onGoBinder("artists");}} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".64rem",fontWeight:700,letterSpacing:".04em",padding:0,whiteSpace:"nowrap"}}>Explore Artists →</button>
           </h3>
-          <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+          {mainOpen&&<div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
             {mainStats.map(entry=>(
               <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem"}}>
                 <div style={{width:145,flexShrink:0}}><span style={{fontSize:".875rem",fontWeight:600,color:entry.pct===100?"#22c55e":"#e8e8f4"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
@@ -379,13 +441,17 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
                 <div style={{fontSize:".65rem",color:"#2a2a40",flexShrink:0}}>→</div>
               </div>
             ))}
-          </div>
+          </div>}
         </section>
 
         {secStats.length>0&&(
           <section style={{marginBottom:"1.5rem"}}>
-            <h3 style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:".75rem",paddingBottom:".5rem",borderBottom:"1px solid #1e1e35"}}>SECONDARY & SPECIAL</h3>
-            <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+            <h3 onClick={()=>setSecOpen(v=>!v)} style={{fontSize:".62rem",letterSpacing:".14em",color:"#6b6b90",fontWeight:700,marginBottom:secOpen?".75rem":0,padding:".35rem 0 .5rem",borderBottom:"1px solid #1e1e35",display:"flex",alignItems:"baseline",gap:".6rem",cursor:"pointer",userSelect:"none"}}>
+              <span style={{fontSize:".55rem",color:"#4a4a70"}}>{secOpen?"▼":"▶"}</span>
+              <span>SECONDARY & SPECIAL</span>
+              {!secOpen&&<span style={{color:"#3a3a5a",fontWeight:600,letterSpacing:0}}>· {secStats.length}</span>}
+            </h3>
+            {secOpen&&<div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
               {secStats.map(entry=>(
                 <div key={entry.name} className="artist-row" onClick={()=>onGoBinder("artist:"+toSlug(entry.name))} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem"}}>
                   <div style={{width:145,flexShrink:0}}><span style={{fontSize:".8rem",color:entry.pct===100?"#22c55e":"#8888a8"}}>{entry.name}{entry.pct===100?" ✓":""}</span></div>
@@ -394,7 +460,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
                   <div style={{fontSize:".65rem",color:"#1e1e30",flexShrink:0}}>→</div>
                 </div>
               ))}
-            </div>
+            </div>}
           </section>
         )}
 
@@ -413,6 +479,11 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
             </div>
           </section>
         )}
+
+        {/* V-C.1: intentional Explore Artists CTA near the artist sections. */}
+        <div style={{marginBottom:"1.5rem"}}>
+          <button onClick={()=>onGoBinder("artists")} className="btn-ghost" style={{width:"100%",borderRadius:12,padding:".7rem",fontSize:".78rem",fontWeight:600,color:"#8b6cd8",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem"}}>Find an illustrator →</button>
+        </div>
 
         <div style={{textAlign:"center",padding:"1.5rem 0 3rem"}}>
           <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:50,padding:".85rem 2.5rem",fontSize:".95rem",fontWeight:800,letterSpacing:".08em",boxShadow:"0 4px 16px rgba(190,70,20,0.22)"}}>OPEN FULL BINDER →</button>
@@ -1407,7 +1478,7 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
               onKeyDown={e=>{if(e.key==="Enter")runFind();}}
               style={{flex:1,minWidth:0,background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".45rem .7rem",fontSize:".82rem"}}
             />
-            <button onClick={runFind} disabled={findStatus==="searching"||!findQuery.trim()} className="btn-ghost" style={{borderRadius:8,padding:".45rem .8rem",fontSize:".74rem",fontWeight:600,color:"#8b6cd8",whiteSpace:"nowrap",opacity:findStatus==="searching"||!findQuery.trim()?.55:1}}>
+            <button onClick={runFind} disabled={findStatus==="searching"||!findQuery.trim()} className="btn-ghost" style={{borderRadius:8,padding:".45rem .8rem",fontSize:".74rem",fontWeight:600,color:"#8b6cd8",whiteSpace:"nowrap",opacity:(findStatus==="searching"||!findQuery.trim())?0.55:1}}>
               {findStatus==="searching"?<span style={{display:"flex",alignItems:"center",gap:5}}><IcoSpin/> Searching…</span>:"Search"}
             </button>
           </div>
@@ -1484,7 +1555,7 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
                               disabled={!!manageBusy[a.artistId]||a.tier===tierVal}
                               onClick={()=>handleTierChange(a.artistId,tierVal)}
                               className="btn-ghost"
-                              style={{borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:a.tier===tierVal?"#22c55e":"#8b6cd8",opacity:!!manageBusy[a.artistId]?.55:1,whiteSpace:"nowrap"}}
+                              style={{borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:a.tier===tierVal?"#22c55e":"#8b6cd8",opacity:manageBusy[a.artistId]?0.55:1,whiteSpace:"nowrap"}}
                             >{a.tier===tierVal?`✓ ${label}`:label}</button>
                           ))}
                         </div>
@@ -1492,7 +1563,7 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
                           disabled={!!manageBusy[a.artistId]}
                           onClick={()=>handleRemove(a.artistId)}
                           className="btn-ghost"
-                          style={{alignSelf:"flex-start",borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:"#f87171",opacity:!!manageBusy[a.artistId]?.55:1}}
+                          style={{alignSelf:"flex-start",borderRadius:7,padding:".28rem .55rem",fontSize:".66rem",fontWeight:600,color:"#f87171",opacity:manageBusy[a.artistId]?0.55:1}}
                         >{manageBusy[a.artistId]?<span style={{display:"flex",alignItems:"center",gap:4}}><IcoSpin/> Working…</span>:"Remove from Archive"}</button>
                         {manageErrors[a.artistId]&&(
                           <div style={{fontSize:".64rem",color:"#b06060",letterSpacing:".01em"}}>{manageErrors[a.artistId]}</div>
@@ -1823,7 +1894,7 @@ function App(){
         <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".6rem"}}>
             <div style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer"}} onClick={()=>setView("dashboard")}>
-              <BlazLogo size={22}/>
+              <BlazLogo size={18}/>
               <div style={{display:"flex",alignItems:"baseline",gap:".5rem"}}>
                 <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
                 {totalCards>0&&<span style={{fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums"}}>{totalOwned}/{totalCards} · {totalPct}%</span>}
