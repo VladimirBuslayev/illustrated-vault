@@ -292,7 +292,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
             {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
             {csvStatus?.count&&<span style={{fontSize:".7rem",color:"#22c55e"}}>✓ {csvStatus.count} cards</span>}
             {syncIcon&&<span style={{display:"flex",alignItems:"center",gap:3}}>{syncIcon}</span>}
-            <button onClick={onUploadCSV} className="btn-ghost" title="Import your Collectr CSV export" style={{display:"flex",alignItems:"center",gap:".3rem",color:"#7a7aa0",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600}}>
+            <button onClick={onUploadCSV} className="btn-ghost hide-on-narrow" title="Import your Collectr CSV export" style={{display:"flex",alignItems:"center",gap:".3rem",color:"#7a7aa0",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600}}>
               <IcoUpload/> Import
             </button>
             <button onClick={()=>onGoBinder("hunt")} className="btn-ghost" style={{color:"#9b7fe8",borderRadius:8,padding:".35rem .6rem",fontSize:".72rem",fontWeight:600,whiteSpace:"nowrap"}}>Hunt Board</button>
@@ -924,9 +924,13 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
 
 
 // ── ARTIST SECTION ─────────────────────────────────────────────────────────────
-function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader,intentMap,soloSections}){
+function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader,intentMap,soloSections,startCollapsed}){
   const isSecondary=entry.tier==="secondary";
-  const[open,setOpen]=useState(noHeader||!isSecondary);
+  // B-1: startCollapsed is opt-in (default false) so only the Binder's own
+  // ArtistSection calls it — ArtistPage (noHeader=true, always shows its one
+  // section) and SharedBinder (prop omitted) are unaffected and keep the
+  // pre-B-1 default (main tiers open, secondary collapsed).
+  const[open,setOpen]=useState(()=>noHeader?true:(startCollapsed?false:!isSecondary));
   const[showFact,setShowFact]=useState(false);
   const fact=ARTIST_FACTS[entry.name];
   const displayCards=useMemo(()=>{let arr=cards;if(searchQuery){const q=searchQuery.toLowerCase();arr=arr.filter(c=>(c.name||"").toLowerCase().includes(q));}return sortCards(arr,sortBy,checkOwned);},[cards,searchQuery,sortBy,checkOwned]);
@@ -2114,7 +2118,7 @@ function App(){
           if(isLoading&&!cards.length)return<div key={entry.name} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".6rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading {entry.name}…</div>;
           if(err)return<div key={entry.name} style={{padding:".6rem 0",fontSize:".78rem",color:"#f87171",display:"flex",alignItems:"center",gap:".5rem"}}><span>⚠ {entry.name}: {err}</span><button onClick={()=>loadEntry(entry)} style={{color:"#8b6cd8",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:3,fontSize:".75rem"}}><IcoRetry/> retry</button></div>;
           if(!cards.length)return null;
-          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode}/>;
+          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode} startCollapsed/>;
         })}
         {search&&!visibleArtists.some(entry=>{const cards=visibleCardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
