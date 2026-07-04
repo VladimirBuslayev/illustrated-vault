@@ -284,9 +284,9 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
     <div style={{minHeight:"100dvh",background:"#07070f",paddingBottom:"5rem"}}>
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",rowGap:".45rem"}}>
-          <div style={{display:"flex",alignItems:"center",gap:".55rem",cursor:"pointer",minWidth:0}} onClick={()=>onGoBinder("landing")}>
-            <span style={{display:"flex",transform:"translateY(1px)"}}><BlazLogo size={14}/></span>
-            <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
+          <div style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer",minWidth:0}} onClick={()=>onGoBinder("landing")}>
+            <span style={{display:"flex",transform:"translateY(0.5px)"}}><BlazLogo size={14}/></span>
+            <span className="font-display" style={{fontWeight:600,fontSize:"1.12rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
           </div>
           <div style={{display:"flex",gap:".4rem",alignItems:"center",marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
             {csvStatus==="loading"&&<span style={{fontSize:".7rem",color:"#6b6b90",display:"flex",alignItems:"center",gap:4}}><IcoSpin/>Reading…</span>}
