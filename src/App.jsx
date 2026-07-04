@@ -33,6 +33,7 @@ import { fetchTrackedArtistTiers, fetchArtistIdentities,
          updateArtistTier, removeArtistFromArchive } from './services/artistService.js'; // A-D2b0 + A-D2c + A-D2d
 import { fetchArtistCards }                               from './services/cardService.js';
 import { fetchFallbackImage, buildLimitlessGuess }        from './services/imageService.js';
+import { fetchBinders, fetchBinder, createBinder, deleteBinder } from './services/binderService.js'; // BP-0A1
 
 // ── ICONS ─────────────────────────────────────────────────────────────────────
 const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -1586,6 +1587,147 @@ function HuntShow({visibleCardData,intentMap,checkOwned,onCardClick,onBack,roste
   );
 }
 
+// ── BINDER PLANNING (BP-0A2) ─────────────────────────────────────────────────
+// Planned Binders index + a calm detail placeholder. Self-fetching (App holds
+// only planId), session-only UI state, no caching. Card membership, catalog
+// search, ownership treatment, and progress counts are BP-0A3/BP-0A4 —
+// deliberately absent here.
+function BinderPlansIndex({user,onOpenPlan,onBack}){
+  const[binders,setBinders]=useState(undefined); // undefined=loading, null=load failed, []=empty
+  const[refresh,setRefresh]=useState(0);
+  const[formOpen,setFormOpen]=useState(false);
+  const[name,setName]=useState("");
+  const[desc,setDesc]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[formError,setFormError]=useState("");
+  const[deletingId,setDeletingId]=useState(null);
+  useEffect(()=>{
+    let cancelled=false;
+    setBinders(undefined);
+    fetchBinders(user.id).then(rows=>{if(!cancelled)setBinders(rows);});
+    return()=>{cancelled=true;};
+  },[user.id,refresh]);
+  const handleCreate=async()=>{
+    if(busy)return;
+    setBusy(true);setFormError("");
+    try{
+      await createBinder(user.id,{name,description:desc});
+      setName("");setDesc("");setFormOpen(false);setRefresh(n=>n+1);
+    }catch(e){setFormError(e.message||"Could not create the binder.");}
+    finally{setBusy(false);}
+  };
+  const handleDelete=async(e,b)=>{
+    e.stopPropagation(); // row is clickable — deleting must not navigate into the binder
+    if(deletingId)return;
+    if(!window.confirm(`Delete "${b.name}"? Its card list will be removed.`))return;
+    setDeletingId(b.id);
+    try{await deleteBinder(user.id,b.id);setRefresh(n=>n+1);}
+    catch(err){console.error(err);alert("Could not delete the binder. Please try again.");}
+    finally{setDeletingId(null);}
+  };
+  const inputSt={width:"100%",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".5rem .7rem",fontSize:".85rem"};
+  const createForm=(
+    <div style={{border:"1px solid #1e1e35",borderRadius:12,padding:".9rem",marginBottom:"1.25rem",background:"rgba(255,255,255,0.015)"}}>
+      <input value={name} onChange={e=>setName(e.target.value)} maxLength={80} placeholder="Binder name" style={{...inputSt,marginBottom:".5rem"}} autoFocus/>
+      <input value={desc} onChange={e=>setDesc(e.target.value)} maxLength={280} placeholder="Short description (optional)" style={{...inputSt,marginBottom:".65rem",fontSize:".78rem"}}/>
+      {formError&&<div style={{fontSize:".72rem",color:"#f87171",marginBottom:".55rem"}}>{formError}</div>}
+      <div style={{display:"flex",gap:".5rem"}}>
+        <button onClick={handleCreate} disabled={busy||!name.trim()} className="btn-flame" style={{borderRadius:8,padding:".45rem 1rem",fontSize:".76rem",fontWeight:700,opacity:(busy||!name.trim())?0.55:1}}>{busy?"Creating…":"Create binder"}</button>
+        <button onClick={()=>{setFormOpen(false);setFormError("");}} className="btn-ghost" style={{borderRadius:8,padding:".45rem .9rem",fontSize:".76rem",fontWeight:600}}>Cancel</button>
+      </div>
+    </div>
+  );
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem",display:"flex",alignItems:"center",gap:".8rem"}}>
+          <button onClick={onBack} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".35rem .55rem",fontSize:".74rem",display:"flex",alignItems:"center",gap:".3rem",whiteSpace:"nowrap"}}>← Binder</button>
+          <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Planned Binders</span>
+        </div>
+      </header>
+      <main style={{maxWidth:860,margin:"0 auto",padding:"1.2rem 1rem 3rem"}}>
+        {binders===undefined&&(
+          <div style={{display:"flex",alignItems:"center",gap:".5rem",padding:"2rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading your binders…</div>
+        )}
+        {binders===null&&(
+          <div style={{padding:"2rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#f87171",border:"1px solid rgba(248,113,113,0.25)",borderRadius:12,marginTop:"1rem"}}>
+            Couldn't load your binders. <button onClick={()=>setRefresh(n=>n+1)} style={{color:"#8b6cd8",background:"none",border:"none",cursor:"pointer",fontSize:".8rem",fontWeight:600,padding:0}}>Retry</button>
+          </div>
+        )}
+        {Array.isArray(binders)&&binders.length===0&&!formOpen&&(
+          <div style={{padding:"3rem 1.2rem",textAlign:"center",marginTop:"1rem"}}>
+            <h2 className="font-display" style={{fontSize:"clamp(1.3rem,4vw,1.8rem)",fontWeight:700,letterSpacing:"-.02em",color:"#f2e9df",marginBottom:".5rem"}}>A binder starts with an idea.</h2>
+            <p style={{fontSize:".8rem",color:"#6b6b90",lineHeight:1.6,maxWidth:420,margin:"0 auto 1.5rem"}}>Name the collection you want to build — an artist's best work, one Pokémon across eras, a theme only you can see.</p>
+            <button onClick={()=>setFormOpen(true)} className="btn-flame" style={{borderRadius:10,padding:".6rem 1.4rem",fontSize:".82rem",fontWeight:700}}>Create your first binder</button>
+          </div>
+        )}
+        {Array.isArray(binders)&&(binders.length>0||formOpen)&&(
+          <>
+            {formOpen?createForm:(
+              <div style={{marginBottom:"1.25rem"}}>
+                <button onClick={()=>setFormOpen(true)} className="btn-ghost" style={{borderRadius:10,padding:".5rem 1rem",fontSize:".76rem",fontWeight:600,color:"#8b6cd8"}}>New binder +</button>
+              </div>
+            )}
+            <div style={{display:"flex",flexDirection:"column",gap:"2px"}}>
+              {binders.map(b=>(
+                <div key={b.id} className="artist-row" onClick={()=>onOpenPlan(b.id)} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".7rem .75rem"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:".92rem",fontWeight:700,color:"#e8e8f4",letterSpacing:"-.01em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b.name}</div>
+                    {b.description&&<div style={{fontSize:".7rem",color:"#6b6b90",marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b.description}</div>}
+                  </div>
+                  <button onClick={e=>handleDelete(e,b)} disabled={deletingId===b.id} title="Delete binder" style={{background:"none",border:"none",cursor:"pointer",color:deletingId===b.id?"#3a3a5a":"#4a4a70",fontSize:".66rem",fontWeight:600,padding:".3rem .4rem",flexShrink:0,transition:"color .15s"}} onMouseEnter={e=>{if(deletingId!==b.id)e.currentTarget.style.color="#f87171";}} onMouseLeave={e=>{e.currentTarget.style.color=deletingId===b.id?"#3a3a5a":"#4a4a70";}}>{deletingId===b.id?"Deleting…":"Delete"}</button>
+                  <div style={{fontSize:".65rem",color:"#2a2a40",flexShrink:0}}>→</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function BinderPlanPage({planId,onBack}){
+  const[binder,setBinder]=useState(undefined); // undefined=loading, null=not found/unauthorized/error
+  useEffect(()=>{
+    let cancelled=false;
+    setBinder(undefined);
+    fetchBinder(planId).then(row=>{if(!cancelled)setBinder(row);});
+    return()=>{cancelled=true;};
+  },[planId]);
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem",display:"flex",alignItems:"center",gap:".8rem"}}>
+          <button onClick={onBack} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".35rem .55rem",fontSize:".74rem",display:"flex",alignItems:"center",gap:".3rem",whiteSpace:"nowrap"}}>← Planned Binders</button>
+          {binder&&<span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{binder.name}</span>}
+        </div>
+      </header>
+      <main style={{maxWidth:860,margin:"0 auto",padding:"1.2rem 1rem 3rem"}}>
+        {binder===undefined&&(
+          <div style={{display:"flex",alignItems:"center",gap:".5rem",padding:"2rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Opening binder…</div>
+        )}
+        {binder===null&&(
+          <div style={{padding:"3rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12,marginTop:"1rem"}}>
+            This binder isn't available. It may have been deleted.
+            <div style={{marginTop:".8rem"}}>
+              <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".76rem",fontWeight:600,padding:0}}>Back to Planned Binders</button>
+            </div>
+          </div>
+        )}
+        {binder&&(
+          <div style={{marginTop:".5rem"}}>
+            {binder.description&&<p style={{fontSize:".84rem",color:"#8888a8",lineHeight:1.55,maxWidth:560,marginBottom:"1.5rem"}}>{binder.description}</p>}
+            <div style={{padding:"3rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12}}>
+              This binder is ready for cards. Card selection arrives in the next update.
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
 // ── ARTIST DIRECTORY (A-D1) ───────────────────────────────────────────────────
 // Read-only visual directory of the tracked artist roster ("Explore Artists").
 // Derived entirely from in-memory state — no Supabase calls, no mutation.
@@ -1866,6 +2008,7 @@ function App(){
   // both to their defaults.
   const[heroPick,      setHeroPick]      =useState(null);
   const[queuePage,     setQueuePage]     =useState(0);
+  const[planId,        setPlanId]        =useState(null); // BP-0A2: current planned binder (uuid); detail page self-fetches
   const fileRef=useRef(null),searchRef=useRef(null);
 
   const withSync=async fn=>{setSyncStatus("syncing");try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}};
@@ -2080,6 +2223,8 @@ function App(){
     if(target==="dashboard"){setView("dashboard");return;}
     if(target==="binder"){setView("binder");return;}
     if(target==="artists"){setView("artists");return;}
+    if(target==="plans"){setView("plans");return;} // BP-0A2
+    if(target.startsWith("plan:")){const id=target.replace("plan:","");setPlanId(id);setView("plan");return;} // BP-0A2
     if(target.startsWith("artist:")){const slug=target.replace("artist:","");setArtistSlug(slug);setView("artist");return;}
     if(effectiveRoster.some(a=>toSlug(a.name)===target)){setFilterSlug(target);setView("binder");return;}
     setView(target);
@@ -2126,6 +2271,14 @@ function App(){
 
   if(view==="artists")return(
     <ArtistDirectory visibleCardData={visibleCardData} checkOwned={checkOwned} loadingSet={loadingSet} errors={errors} onOpenArtist={slug=>goTo("artist:"+slug)} onBack={()=>setView("dashboard")} roster={effectiveRoster} onArtistAdded={handleArtistAdded} onChangeTier={handleChangeArtistTier} onRemoveArtist={handleRemoveArtist}/>
+  );
+
+  if(view==="plans")return(
+    <BinderPlansIndex user={user} onOpenPlan={id=>goTo("plan:"+id)} onBack={()=>setView("binder")}/>
+  );
+
+  if(view==="plan"&&planId)return(
+    <BinderPlanPage planId={planId} onBack={()=>setView("plans")}/>
   );
 
   const visibleArtists=filterSlug==="all"?effectiveRoster:effectiveRoster.filter(a=>toSlug(a.name)===filterSlug); // A-D2b0
@@ -2194,6 +2347,10 @@ function App(){
 
       <main style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
         {totalCards>0&&<div style={{height:2,background:"#1e1e35",borderRadius:1,overflow:"hidden",marginBottom:"1.5rem"}}><div className="prog-fill" style={{width:`${totalPct}%`,height:"100%",background:"#8b6cd8",borderRadius:1}}/></div>}
+        {/* BP-0A2: calm entry into the intentional-planning surface. */}
+        <div style={{marginBottom:"1.5rem"}}>
+          <button onClick={()=>goTo("plans")} className="btn-ghost" style={{width:"100%",borderRadius:12,padding:".7rem",fontSize:".78rem",fontWeight:600,color:"#8b6cd8",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem"}}>Planned binders →</button>
+        </div>
         {visibleArtists.map(entry=>{
           const slug=toSlug(entry.name),cards=visibleCardData[slug]||[];
           const isLoading=loadingSet.has(slug),err=errors[slug];
