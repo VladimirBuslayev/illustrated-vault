@@ -81,3 +81,13 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
   .vault-queue{flex-direction:row;flex-wrap:wrap;width:100%;}
   .vault-queue-item{flex:1 1 45%;min-width:0;}
 }
+
+/* ── Mobile authenticated header — Dashboard action row ─────────────────────
+   On small widths "Illustrated" + Import + Hunt Board + Open Binder no
+   longer fit on one row and the brand wraps. CSV import itself is untouched
+   and still reachable (Binder → Settings → Upload Collectr CSV, or on wider
+   viewports); this only hides the Dashboard header shortcut below 480px.
+   Desktop (>480px) is untouched. */
+@media(max-width:480px){
+  .hide-on-narrow{display:none!important;}
+}
