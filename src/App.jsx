@@ -209,6 +209,10 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
   // session-only heroPick (card id, plain useState — no persistence, no
   // schema, no localStorage); an invalid/stale pick silently falls back to
   // candidate [0].
+  // V-C.2: no cap here — every eligible hunting/want/favorite candidate is
+  // collected using the same priority order and dedup as before. Candidate
+  // [0] is therefore still byte-identical to the pre-V-C.1/V-C.2 featured
+  // card. Only the rendered Vault Queue (below) is limited, via paging.
   const vaultCandidates=useMemo(()=>{
     const seen=new Set();
     const out=[];
@@ -216,7 +220,6 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
       for(const entry of rosterList){
         const cards=cardData[toSlug(entry.name)]||[];
         for(const card of cards){
-          if(out.length>=4)return;
           if(seen.has(card.id))continue;
           if(checkOwned(card))continue;
           if(mode==="fav"){if(!favorites.has(card.id))continue;}
@@ -225,12 +228,11 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
           seen.add(card.id);
           out.push({card,artist:entry,label});
         }
-        if(out.length>=4)return;
       }
     };
     collect("hunting","CURRENT HUNT");
-    if(out.length<4)collect("want","ON THE LIST");
-    if(out.length<4)collect("fav","MOST WANTED");
+    collect("want","ON THE LIST");
+    collect("fav","MOST WANTED");
     return out;
   },[cardData,checkOwned,favorites,intentMap,rosterList]);
 
@@ -246,10 +248,23 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
     return{kind:"empty"};
   },[vaultCandidates,heroPick,artistStats]);
 
-  // Queue = the other candidates orbiting the current feature (max 3).
-  const vaultQueue=vaultFeature.kind==="card"
-    ?vaultCandidates.filter(c=>c.card.id!==vaultFeature.card.id).slice(0,3)
+  // V-C.2: Vault Queue paging. otherCandidates is the full eligible pool
+  // minus whichever card is currently featured. queuePage is session-only
+  // (plain useState, no persistence) and is intentionally NOT reset when the
+  // feature card changes — selecting a queue item shouldn't jump the user
+  // back to page 1. It's only clamped down if the current page becomes out
+  // of range (e.g. the pool shrinks because a card gets marked owned).
+  const QUEUE_PAGE_SIZE=3;
+  const[queuePage,setQueuePage]=useState(0);
+  const otherCandidates=vaultFeature.kind==="card"
+    ?vaultCandidates.filter(c=>c.card.id!==vaultFeature.card.id)
     :[];
+  const queuePageCount=otherCandidates.length?Math.ceil(otherCandidates.length/QUEUE_PAGE_SIZE):0;
+  const safeQueuePage=queuePageCount?Math.min(queuePage,queuePageCount-1):0;
+  useEffect(()=>{
+    if(safeQueuePage!==queuePage)setQueuePage(safeQueuePage);
+  },[safeQueuePage,queuePage]);
+  const vaultQueue=otherCandidates.slice(safeQueuePage*QUEUE_PAGE_SIZE,safeQueuePage*QUEUE_PAGE_SIZE+QUEUE_PAGE_SIZE);
   // Quiet archive context for the hero's right side when no alternates exist.
   const featureArtistStat=vaultFeature.kind==="card"
     ?artistStats.find(a=>a.name===vaultFeature.artist.name)||null
@@ -261,8 +276,8 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
     <div style={{minHeight:"100dvh",background:"#07070f",paddingBottom:"5rem"}}>
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",rowGap:".45rem"}}>
-          <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer",minWidth:0}} onClick={()=>onGoBinder("landing")}>
-            <BlazLogo size={18}/>
+          <div style={{display:"flex",alignItems:"center",gap:".55rem",cursor:"pointer",minWidth:0}} onClick={()=>onGoBinder("landing")}>
+            <BlazLogo size={16}/>
             <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
           </div>
           <div style={{display:"flex",gap:".4rem",alignItems:"center",marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
@@ -316,7 +331,17 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
                   fills the space instead of empty placeholders. */}
               {vaultQueue.length>0?(
                 <div className="vault-queue">
-                  <div className="vault-queue-label" style={{fontSize:".56rem",letterSpacing:".18em",color:"#54547a",fontWeight:700}}>UP NEXT</div>
+                  <div className="vault-queue-label" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:".4rem"}}>
+                    <span style={{fontSize:".56rem",letterSpacing:".18em",color:"#54547a",fontWeight:700}}>UP NEXT</span>
+                    {queuePageCount>1&&(
+                      <div style={{display:"flex",gap:".25rem",flexShrink:0}}>
+                        <button onClick={()=>setQueuePage(p=>Math.max(0,p-1))} disabled={safeQueuePage===0} aria-label="Previous vault queue page"
+                          style={{background:"none",border:"1px solid #1e1e35",borderRadius:6,width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",padding:0,lineHeight:1,fontSize:".62rem",cursor:safeQueuePage===0?"default":"pointer",color:safeQueuePage===0?"#2a2a45":"#8b6cd8"}}>‹</button>
+                        <button onClick={()=>setQueuePage(p=>Math.min(queuePageCount-1,p+1))} disabled={safeQueuePage>=queuePageCount-1} aria-label="Next vault queue page"
+                          style={{background:"none",border:"1px solid #1e1e35",borderRadius:6,width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",padding:0,lineHeight:1,fontSize:".62rem",cursor:safeQueuePage>=queuePageCount-1?"default":"pointer",color:safeQueuePage>=queuePageCount-1?"#2a2a45":"#8b6cd8"}}>›</button>
+                      </div>
+                    )}
+                  </div>
                   {vaultQueue.map(q=>(
                     <button key={q.card.id} className="vault-queue-item" onClick={()=>setHeroPick(q.card.id)}>
                       <img src={imgSmall(q.card)} alt={q.card.name} loading="lazy" decoding="async" style={{width:34,height:"auto",borderRadius:4,flexShrink:0,display:"block"}}/>
@@ -416,7 +441,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
               })}
               {mostWanted.length>3&&(
                 <button onClick={()=>setShowAllWanted(v=>!v)} style={{marginTop:"4px",width:"100%",background:"none",border:"1px dashed #1e1e35",borderRadius:8,padding:".55rem",cursor:"pointer",color:"#4a4a70",fontSize:".72rem",fontWeight:600,letterSpacing:".06em",transition:"color .15s,border-color .15s"}} onMouseEnter={e=>{e.currentTarget.style.color="#9b7ce8";e.currentTarget.style.borderColor="#9b7ce8";}} onMouseLeave={e=>{e.currentTarget.style.color="#4a4a70";e.currentTarget.style.borderColor="#1e1e35";}}>
-                  {showAllWanted?`Collapse ▲`:`Show all ${mostWanted.length} →`}
+                  {showAllWanted?`Show fewer ↑`:`Show all ${mostWanted.length} ↓`}
                 </button>
               )}
             </div>
@@ -482,7 +507,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
 
         {/* V-C.1: intentional Explore Artists CTA near the artist sections. */}
         <div style={{marginBottom:"1.5rem"}}>
-          <button onClick={()=>onGoBinder("artists")} className="btn-ghost" style={{width:"100%",borderRadius:12,padding:".7rem",fontSize:".78rem",fontWeight:600,color:"#8b6cd8",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem"}}>Find an illustrator →</button>
+          <button onClick={()=>onGoBinder("artists")} className="btn-ghost" style={{width:"100%",borderRadius:12,padding:".7rem",fontSize:".78rem",fontWeight:600,color:"#8b6cd8",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem"}}>Explore the artist archive →</button>
         </div>
 
         <div style={{textAlign:"center",padding:"1.5rem 0 3rem"}}>
