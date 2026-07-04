@@ -157,7 +157,7 @@ function LandingPage({user,onEnter,onSendLink,onVerifyCode,onSignOut}){
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors,onCardClick,roster}){
+function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUploadCSV,csvStatus,syncStatus,loadingSet,errors,onCardClick,roster,heroPick,setHeroPick,queuePage,setQueuePage}){
   // A-D2b0: roster = effectiveRoster (curated ARTISTS + dynamic additions).
   // Defensive fallback keeps the dashboard rendering even if the prop is omitted.
   const rosterList=roster||ARTISTS;
@@ -236,7 +236,10 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
     return out;
   },[cardData,checkOwned,favorites,intentMap,rosterList]);
 
-  const[heroPick,setHeroPick]=useState(null); // V-C.1 session-only queue selection (card id)
+  // V-C.3: heroPick and queuePage now live in App (passed down as props) so
+  // the featured card and queue page survive navigating away from and back
+  // to Dashboard. Still plain useState at the App level — no persistence,
+  // no schema, no localStorage — so a full browser refresh still resets both.
 
   const vaultFeature=useMemo(()=>{
     if(vaultCandidates.length>0){
@@ -250,12 +253,12 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
 
   // V-C.2: Vault Queue paging. otherCandidates is the full eligible pool
   // minus whichever card is currently featured. queuePage is session-only
-  // (plain useState, no persistence) and is intentionally NOT reset when the
-  // feature card changes — selecting a queue item shouldn't jump the user
-  // back to page 1. It's only clamped down if the current page becomes out
-  // of range (e.g. the pool shrinks because a card gets marked owned).
+  // (plain useState in App, no persistence) and is intentionally NOT reset
+  // when the feature card changes — selecting a queue item shouldn't jump
+  // the user back to page 1. It's only clamped down if the current page
+  // becomes out of range (e.g. the pool shrinks because a card gets marked
+  // owned). Clamping behavior is unchanged from V-C.2.
   const QUEUE_PAGE_SIZE=3;
-  const[queuePage,setQueuePage]=useState(0);
   const otherCandidates=vaultFeature.kind==="card"
     ?vaultCandidates.filter(c=>c.card.id!==vaultFeature.card.id)
     :[];
@@ -265,6 +268,11 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
     if(safeQueuePage!==queuePage)setQueuePage(safeQueuePage);
   },[safeQueuePage,queuePage]);
   const vaultQueue=otherCandidates.slice(safeQueuePage*QUEUE_PAGE_SIZE,safeQueuePage*QUEUE_PAGE_SIZE+QUEUE_PAGE_SIZE);
+  // V-C.3: eligible Hunt Show pool — every vaultCandidates entry that came
+  // from explicit hunting/want intent (excludes the "MOST WANTED" favorites
+  // stage). Reuses vaultCandidates' existing dedup/ownership filtering
+  // rather than re-deriving intent membership from scratch.
+  const huntShowCount=vaultCandidates.filter(c=>c.label!=="MOST WANTED").length;
   // Quiet archive context for the hero's right side when no alternates exist.
   const featureArtistStat=vaultFeature.kind==="card"
     ?artistStats.find(a=>a.name===vaultFeature.artist.name)||null
@@ -277,7 +285,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:900,margin:"0 auto",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",rowGap:".45rem"}}>
           <div style={{display:"flex",alignItems:"center",gap:".55rem",cursor:"pointer",minWidth:0}} onClick={()=>onGoBinder("landing")}>
-            <BlazLogo size={16}/>
+            <span style={{display:"flex",transform:"translateY(1px)"}}><BlazLogo size={14}/></span>
             <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Illustrated</span>
           </div>
           <div style={{display:"flex",gap:".4rem",alignItems:"center",marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
@@ -387,6 +395,14 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
                 <button onClick={()=>onGoBinder("artists")} className="btn-ghost" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".78rem",fontWeight:600}}>Explore Artists →</button>
               </div>
             )
+          )}
+
+          {/* V-C.3: quiet Hunt Show entry point — only appears when there is
+              at least one card with explicit hunting/want intent. */}
+          {huntShowCount>0&&(
+            <div style={{marginBottom:"1.25rem"}}>
+              <button onClick={()=>onGoBinder("hunt-show")} style={{background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".74rem",fontWeight:600,letterSpacing:".01em",padding:0}}>Show my full hunt →</button>
+            </div>
           )}
 
           <div style={{display:"flex",flexWrap:"wrap",alignItems:"baseline",gap:"1.5rem",borderTop:"1px solid #16162a",paddingTop:"1.1rem"}}>
@@ -1404,6 +1420,86 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,rost
   );
 }
 
+// ── HUNT SHOW v0 ──────────────────────────────────────────────────────────────
+// A narrowly scoped presentation layer over the same intentMap data Hunt
+// Board already reads — not a new data model, not a duplicate hunt system.
+// Flat (no per-artist grouping, unlike Hunt Board) and image-forward, meant
+// to be handed to someone at a card show. Cards are shown at full color —
+// the ".missing" grayscale treatment used elsewhere doesn't apply here on
+// purpose: every card in this view is, by definition, not yet owned, so
+// applying that treatment would gray out the entire screen and defeat the
+// point of a clear vendor-facing display. Everything else (ownership check,
+// intent semantics, ARTISTS/roster, CardModal) is reused as-is.
+function HuntShow({visibleCardData,intentMap,checkOwned,onCardClick,onBack,roster}){
+  const rosterList=roster||ARTISTS;
+  const{hunting,want}=useMemo(()=>{
+    const huntingOut=[],wantOut=[],seen=new Set();
+    rosterList.forEach(entry=>{
+      (visibleCardData[toSlug(entry.name)]||[]).forEach(card=>{
+        if(seen.has(card.id))return;
+        const st=intentMap?intentMap.get(card.id):undefined;
+        if(st!=="hunting"&&st!=="want")return;   // excludes maybe/ignore and plain favorites
+        if(checkOwned(card))return;               // same ownership suppression as Hunt Board
+        seen.add(card.id);
+        (st==="hunting"?huntingOut:wantOut).push({card,artist:entry.name});
+      });
+    });
+    return{hunting:huntingOut,want:wantOut};
+  },[visibleCardData,intentMap,checkOwned,rosterList]);
+  const total=hunting.length+want.length;
+
+  const Grid=({items})=>(
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:"1rem"}}>
+      {items.map(({card,artist})=>(
+        <div key={card.id} onClick={()=>onCardClick(card)} style={{cursor:"pointer"}}>
+          <div className="card-tile" style={{marginBottom:".4rem"}}>
+            <img src={imgLarge(card)||imgSmall(card)} alt={card.name} loading="lazy" decoding="async" style={{width:"100%",height:"auto",display:"block",borderRadius:6}}/>
+          </div>
+          <div style={{fontSize:".76rem",color:"#e8e8f4",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
+          <div style={{fontSize:".64rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{artist}</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  return(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+      <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
+        <div style={{maxWidth:960,margin:"0 auto",padding:".7rem 1rem",display:"flex",alignItems:"center",gap:".8rem"}}>
+          <button onClick={onBack} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".35rem .55rem",fontSize:".74rem",display:"flex",alignItems:"center",gap:".3rem",whiteSpace:"nowrap"}}>← Dashboard</button>
+          <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>MY HUNT</span>
+          <span style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{hunting.length} active target{hunting.length===1?"":"s"} · {want.length} on the list</span>
+        </div>
+      </header>
+      <main style={{maxWidth:960,margin:"0 auto",padding:"1.4rem 1rem 3rem"}}>
+        {total===0&&(
+          <div style={{padding:"3rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12,marginTop:"1.5rem"}}>
+            Nothing to show yet. Open any missing card and set a Hunt status of Hunting or Want to add it here.
+          </div>
+        )}
+        {hunting.length>0&&(
+          <section style={{marginBottom:want.length>0?"2.2rem":0}}>
+            <div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".9rem"}}>
+              <span style={{fontSize:".64rem",fontWeight:800,letterSpacing:".14em",color:"#b9a3f2",whiteSpace:"nowrap"}}>HUNTING · {hunting.length}</span>
+              <div style={{flex:1,height:1,background:"rgba(155,127,232,0.25)"}}/>
+            </div>
+            <Grid items={hunting}/>
+          </section>
+        )}
+        {want.length>0&&(
+          <section>
+            <div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".9rem"}}>
+              <span style={{fontSize:".64rem",fontWeight:800,letterSpacing:".14em",color:"#8888b8",whiteSpace:"nowrap"}}>ON THE LIST · {want.length}</span>
+              <div style={{flex:1,height:1,background:"rgba(136,136,184,0.18)"}}/>
+            </div>
+            <Grid items={want}/>
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
+
 // ── ARTIST DIRECTORY (A-D1) ───────────────────────────────────────────────────
 // Read-only visual directory of the tracked artist roster ("Explore Artists").
 // Derived entirely from in-memory state — no Supabase calls, no mutation.
@@ -1678,6 +1774,12 @@ function App(){
   const[syncStatus,    setSyncStatus]   =useState("idle");
   const[dynamicArtists,setDynamicArtists]=useState([]); // A-D2b0: user-tracked artists beyond the curated roster
   const[dynRefresh,    setDynRefresh]    =useState(0);  // A-D2c: bump to re-run the tracked-artist fetch after Add to Archive
+  // V-C.3: lifted from Dashboard so the featured hero card and Vault Queue
+  // page survive navigating to another view and back. Plain useState at the
+  // App level only — no persistence — so a full browser refresh still resets
+  // both to their defaults.
+  const[heroPick,      setHeroPick]      =useState(null);
+  const[queuePage,     setQueuePage]     =useState(0);
   const fileRef=useRef(null),searchRef=useRef(null);
 
   const withSync=async fn=>{setSyncStatus("syncing");try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}};
@@ -1910,7 +2012,7 @@ function App(){
 
   if(view==="dashboard")return(
     <>
-      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} intentMap={intentMap} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard} roster={effectiveRoster}/>
+      <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} intentMap={intentMap} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard} roster={effectiveRoster} heroPick={heroPick} setHeroPick={setHeroPick} queuePage={queuePage} setQueuePage={setQueuePage}/>
       {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>
@@ -1928,6 +2030,11 @@ function App(){
 
   if(view==="hunt")return(<>
     <HuntBoard visibleCardData={visibleCardData} intentMap={intentMap} checkOwned={checkOwned} onCardClick={setSelectedCard} onBack={()=>setView("dashboard")} roster={effectiveRoster}/>
+    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+  </>);
+
+  if(view==="hunt-show")return(<>
+    <HuntShow visibleCardData={visibleCardData} intentMap={intentMap} checkOwned={checkOwned} onCardClick={setSelectedCard} onBack={()=>setView("dashboard")} roster={effectiveRoster}/>
     {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
   </>);
 
