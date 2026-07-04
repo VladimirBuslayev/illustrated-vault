@@ -1368,23 +1368,83 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,rost
   const total=HUNT_SECTIONS.reduce((s,{key})=>s+groups[key].reduce((n,g)=>n+g.cards.length,0),0);
   const [collapsed,setCollapsed]=useState({maybe:true});
   const toggleSection=key=>setCollapsed(c=>({...c,[key]:!c[key]}));
+
+  // ── H-3: view style + filters ─────────────────────────────────────────────
+  // Session-only useState — no persistence, no schema, no localStorage.
+  // Filtering happens downstream of the (untouched) groups derivation so
+  // dedupe, ignore-exclusion, and owned suppression stay exactly as they are.
+  const[viewStyle,setViewStyle]=useState("list");     // "list" | "grid"
+  const[statusFilter,setStatusFilter]=useState("all"); // "all" | hunting | want | maybe
+  const[artistFilter,setArtistFilter]=useState("all"); // "all" | artist name
+  // Artists actually represented on the board, in roster order.
+  const boardArtists=useMemo(()=>{
+    const present=new Set();
+    HUNT_SECTIONS.forEach(({key})=>groups[key].forEach(g=>present.add(g.artist)));
+    return rosterList.map(e=>e.name).filter(n=>present.has(n));
+  },[groups,rosterList]);
+  const filteredGroups=useMemo(()=>{
+    const out={};
+    HUNT_SECTIONS.forEach(({key})=>{
+      if(statusFilter!=="all"&&key!==statusFilter){out[key]=[];return;}
+      out[key]=artistFilter==="all"?groups[key]:groups[key].filter(g=>g.artist===artistFilter);
+    });
+    return out;
+  },[groups,statusFilter,artistFilter]);
+  const filteredTotal=HUNT_SECTIONS.reduce((s,{key})=>s+filteredGroups[key].reduce((n,g)=>n+g.cards.length,0),0);
+  const filtersActive=statusFilter!=="all"||artistFilter!=="all";
+  const clearFilters=()=>{setStatusFilter("all");setArtistFilter("all");};
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".38rem 1.6rem .38rem .6rem",fontSize:".72rem",backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%236b6b90'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right .55rem center"};
+  const segSt=on=>({background:on?"rgba(155,127,232,0.16)":"transparent",color:on?"#b9a3f2":"#6b6b90",border:`1px solid ${on?"#9b7fe8":"transparent"}`,borderRadius:6,padding:".3rem .6rem",cursor:"pointer",fontSize:".72rem",fontWeight:on?700:500,whiteSpace:"nowrap",transition:"all .12s"});
+
   return(
     <div style={{minHeight:"100dvh",background:"#07070f"}}>
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem",display:"flex",alignItems:"center",gap:".8rem"}}>
           <button onClick={onBack} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".35rem .55rem",fontSize:".74rem",display:"flex",alignItems:"center",gap:".3rem",whiteSpace:"nowrap"}}>← Dashboard</button>
           <span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em"}}>Hunt Board</span>
-          <span style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{total} {total===1?"target":"targets"}</span>
+          <span style={{marginLeft:"auto",fontSize:".7rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{filtersActive?`${filteredTotal} of ${total} ${total===1?"target":"targets"}`:`${total} ${total===1?"target":"targets"}`}</span>
         </div>
       </header>
       <main style={{maxWidth:860,margin:"0 auto",padding:"1.2rem 1rem 3rem"}}>
+        {/* H-3: quiet control row — scrolls with the page, not sticky. */}
+        {total>0&&(
+          <div style={{display:"flex",alignItems:"center",gap:".5rem",flexWrap:"wrap",marginBottom:"1.4rem"}}>
+            <div style={{display:"flex",gap:".25rem",alignItems:"center"}}>
+              <button onClick={()=>setViewStyle("list")} style={segSt(viewStyle==="list")}>List</button>
+              <button onClick={()=>setViewStyle("grid")} style={segSt(viewStyle==="grid")}>Grid</button>
+            </div>
+            <div style={{display:"flex",gap:".4rem",alignItems:"center",marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
+              <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={selSt} aria-label="Filter by hunt status">
+                <option value="all">All statuses</option>
+                <option value="hunting">Hunting</option>
+                <option value="want">On the List</option>
+                <option value="maybe">Maybe</option>
+              </select>
+              {boardArtists.length>1&&(
+                <select value={artistFilter} onChange={e=>setArtistFilter(e.target.value)} style={selSt} aria-label="Filter by artist">
+                  <option value="all">All Artists</option>
+                  {boardArtists.map(n=><option key={n} value={n}>{n}</option>)}
+                </select>
+              )}
+            </div>
+          </div>
+        )}
         {total===0&&(
           <div style={{padding:"3rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12,marginTop:"1.5rem"}}>
             Your Hunt Board is empty. Open any missing card and set a Hunt status to start planning your next finds.
           </div>
         )}
+        {/* H-3: calm filtered-empty state with an easy way back. */}
+        {total>0&&filteredTotal===0&&(
+          <div style={{padding:"3rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12}}>
+            No cards match these filters.
+            <div style={{marginTop:".8rem"}}>
+              <button onClick={clearFilters} style={{background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".76rem",fontWeight:600,padding:0}}>Clear filters</button>
+            </div>
+          </div>
+        )}
         {HUNT_SECTIONS.map(sec=>{
-          const artistGroups=groups[sec.key];
+          const artistGroups=filteredGroups[sec.key];
           if(!artistGroups.length)return null;
           const count=artistGroups.reduce((n,g)=>n+g.cards.length,0);
           return(
@@ -1396,7 +1456,28 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,rost
               </div>
               {!collapsed[sec.key]&&artistGroups.map(g=>(
                 <div key={g.artist} style={{marginBottom:"1.1rem"}}>
-                  <div style={{fontSize:".66rem",fontWeight:700,letterSpacing:".08em",color:"#8b8bb0",marginBottom:".35rem",paddingLeft:".1rem"}}>{g.artist} · {g.cards.length}</div>
+                  <div style={{fontSize:".66rem",fontWeight:700,letterSpacing:".08em",color:"#8b8bb0",marginBottom:viewStyle==="grid"?".55rem":".35rem",paddingLeft:".1rem"}}>{g.artist} · {g.cards.length}</div>
+                  {viewStyle==="grid"?(
+                    /* H-3 Grid: art-forward, full color (every card here is
+                       unowned by definition — CardTile's .missing grayscale
+                       would wash out the whole board, same reasoning as Hunt
+                       Show). Section headings already carry intent, so grid
+                       cards stay quiet: image, name, artist only. */
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"1rem"}}>
+                      {g.cards.map(card=>{
+                        const src=imgLarge(card)||imgSmall(card);
+                        return(
+                          <div key={card.id} onClick={()=>onCardClick(card)} style={{cursor:"pointer"}}>
+                            <div className="card-tile" style={{marginBottom:".4rem"}}>
+                              {src?<img src={src} alt={card.name} loading="lazy" decoding="async" style={{width:"100%",height:"auto",display:"block",borderRadius:6}}/>:<div className="card-blank"><div className="blank-inner"><IcoNoImage/><span>{card.name}</span></div></div>}
+                            </div>
+                            <div style={{fontSize:".76rem",color:"#e8e8f4",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
+                            <div style={{fontSize:".64rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{g.artist}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ):(
                   <div style={{display:"flex",flexDirection:"column"}}>
                     {g.cards.map(card=>{
                       const price=getBestPrice(card);
@@ -1414,6 +1495,7 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,rost
                       );
                     })}
                   </div>
+                  )}
                 </div>
               ))}
             </section>
