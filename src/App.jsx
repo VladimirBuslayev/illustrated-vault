@@ -33,9 +33,9 @@ import { fetchTrackedArtistTiers, fetchArtistIdentities,
          updateArtistTier, removeArtistFromArchive } from './services/artistService.js'; // A-D2b0 + A-D2c + A-D2d
 import { fetchArtistCards }                               from './services/cardService.js';
 import { fetchFallbackImage, buildLimitlessGuess }        from './services/imageService.js';
-import { fetchBinders, fetchBinder, createBinder, deleteBinder,
+import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
          fetchBinderCardIds, addCardToBinder, removeCardFromBinder,
-         searchCatalogCards, fetchCardsByIds } from './services/binderService.js'; // BP-0A1 + BP-0A3/4
+         searchCatalogCards, fetchCardsByIds } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B
 
 // ── ICONS ─────────────────────────────────────────────────────────────────────
 const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -1689,8 +1689,16 @@ function BinderPlansIndex({user,onOpenPlan,onBack}){
   );
 }
 
-function BinderPlanPage({planId,onBack,checkOwned,onCardClick}){
+function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
   const[binder,setBinder]=useState(undefined); // undefined=loading, null=not found/unauthorized/error
+  // BP-0B: inline edit of name/description. Session-only form state; Save
+  // writes through updateBinder and applies the returned row locally —
+  // binder id and memberships are untouched, updated_at handled by trigger.
+  const[editing,setEditing]=useState(false);
+  const[editName,setEditName]=useState("");
+  const[editDesc,setEditDesc]=useState("");
+  const[editBusy,setEditBusy]=useState(false);
+  const[editError,setEditError]=useState("");
   // BP-0A3: membership. memberIds are the source of truth for the total;
   // memberCards are whatever resolves against cards_effective. Their
   // difference is the orphan count (rows retained, surfaced, never
@@ -1706,6 +1714,7 @@ function BinderPlanPage({planId,onBack,checkOwned,onCardClick}){
   useEffect(()=>{
     let cancelled=false;
     setBinder(undefined);setMemberIds(undefined);setMemberCards([]);setMembersReady(false);
+    setEditing(false);setEditError(""); // BP-0B: never carry edit mode across binders
     fetchBinder(planId).then(row=>{if(!cancelled)setBinder(row);});
     fetchBinderCardIds(planId).then(async ids=>{
       if(cancelled)return;
@@ -1761,6 +1770,23 @@ function BinderPlanPage({planId,onBack,checkOwned,onCardClick}){
     }catch(err){console.error(err);alert("Could not remove the card. Please try again.");}
     finally{setBusy(cardId,false);}
   };
+  const startEdit=()=>{
+    setEditName(binder.name);
+    setEditDesc(binder.description||"");
+    setEditError("");
+    setEditing(true);
+  };
+  const cancelEdit=()=>{setEditing(false);setEditError("");};
+  const handleSaveEdit=async()=>{
+    if(editBusy)return;
+    setEditBusy(true);setEditError("");
+    try{
+      const row=await updateBinder(user.id,planId,{name:editName,description:editDesc});
+      setBinder(row);
+      setEditing(false);
+    }catch(e){setEditError(e.message||"Could not save changes.");}
+    finally{setEditBusy(false);}
+  };
   const summary=membersReady&&memberIds
     ?`${ownedCount} owned · ${plannedCount} planned · ${totalCount} ${totalCount===1?"card":"cards"}`
     :null;
@@ -1787,16 +1813,41 @@ function BinderPlanPage({planId,onBack,checkOwned,onCardClick}){
         )}
         {binder&&(
           <>
-            {binder.description&&<p style={{fontSize:".84rem",color:"#8888a8",lineHeight:1.55,maxWidth:560,marginBottom:".9rem"}}>{binder.description}</p>}
-            {summary&&<div style={{fontSize:".72rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",marginBottom:"1.2rem"}}>{summary}</div>}
+            {editing?(
+              /* ── BP-0B: inline edit — same compact form language as create ── */
+              <div style={{border:"1px solid #1e1e35",borderRadius:12,padding:".9rem",marginBottom:"1.4rem",background:"rgba(255,255,255,0.015)",maxWidth:560}}>
+                <input value={editName} onChange={e=>setEditName(e.target.value)} maxLength={80} placeholder="Binder name"
+                  style={{width:"100%",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".5rem .7rem",fontSize:".85rem",marginBottom:".5rem"}} autoFocus/>
+                <input value={editDesc} onChange={e=>setEditDesc(e.target.value)} maxLength={280} placeholder="Short description (optional)"
+                  style={{width:"100%",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".5rem .7rem",fontSize:".78rem",marginBottom:".65rem"}}/>
+                {editError&&<div style={{fontSize:".72rem",color:"#f87171",marginBottom:".55rem"}}>{editError}</div>}
+                <div style={{display:"flex",gap:".5rem"}}>
+                  <button onClick={handleSaveEdit} disabled={editBusy||!editName.trim()} className="btn-flame" style={{borderRadius:8,padding:".45rem 1rem",fontSize:".76rem",fontWeight:700,opacity:(editBusy||!editName.trim())?0.55:1}}>{editBusy?"Saving…":"Save"}</button>
+                  <button onClick={cancelEdit} className="btn-ghost" style={{borderRadius:8,padding:".45rem .9rem",fontSize:".76rem",fontWeight:600}}>Cancel</button>
+                </div>
+              </div>
+            ):(
+              <>
+                {binder.description&&<p style={{fontSize:".84rem",color:"#8888a8",lineHeight:1.55,maxWidth:560,marginBottom:".9rem"}}>{binder.description}</p>}
+                {/* BP-0B: summary · legend · Edit — one quiet row, wraps on mobile. */}
+                <div style={{display:"flex",alignItems:"baseline",gap:".45rem .8rem",flexWrap:"wrap",marginBottom:"1.2rem"}}>
+                  {summary&&<span style={{fontSize:".72rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{summary}</span>}
+                  {membersReady&&totalCount>0&&<span style={{fontSize:".66rem",color:"#4a4a70"}}>Owned cards appear in full color · planned cards stay dimmed</span>}
+                  <button onClick={startEdit} style={{background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".7rem",fontWeight:600,padding:0,marginLeft:"auto",whiteSpace:"nowrap"}}>Edit</button>
+                </div>
+              </>
+            )}
 
             {/* ── BP-0A4: search / add region ── */}
             <div style={{marginBottom:"1.6rem"}}>
               <div style={{position:"relative",maxWidth:420}}>
                 <div style={{position:"absolute",left:".65rem",top:"50%",transform:"translateY(-50%)",color:"#52527a",display:"flex"}}><IcoSearch/></div>
-                <input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search the catalog to add cards…"
+                <input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search any card in the catalog…"
                   style={{width:"100%",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:10,color:"#e8e8f4",padding:".55rem .8rem .55rem 2.2rem",fontSize:".84rem"}}/>
               </div>
+              {query.trim().length===1&&(
+                <div style={{marginTop:".45rem",fontSize:".68rem",color:"#4a4a70"}}>Type at least 2 characters to search.</div>
+              )}
               {query.trim().length>=2&&(
                 <div style={{marginTop:".7rem",border:"1px solid #16162a",borderRadius:12,padding:".35rem",background:"rgba(255,255,255,0.012)"}}>
                   {searching&&(
@@ -1823,7 +1874,7 @@ function BinderPlanPage({planId,onBack,checkOwned,onCardClick}){
                         {owned&&<span style={{fontSize:".6rem",fontWeight:700,color:"#22c55e",letterSpacing:".06em",flexShrink:0}}>OWNED</span>}
                         <button onClick={e=>{e.stopPropagation();handleAdd(card);}} disabled={inBinder||busy}
                           className={inBinder?undefined:"btn-ghost"}
-                          style={{borderRadius:8,padding:".32rem .6rem",fontSize:".68rem",fontWeight:600,flexShrink:0,cursor:inBinder?"default":"pointer",...(inBinder?{background:"none",border:"1px solid transparent",color:"#3a3a5a"}:{color:"#8b6cd8"}),opacity:busy?0.55:1}}>
+                          style={{borderRadius:8,padding:".32rem .6rem",fontSize:".68rem",fontWeight:600,flexShrink:0,cursor:inBinder?"default":"pointer",...(inBinder?{background:"none",border:"1px solid transparent",color:"rgba(34,197,94,0.75)"}:{color:"#8b6cd8"}),opacity:busy?0.55:1}}>
                           {inBinder?"Added ✓":busy?"Adding…":"+ Add"}
                         </button>
                       </div>
@@ -1842,9 +1893,10 @@ function BinderPlanPage({planId,onBack,checkOwned,onCardClick}){
                 Couldn't load this binder's cards. Refresh to try again.
               </div>
             )}
-            {membersReady&&memberIds&&totalCount===0&&(
-              <div style={{padding:"2.6rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12}}>
-                Search the catalog above to place the first card in this binder.
+            {membersReady&&memberIds&&totalCount===0&&query.trim().length<2&&(
+              <div style={{padding:"2.6rem 1.2rem",textAlign:"center",border:"1px dashed #1e1e35",borderRadius:12}}>
+                <div style={{fontSize:".84rem",color:"#8888a8",lineHeight:1.6,maxWidth:420,margin:"0 auto .35rem"}}>This binder is where a theme takes shape — cards you own and cards you're still after, side by side.</div>
+                <div style={{fontSize:".76rem",color:"#4a4a70",lineHeight:1.6}}>Search the catalog above to place the first card.</div>
               </div>
             )}
             {membersReady&&memberCards.length>0&&(
@@ -1856,9 +1908,11 @@ function BinderPlanPage({planId,onBack,checkOwned,onCardClick}){
                       <div style={{position:"relative"}}>
                         <CardTile card={card} owned={checkOwned(card)} onCardClick={onCardClick} readOnly/>
                         <button onClick={e=>handleRemove(e,card.id)} disabled={busy} title="Remove from binder" aria-label={`Remove ${card.name} from binder`}
-                          style={{position:"absolute",bottom:3,right:3,width:17,height:17,borderRadius:"50%",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,lineHeight:1,background:"rgba(0,0,0,0.55)",color:"rgba(255,255,255,0.5)",transition:"background .12s,color .12s"}}
-                          onMouseEnter={e=>{e.currentTarget.style.background="rgba(190,40,40,0.85)";e.currentTarget.style.color="#fff";}}
-                          onMouseLeave={e=>{e.currentTarget.style.background="rgba(0,0,0,0.55)";e.currentTarget.style.color="rgba(255,255,255,0.5)";}}>✕</button>
+                          style={{position:"absolute",bottom:0,right:0,width:28,height:28,background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}
+                          onMouseEnter={e=>{const g=e.currentTarget.firstElementChild;g.style.background="rgba(190,40,40,0.85)";g.style.color="#fff";}}
+                          onMouseLeave={e=>{const g=e.currentTarget.firstElementChild;g.style.background="rgba(0,0,0,0.55)";g.style.color="rgba(255,255,255,0.5)";}}>
+                          <span style={{width:17,height:17,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,lineHeight:1,background:"rgba(0,0,0,0.55)",color:"rgba(255,255,255,0.5)",transition:"background .12s,color .12s",pointerEvents:"none"}}>✕</span>
+                        </button>
                       </div>
                       <div style={{fontSize:".68rem",color:"#c8c8de",fontWeight:600,marginTop:".3rem",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
                       <div style={{fontSize:".58rem",color:"#5a5a80",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(card.set&&card.set.name)||"—"}</div>
@@ -2429,7 +2483,7 @@ function App(){
   );
 
   if(view==="plan"&&planId)return(<>
-    <BinderPlanPage planId={planId} onBack={()=>setView("plans")} checkOwned={checkOwned} onCardClick={setSelectedCard}/>
+    <BinderPlanPage planId={planId} user={user} onBack={()=>setView("plans")} checkOwned={checkOwned} onCardClick={setSelectedCard}/>
     {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
   </>);
 
