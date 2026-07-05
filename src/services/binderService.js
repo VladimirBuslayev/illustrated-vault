@@ -73,6 +73,27 @@ export async function createBinder(userId, { name, description }) {
   return data;
 }
 
+/** Update a binder's name/description. Same normalization as createBinder:
+ *  trims both, empty-after-trim description → null. updated_at is refreshed
+ *  by the iv_touch_updated_at trigger — never set client-side. Binder id and
+ *  memberships are untouched. Throws on failure; returns the updated row. */
+export async function updateBinder(userId, binderId, { name, description }) {
+  const cleanName = (name || '').trim();
+  const cleanDesc = (description || '').trim();
+  if (!cleanName) throw new Error('Binder name is required.');
+  if (cleanName.length > 80) throw new Error('Binder name is too long (80 characters max).');
+  if (cleanDesc.length > 280) throw new Error('Description is too long (280 characters max).');
+  const { data, error } = await supabase
+    .from('user_binders')
+    .update({ name: cleanName, description: cleanDesc || null })
+    .eq('id', binderId)
+    .eq('user_id', userId)
+    .select(BINDER_COLS)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 /** Delete a binder. Membership rows cascade at the database level. Throws on
  *  failure. */
 export async function deleteBinder(userId, binderId) {
