@@ -33,7 +33,9 @@ import { fetchTrackedArtistTiers, fetchArtistIdentities,
          updateArtistTier, removeArtistFromArchive } from './services/artistService.js'; // A-D2b0 + A-D2c + A-D2d
 import { fetchArtistCards }                               from './services/cardService.js';
 import { fetchFallbackImage, buildLimitlessGuess }        from './services/imageService.js';
-import { fetchBinders, fetchBinder, createBinder, deleteBinder } from './services/binderService.js'; // BP-0A1
+import { fetchBinders, fetchBinder, createBinder, deleteBinder,
+         fetchBinderCardIds, addCardToBinder, removeCardFromBinder,
+         searchCatalogCards, fetchCardsByIds } from './services/binderService.js'; // BP-0A1 + BP-0A3/4
 
 // ── ICONS ─────────────────────────────────────────────────────────────────────
 const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -1687,20 +1689,88 @@ function BinderPlansIndex({user,onOpenPlan,onBack}){
   );
 }
 
-function BinderPlanPage({planId,onBack}){
+function BinderPlanPage({planId,onBack,checkOwned,onCardClick}){
   const[binder,setBinder]=useState(undefined); // undefined=loading, null=not found/unauthorized/error
+  // BP-0A3: membership. memberIds are the source of truth for the total;
+  // memberCards are whatever resolves against cards_effective. Their
+  // difference is the orphan count (rows retained, surfaced, never
+  // silently deleted).
+  const[memberIds,setMemberIds]=useState(undefined);   // undefined=loading, null=load failed, string[]
+  const[memberCards,setMemberCards]=useState([]);
+  const[membersReady,setMembersReady]=useState(false);
+  // BP-0A4: catalog search. results: undefined=idle, null=failed, array.
+  const[query,setQuery]=useState("");
+  const[results,setResults]=useState(undefined);
+  const[searching,setSearching]=useState(false);
+  const[busyIds,setBusyIds]=useState(()=>new Set());
   useEffect(()=>{
     let cancelled=false;
-    setBinder(undefined);
+    setBinder(undefined);setMemberIds(undefined);setMemberCards([]);setMembersReady(false);
     fetchBinder(planId).then(row=>{if(!cancelled)setBinder(row);});
+    fetchBinderCardIds(planId).then(async ids=>{
+      if(cancelled)return;
+      setMemberIds(ids);
+      if(!ids){setMembersReady(true);return;}
+      const cards=await fetchCardsByIds(ids);
+      if(cancelled)return;
+      if(cards){
+        const byId=new Map(cards.map(c=>[c.id,c]));
+        setMemberCards(ids.map(id=>byId.get(id)).filter(Boolean)); // keep membership order
+      }
+      setMembersReady(true);
+    });
     return()=>{cancelled=true;};
   },[planId]);
+  // Debounced catalog search (300ms, min 2 chars). Session-only.
+  useEffect(()=>{
+    const q=query.trim();
+    if(q.length<2){setResults(undefined);setSearching(false);return;}
+    setSearching(true);
+    let cancelled=false;
+    const t=setTimeout(async()=>{
+      const rows=await searchCatalogCards(q,24);
+      if(cancelled)return;
+      setResults(rows);setSearching(false);
+    },300);
+    return()=>{cancelled=true;clearTimeout(t);};
+  },[query]);
+  const memberIdSet=useMemo(()=>new Set(memberIds||[]),[memberIds]);
+  const ownedCount=useMemo(()=>memberCards.filter(checkOwned).length,[memberCards,checkOwned]);
+  const plannedCount=memberCards.length-ownedCount;     // resolved-only, per approved semantics
+  const totalCount=(memberIds||[]).length;               // every membership row, orphans included
+  const orphanCount=totalCount-memberCards.length;
+  const setBusy=(id,on)=>setBusyIds(prev=>{const n=new Set(prev);on?n.add(id):n.delete(id);return n;});
+  const handleAdd=async card=>{
+    if(busyIds.has(card.id)||memberIdSet.has(card.id))return;
+    setBusy(card.id,true);
+    try{
+      await addCardToBinder(planId,card.id); // true=inserted, false=already there — both converge below
+      setMemberIds(ids=>(ids&&!ids.includes(card.id))?[...ids,card.id]:ids);
+      setMemberCards(cs=>cs.some(c=>c.id===card.id)?cs:[...cs,card]);
+    }catch(err){console.error(err);alert("Could not add the card. Please try again.");}
+    finally{setBusy(card.id,false);}
+  };
+  const handleRemove=async(e,cardId)=>{
+    e.stopPropagation(); // tile taps open CardModal — removal must not
+    if(busyIds.has(cardId))return;
+    setBusy(cardId,true);
+    try{
+      await removeCardFromBinder(planId,cardId);
+      setMemberIds(ids=>ids?ids.filter(id=>id!==cardId):ids);
+      setMemberCards(cs=>cs.filter(c=>c.id!==cardId));
+    }catch(err){console.error(err);alert("Could not remove the card. Please try again.");}
+    finally{setBusy(cardId,false);}
+  };
+  const summary=membersReady&&memberIds
+    ?`${ownedCount} owned · ${plannedCount} planned · ${totalCount} ${totalCount===1?"card":"cards"}`
+    :null;
   return(
     <div style={{minHeight:"100dvh",background:"#07070f"}}>
       <header style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.97)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35"}}>
         <div style={{maxWidth:860,margin:"0 auto",padding:".7rem 1rem",display:"flex",alignItems:"center",gap:".8rem"}}>
           <button onClick={onBack} className="btn-ghost" style={{color:"#6b6b90",borderRadius:8,padding:".35rem .55rem",fontSize:".74rem",display:"flex",alignItems:"center",gap:".3rem",whiteSpace:"nowrap"}}>← Planned Binders</button>
           {binder&&<span className="font-display" style={{fontWeight:600,fontSize:"1.02rem",color:"#e8e8f4",letterSpacing:"-.01em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{binder.name}</span>}
+          {summary&&<span className="hide-on-narrow" style={{marginLeft:"auto",fontSize:".68rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{summary}</span>}
         </div>
       </header>
       <main style={{maxWidth:860,margin:"0 auto",padding:"1.2rem 1rem 3rem"}}>
@@ -1716,12 +1786,93 @@ function BinderPlanPage({planId,onBack}){
           </div>
         )}
         {binder&&(
-          <div style={{marginTop:".5rem"}}>
-            {binder.description&&<p style={{fontSize:".84rem",color:"#8888a8",lineHeight:1.55,maxWidth:560,marginBottom:"1.5rem"}}>{binder.description}</p>}
-            <div style={{padding:"3rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12}}>
-              This binder is ready for cards. Card selection arrives in the next update.
+          <>
+            {binder.description&&<p style={{fontSize:".84rem",color:"#8888a8",lineHeight:1.55,maxWidth:560,marginBottom:".9rem"}}>{binder.description}</p>}
+            {summary&&<div style={{fontSize:".72rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",marginBottom:"1.2rem"}}>{summary}</div>}
+
+            {/* ── BP-0A4: search / add region ── */}
+            <div style={{marginBottom:"1.6rem"}}>
+              <div style={{position:"relative",maxWidth:420}}>
+                <div style={{position:"absolute",left:".65rem",top:"50%",transform:"translateY(-50%)",color:"#52527a",display:"flex"}}><IcoSearch/></div>
+                <input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search the catalog to add cards…"
+                  style={{width:"100%",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:10,color:"#e8e8f4",padding:".55rem .8rem .55rem 2.2rem",fontSize:".84rem"}}/>
+              </div>
+              {query.trim().length>=2&&(
+                <div style={{marginTop:".7rem",border:"1px solid #16162a",borderRadius:12,padding:".35rem",background:"rgba(255,255,255,0.012)"}}>
+                  {searching&&(
+                    <div style={{display:"flex",alignItems:"center",gap:".5rem",padding:".8rem .6rem",color:"#6b6b90",fontSize:".76rem"}}><IcoSpin/> Searching the catalog…</div>
+                  )}
+                  {!searching&&results===null&&(
+                    <div style={{padding:".8rem .6rem",color:"#f87171",fontSize:".76rem"}}>Search failed. Check your connection and try again.</div>
+                  )}
+                  {!searching&&Array.isArray(results)&&results.length===0&&(
+                    <div style={{padding:".8rem .6rem",color:"#4a4a70",fontSize:".76rem"}}>No cards match "{query.trim()}".</div>
+                  )}
+                  {!searching&&Array.isArray(results)&&results.map(card=>{
+                    const owned=checkOwned(card);
+                    const inBinder=memberIdSet.has(card.id);
+                    const busy=busyIds.has(card.id);
+                    const sm=imgSmall(card);
+                    return(
+                      <div key={card.id} className="wanted-row" onClick={()=>onCardClick(card)} style={{display:"flex",alignItems:"center",gap:".65rem",padding:".45rem .55rem",cursor:"pointer"}}>
+                        {sm?<img src={sm} alt={card.name} loading="lazy" decoding="async" style={{width:34,height:"auto",borderRadius:4,flexShrink:0}}/>:<div style={{width:34,height:47,borderRadius:4,background:"#13131f",border:"1px solid #1e1e35",flexShrink:0}}/>}
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:".8rem",fontWeight:600,color:"#e8e8f4",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
+                          <div style={{fontSize:".62rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(card.set&&card.set.name)||"—"}{card.localId?` · #${card.localId}`:""}{card.illustrator?` · ${card.illustrator}`:""}</div>
+                        </div>
+                        {owned&&<span style={{fontSize:".6rem",fontWeight:700,color:"#22c55e",letterSpacing:".06em",flexShrink:0}}>OWNED</span>}
+                        <button onClick={e=>{e.stopPropagation();handleAdd(card);}} disabled={inBinder||busy}
+                          className={inBinder?undefined:"btn-ghost"}
+                          style={{borderRadius:8,padding:".32rem .6rem",fontSize:".68rem",fontWeight:600,flexShrink:0,cursor:inBinder?"default":"pointer",...(inBinder?{background:"none",border:"1px solid transparent",color:"#3a3a5a"}:{color:"#8b6cd8"}),opacity:busy?0.55:1}}>
+                          {inBinder?"Added ✓":busy?"Adding…":"+ Add"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
+
+            {/* ── BP-0A3: binder collection grid ── */}
+            {memberIds===undefined&&(
+              <div style={{display:"flex",alignItems:"center",gap:".5rem",padding:"1.5rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading cards…</div>
+            )}
+            {memberIds===null&&(
+              <div style={{padding:"2rem 1.2rem",textAlign:"center",fontSize:".78rem",lineHeight:1.6,color:"#f87171",border:"1px solid rgba(248,113,113,0.25)",borderRadius:12}}>
+                Couldn't load this binder's cards. Refresh to try again.
+              </div>
+            )}
+            {membersReady&&memberIds&&totalCount===0&&(
+              <div style={{padding:"2.6rem 1.2rem",textAlign:"center",fontSize:".8rem",lineHeight:1.6,color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:12}}>
+                Search the catalog above to place the first card in this binder.
+              </div>
+            )}
+            {membersReady&&memberCards.length>0&&(
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:".85rem"}}>
+                {memberCards.map(card=>{
+                  const busy=busyIds.has(card.id);
+                  return(
+                    <div key={card.id} style={{opacity:busy?0.45:1,transition:"opacity .15s"}}>
+                      <div style={{position:"relative"}}>
+                        <CardTile card={card} owned={checkOwned(card)} onCardClick={onCardClick} readOnly/>
+                        <button onClick={e=>handleRemove(e,card.id)} disabled={busy} title="Remove from binder" aria-label={`Remove ${card.name} from binder`}
+                          style={{position:"absolute",bottom:3,right:3,width:17,height:17,borderRadius:"50%",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,lineHeight:1,background:"rgba(0,0,0,0.55)",color:"rgba(255,255,255,0.5)",transition:"background .12s,color .12s"}}
+                          onMouseEnter={e=>{e.currentTarget.style.background="rgba(190,40,40,0.85)";e.currentTarget.style.color="#fff";}}
+                          onMouseLeave={e=>{e.currentTarget.style.background="rgba(0,0,0,0.55)";e.currentTarget.style.color="rgba(255,255,255,0.5)";}}>✕</button>
+                      </div>
+                      <div style={{fontSize:".68rem",color:"#c8c8de",fontWeight:600,marginTop:".3rem",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
+                      <div style={{fontSize:".58rem",color:"#5a5a80",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(card.set&&card.set.name)||"—"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {membersReady&&orphanCount>0&&(
+              <div style={{marginTop:"1rem",fontSize:".66rem",color:"#4a4a70",lineHeight:1.5}}>
+                {orphanCount} {orphanCount===1?"card in this binder is":"cards in this binder are"} no longer in the catalog. {orphanCount===1?"It's":"They're"} still counted in the total and will reappear if the catalog restores {orphanCount===1?"it":"them"}.
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>
@@ -2277,9 +2428,10 @@ function App(){
     <BinderPlansIndex user={user} onOpenPlan={id=>goTo("plan:"+id)} onBack={()=>setView("binder")}/>
   );
 
-  if(view==="plan"&&planId)return(
-    <BinderPlanPage planId={planId} onBack={()=>setView("plans")}/>
-  );
+  if(view==="plan"&&planId)return(<>
+    <BinderPlanPage planId={planId} onBack={()=>setView("plans")} checkOwned={checkOwned} onCardClick={setSelectedCard}/>
+    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+  </>);
 
   const visibleArtists=filterSlug==="all"?effectiveRoster:effectiveRoster.filter(a=>toSlug(a.name)===filterSlug); // A-D2b0
   const totalCards=Object.values(visibleCardData).reduce((s,a)=>s+a.length,0);
