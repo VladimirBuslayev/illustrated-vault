@@ -213,6 +213,60 @@ block (`.vault-queue` + one mobile media query) — its only change since the
 Gate 2 verbatim copy. Ownership, intent, favorites, Hunt Board,
 SharedBinder, Artist Page, and A-D2c/A-D2d behavior untouched.
 
+## Owned Library foundation
+
+Owned Library is the planned surface for enumerating the user’s complete imported physical collection, distinct from the artist-focused archive, Planned Binders, and Hunt Board.
+
+### OL-0A matching audit
+
+OL-0A was completed against a real Collectr export and the complete `cards_effective` catalog.
+
+Baseline results:
+
+- 6,141 total Collectr rows
+- 5,969 positive-quantity Pokémon rows
+- 5,952 eligible rows with name, set, and card number
+- 4,349 conservatively matched rows
+- 1,116 ambiguous rows
+- 487 unmatched rows
+- 73.1% eligible row match rate
+- 76.8% quantity-weighted match rate
+- 72.9% end-to-end row resolution
+- 76.6% end-to-end quantity resolution
+- 0 row-local exact-match consistency failures
+
+The audit confirmed that the existing lossy `owned_keys` model should remain recognition infrastructure but cannot safely enumerate the complete physical collection.
+
+The validated local audit harness is stored at:
+
+`/scripts/ol0a-match-audit.mjs`
+
+### OL-0B import snapshot schema
+
+OL-0B is complete.
+
+The immutable import snapshot schema was installed and validated in Supabase:
+
+- `user_import_batches`
+- `user_import_rows`
+- atomic activation and failure functions
+- processing-only child insertion
+- immutable evidence rows
+- parent-based RLS
+- one active import snapshot per user
+- reconciliation constraints
+- concurrency-safe child insertion and activation
+
+Canonical migration:
+
+`/docs/sql/ol-0b-1-user-import-snapshots.sql`
+
+No production importer integration or Owned Library UI has been built yet.
+
+### Next slice
+
+OL-0A2 will run a local matcher-refinement simulation using only evidence-qualified set-name mappings and narrow card-number normalization. No production matching changes, aliases, importer integration, or UI work should occur until that evidence is reviewed.
+
 ## Completion tracking
 
 Existed before the intent system and is unchanged:
