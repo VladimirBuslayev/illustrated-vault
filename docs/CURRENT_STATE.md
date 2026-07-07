@@ -263,6 +263,48 @@ Canonical migration:
 
 No production importer integration or Owned Library UI has been built yet.
 
+## OL-0A2 — Matcher refinement simulation
+
+Status: complete and approved for OL-0C integration.
+
+The accepted OL-0A baseline was reproduced against the real Collectr export and complete `cards_effective` catalog. A second validation pass, OL-0A2b, addressed baseline-equivalence, collision, mapping-support, cross-strategy, and manual-review concerns.
+
+Approved snapshot-import matching policy:
+
+- preserve the existing production denominator normalization;
+- allow purely numeric leading-zero equivalence, such as `057` → `57`;
+- preserve meaningful prefixes and suffixes such as `TG`, `GG`, `SWSH`, `SM`, and `XY`;
+- use the 33-entry curated set-name allowlist encoded in `scripts/ol0a2-refinement-sim.mjs`;
+- require unique row-local canonical-card resolution;
+- when multiple matching strategies succeed, require all strategies to agree on the same canonical card ID;
+- keep conflicting, ambiguous, or multi-hit rows unresolved.
+
+Validation findings:
+
+- baseline eligible rows: 5,952
+- baseline matched rows: 4,349
+- baseline eligible row resolution: 73.07%
+- approved combined simulation newly resolved: 948 rows / quantity 1,131
+- approved combined in-sample eligible row resolution: 89.00%
+- approved combined in-sample quantity resolution: 90.75%
+- catalog-wide leading-zero collisions: 0
+- cross-strategy conflicts: 0
+- accepted set mappings: 33
+- deferred mappings: 7
+- rejected mappings: 34
+
+Deferred mappings remain excluded, including cross-language or cross-release correspondences such as:
+
+- `Ninja Spinner` → `Chaos Rising`
+- `Inferno X` → `Phantasmal Flames`
+- `Night Wanderer` → `Shrouded Fable`
+
+The approved aliases are scoped only to the new snapshot importer. They must not become global production aliases or change the existing `user_collection.owned_keys` recognition behavior.
+
+Private/generated reports, the real Collectr CSV, and catalog exports were not committed.
+
+Next slice: OL-0C import snapshot integration.
+
 ### Next slice
 
 OL-0A2 will run a local matcher-refinement simulation using only evidence-qualified set-name mappings and narrow card-number normalization. No production matching changes, aliases, importer integration, or UI work should occur until that evidence is reviewed.
