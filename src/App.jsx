@@ -36,6 +36,9 @@ import { fetchFallbackImage, buildLimitlessGuess }        from './services/image
 import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
          fetchBinderCardIds, addCardToBinder, removeCardFromBinder,
          searchCatalogCards, fetchCardsByIds } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B
+import { classifyCollectrRows, MATCHER_VERSION } from './services/snapshotMatcher.js';    // OL-0C
+import { loadCatalogIndex }                      from './services/catalogIndexLoader.js';  // OL-0C
+import { createImportSnapshot }                  from './services/importSnapshotService.js';// OL-0C
 
 // ── ICONS ─────────────────────────────────────────────────────────────────────
 const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -2342,15 +2345,73 @@ function App(){
     return()=>{cancelled=true;};
   },[dynamicArtists,loadEntry]);
 
+  // OL-0C: secondary import-snapshot path. Separate from owned_keys recognition;
+  // a failure here leaves ownership recognition and the previous active snapshot
+  // untouched. Does not read or write owned_keys / manual overrides.
+  const buildImportSnapshot=useCallback(async(data,uid)=>{
+    try{
+      const{index}=await loadCatalogIndex();
+      const classified=classifyCollectrRows(data,index);
+      const result=await createImportSnapshot({userId:uid,matcherVersion:MATCHER_VERSION,classified});
+      if(result.status==="active"){
+        console.info("[OL-0C] import snapshot active",result.counts);
+      }else{
+        console.error("[OL-0C] import snapshot failed",result);
+        alert("Your collection was updated. The detailed import snapshot couldn't be saved this time — re-import to retry. Ownership recognition is unaffected.");
+      }
+    }catch(e){
+      console.error("[OL-0C] import snapshot error",e);
+      alert("Your collection was updated. The detailed import snapshot couldn't be built this time — re-import to retry. Ownership recognition is unaffected.");
+    }
+  },[]);
+
+  // OL-0C correction: dedicated CSV-import persistence sequencing.
+  // Narrowly scoped to the CSV-import path only — does not change withSync or
+  // any other caller of saveCollection/saveOverride. Awaits the owned_keys
+  // write and explicitly inspects response.error (Supabase query errors do
+  // not throw). The snapshot is built ONLY after owned_keys is confirmed
+  // persisted. If owned_keys fails, no snapshot is created, the in-memory
+  // ownedKeySet update is left as-is (not rolled back), and the user is shown
+  // an explicit alert so the green CSV-count display can't be mistaken for a
+  // saved import. If owned_keys succeeds but the snapshot fails,
+  // buildImportSnapshot still surfaces its own accurate partial-success warning.
+  const persistCsvImport=useCallback(async(uid,data,keys)=>{
+    setSyncStatus("syncing");
+    const warnNotSaved=()=>alert("Your CSV was read, but the collection could not be saved to your account. The cards may appear until you refresh, but this import was not persisted. Please try importing again.");
+    let res;
+    try{
+      res=await saveCollection(uid,keys);
+    }catch(e){
+      console.error("[CSV import] saveCollection threw",e);
+      setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);
+      warnNotSaved();
+      return; // owned_keys write not confirmed — do not build a snapshot
+    }
+    if(res&&res.error){
+      console.error("[CSV import] saveCollection returned an error",res.error);
+      setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);
+      warnNotSaved();
+      return; // owned_keys write not confirmed — do not build a snapshot
+    }
+    setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);
+    // owned_keys write confirmed successful — now safe to build the secondary snapshot
+    await buildImportSnapshot(data,uid);
+  },[buildImportSnapshot]);
+
   const handleCSV=useCallback(file=>{
     setCsvStatus("loading");
     Papa.parse(file,{header:true,skipEmptyLines:true,complete:async({data})=>{
+      // ── PRIMARY: owned_keys recognition (unchanged — do not modify) ─────────
       const pokemon=data.filter(r=>(r["Category"]||"").trim()==="Pokemon");
       const keys=new Set();pokemon.forEach(r=>makeKeys(r["Product Name"]||"",r["Card Number"]||"",r["Set"]||"").forEach(k=>keys.add(k)));
       setOwnedKeySet(keys);setCsvStatus({count:pokemon.length});setTimeout(()=>setCsvStatus(null),5000);
-      if(user)withSync(()=>saveCollection(user.id,keys));
+      // ── SECONDARY (OL-0C), strictly sequenced after PRIMARY: owned_keys is
+      // persisted and its response.error is confirmed clean before any snapshot
+      // is attempted. Non-atomic — a snapshot failure never rolls back
+      // owned_keys, and an owned_keys failure never creates a snapshot.
+      if(user)await persistCsvImport(user.id,data,keys);
     },error:()=>{setCsvStatus(null);alert("Could not read CSV.");}});
-  },[user]);
+  },[user,persistCsvImport]);
 
   const handleToggleManual=useCallback((cardId,action)=>{
     let fa=action;
