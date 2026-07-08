@@ -1,6 +1,6 @@
 # Illustrated Vault — Current State
 
-Last updated: 2026-07-03
+Last updated: 2026-07-08
 
 ## Production
 
@@ -17,6 +17,7 @@ Domain: illustratedvault.com (Porkbun). GitHub Pages is unpublished. Transaction
 | Gate 2 | Vite 5 / React 18 modular migration, Vercel cutover | ✓ Closed 2026-07-01 (`gate-2-complete` tag) |
 | Gate 3 | Data foundation: artists table, FK identity, cleanup | ✓ Closed |
 | Hunt Board H-1/H-2/H-3 | Global hunt planning surface | ✓ Complete |
+| Owned Library OL-0A/0A2/0B/0C | Audit, matcher, snapshot schema, importer integration | ✓ Foundation complete 2026-07-08 |
 
 Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or deferred cleanup remains.
 
@@ -162,6 +163,22 @@ A-D2d (SQL + app, complete):
   Main/Secondary optgroup by tier; "Your additions" remains for artists
   still at the `added` default.
 
+## Planned Binders — BP-0A/B complete
+
+Planned Binders are intentional collection-building lists, distinct from the
+artist-focused archive, complete Owned Library, and active Hunt Board.
+
+- Supabase tables: `user_binders` and `user_binder_cards`, with per-user RLS.
+- Users can create, rename, describe, and delete planned binders.
+- Binder plans support global catalog search, add/remove, duplicate prevention,
+  and Supabase persistence.
+- Existing ownership recognition is reused live: owned cards render normally;
+  planned but unowned cards render dimmed.
+- Planned binder cards open the existing `CardModal`.
+- This is still a list-based planning surface, not a 9-pocket physical page
+  planner. Page layout, slot positions, and physical storage modeling remain
+  deferred.
+
 ## SharedBinder — read-only share surface
 
 - Never exposes Hunt status, editable controls, or private user info.
@@ -215,11 +232,25 @@ SharedBinder, Artist Page, and A-D2c/A-D2d behavior untouched.
 
 ## Owned Library foundation
 
-Owned Library is the planned surface for enumerating the user’s complete imported physical collection, distinct from the artist-focused archive, Planned Binders, and Hunt Board.
+Owned Library is the future surface for enumerating the user’s complete
+imported physical collection. It remains distinct from:
 
-### OL-0A matching audit
+- Artist Binder: owned/missing cards across intentionally tracked artists.
+- Planned Binder: a collection the user is intentionally building.
+- Hunt Board: cards the user is actively trying to acquire.
 
-OL-0A was completed against a real Collectr export and the complete `cards_effective` catalog.
+The architecture deliberately separates:
+
+- `user_collection.owned_keys` — existing lossy recognition infrastructure;
+- import snapshots — canonical enumeration infrastructure;
+- `manualOwned` / `manualMissing` — separate ownership overrides.
+
+No production ownership cutover has occurred.
+
+### OL-0A matching audit — complete
+
+OL-0A ran against a real Collectr export and the complete
+`cards_effective` catalog.
 
 Baseline results:
 
@@ -229,23 +260,61 @@ Baseline results:
 - 4,349 conservatively matched rows
 - 1,116 ambiguous rows
 - 487 unmatched rows
-- 73.1% eligible row match rate
-- 76.8% quantity-weighted match rate
-- 72.9% end-to-end row resolution
-- 76.6% end-to-end quantity resolution
+- 73.07% eligible row match rate
+- 76.84% quantity-weighted match rate
+- 72.86% end-to-end row resolution
+- 76.62% end-to-end quantity resolution
 - 0 row-local exact-match consistency failures
 
-The audit confirmed that the existing lossy `owned_keys` model should remain recognition infrastructure but cannot safely enumerate the complete physical collection.
+The audit confirmed that `owned_keys` should remain recognition
+infrastructure but cannot safely enumerate the complete physical collection.
 
-The validated local audit harness is stored at:
+Accepted local audit harness:
 
 `/scripts/ol0a-match-audit.mjs`
 
-### OL-0B import snapshot schema
+### OL-0A2 matcher refinement — complete
 
-OL-0B is complete.
+OL-0A2b reproduced the accepted baseline and approved a narrow
+snapshot-import matcher policy:
 
-The immutable import snapshot schema was installed and validated in Supabase:
+- preserve existing denominator normalization;
+- allow purely numeric leading-zero equivalence, such as `057` → `57`;
+- preserve meaningful prefixes and suffixes such as `TG`, `GG`, `SWSH`,
+  `SM`, and `XY`;
+- use a frozen 33-entry curated set-name allowlist;
+- require unique row-local canonical-card resolution;
+- require all successful strategies to agree on the same canonical card ID;
+- keep conflicting, ambiguous, or multi-hit rows unresolved.
+
+Validation findings:
+
+- approved combined newly resolved: 948 rows / quantity 1,131
+- approved combined in-sample eligible row resolution: 89.00%
+- approved combined in-sample quantity resolution: 90.75%
+- catalog-wide leading-zero collisions: 0
+- cross-strategy conflicts: 0
+- accepted set mappings: 33
+- deferred mappings: 7
+- rejected mappings: 34
+
+Deferred mappings remain excluded, including cross-language or cross-release
+correspondences such as:
+
+- `Ninja Spinner` → `Chaos Rising`
+- `Inferno X` → `Phantasmal Flames`
+- `Night Wanderer` → `Shrouded Fable`
+
+The aliases are scoped only to the snapshot importer. They are not global
+normalization rules and do not change `owned_keys`.
+
+Approved simulation:
+
+`/scripts/ol0a2-refinement-sim.mjs`
+
+### OL-0B import snapshot schema — complete
+
+The immutable import snapshot schema is installed and validated in Supabase:
 
 - `user_import_batches`
 - `user_import_rows`
@@ -256,58 +325,95 @@ The immutable import snapshot schema was installed and validated in Supabase:
 - one active import snapshot per user
 - reconciliation constraints
 - concurrency-safe child insertion and activation
+- previous active snapshot preserved until a replacement activates
 
 Canonical migration:
 
 `/docs/sql/ol-0b-1-user-import-snapshots.sql`
 
-No production importer integration or Owned Library UI has been built yet.
+### OL-0C importer integration — complete
 
-## OL-0A2 — Matcher refinement simulation
+Matcher version: `ol0c-1`.
 
-Status: complete and approved for OL-0C integration.
+OL-0C is merged to `main`. A signed-in Collectr import now runs two deliberately
+separate paths:
 
-The accepted OL-0A baseline was reproduced against the real Collectr export and complete `cards_effective` catalog. A second validation pass, OL-0A2b, addressed baseline-equivalence, collision, mapping-support, cross-strategy, and manual-review concerns.
+1. The existing `owned_keys` recognition import remains primary.
+2. After the `owned_keys` write is confirmed successful, the app builds and
+   persists an immutable enumeration snapshot.
 
-Approved snapshot-import matching policy:
+The paths are intentionally non-atomic:
 
-- preserve the existing production denominator normalization;
-- allow purely numeric leading-zero equivalence, such as `057` → `57`;
-- preserve meaningful prefixes and suffixes such as `TG`, `GG`, `SWSH`, `SM`, and `XY`;
-- use the 33-entry curated set-name allowlist encoded in `scripts/ol0a2-refinement-sim.mjs`;
-- require unique row-local canonical-card resolution;
-- when multiple matching strategies succeed, require all strategies to agree on the same canonical card ID;
-- keep conflicting, ambiguous, or multi-hit rows unresolved.
+- `saveCollection()` is awaited and its returned `error` is explicitly checked;
+- snapshot creation is skipped if `owned_keys` persistence fails;
+- the user receives a visible warning that the CSV may appear only for the
+  current session when ownership persistence fails;
+- if ownership persistence succeeds but the snapshot fails, the user receives
+  an explicit partial-success warning;
+- `fail_import_batch()` never rolls back `owned_keys`;
+- the previous active snapshot remains active until the replacement batch
+  activates successfully.
 
-Validation findings:
+OL-0C implementation:
 
-- baseline eligible rows: 5,952
-- baseline matched rows: 4,349
-- baseline eligible row resolution: 73.07%
-- approved combined simulation newly resolved: 948 rows / quantity 1,131
-- approved combined in-sample eligible row resolution: 89.00%
-- approved combined in-sample quantity resolution: 90.75%
-- catalog-wide leading-zero collisions: 0
-- cross-strategy conflicts: 0
-- accepted set mappings: 33
-- deferred mappings: 7
-- rejected mappings: 34
+- `src/constants/ol0aAllowlist.js` — frozen 33-entry allowlist with integrity
+  assertions.
+- `src/services/snapshotMatcher.js` — pure classifier and deterministic
+  agreement resolution.
+- `src/services/catalogIndexLoader.js` — stable, paged `cards_effective`
+  loading; completeness and duplicate-ID checks; fail-closed behavior.
+- `src/services/importSnapshotService.js` — processing batch, chunked immutable
+  row insertion, activation, and failure lifecycle.
+- `scripts/ol0c-import-snapshot.test.mjs` — deterministic validation harness.
+- `src/App.jsx` — additive sequencing and user-visible failure handling.
 
-Deferred mappings remain excluded, including cross-language or cross-release correspondences such as:
+Stored match rules are bounded to:
 
-- `Ninja Spinner` → `Chaos Rising`
-- `Inferno X` → `Phantasmal Flames`
-- `Night Wanderer` → `Shrouded Fable`
+- `exact`
+- `exact_paren_stripped`
+- `set_alias`
+- `set_alias_paren_stripped`
+- `leading_zero`
+- `leading_zero_paren_stripped`
+- `set_alias_leading_zero`
+- `set_alias_leading_zero_paren_stripped`
 
-The approved aliases are scoped only to the new snapshot importer. They must not become global production aliases or change the existing `user_collection.owned_keys` recognition behavior.
+Validation completed:
 
-Private/generated reports, the real Collectr CSV, and catalog exports were not committed.
+- full matcher/lifecycle harness: 99 passed, 0 failed;
+- full-catalog equivalence against 23,314 distinct catalog rows;
+- historical audit export reproduced:
+  - baseline: 4,349 matched / 1,116 ambiguous / 487 unmatched;
+  - OL-0C: 5,297 matched / 169 ambiguous / 486 unmatched;
+  - 17 invalid / 5,969 stored / 948 newly resolved / 0 conflicts;
+- Vercel Preview dependency install and Vite build passed;
+- live Preview import created and activated a reconciled snapshot.
 
-Next slice: OL-0C import snapshot integration.
+Live Preview smoke-test batch for the then-current Collectr export:
 
-### Next slice
+- 5,890 total source rows
+- 5,884 Pokémon rows / 6 non-Pokémon rows
+- 5,703 positive-quantity stored rows
+- 181 watchlist-only rows
+- 5,098 matched
+- 157 ambiguous
+- 431 unmatched
+- 17 invalid
+- status: `active`
 
-OL-0A2 will run a local matcher-refinement simulation using only evidence-qualified set-name mappings and narrow card-number normalization. No production matching changes, aliases, importer integration, or UI work should occur until that evidence is reviewed.
+The child-row counts and stored match-rule totals reconciled exactly to the
+batch header.
+
+### Current boundary / next decision
+
+OL-0C creates enumeration infrastructure only. No Owned Library UI reads the
+snapshot tables yet, and existing ownership display still derives from
+`owned_keys` plus manual overrides.
+
+The next decision is to define and validate the smallest active-snapshot read
+model and Owned Library v0 surface before implementation. Do not begin a
+production ownership cutover, broad fuzzy matching, global aliases, or
+9-pocket page planning as part of that slice.
 
 ## Completion tracking
 
@@ -321,35 +427,56 @@ Existed before the intent system and is unchanged:
 
 ```
 src/
-  App.jsx              — full React component tree (~1,900 lines); single file, intentional
+  App.jsx              — main React component tree; large single file remains intentional
   main.jsx             — entry point; ErrorBoundary + ?share= routing
   assets/logo.webp
-  constants/           — artists.js, config.js, setOrder.js
+  constants/           — artists.js, config.js, setOrder.js, ol0aAllowlist.js
   services/            — supabaseClient, cardService, collectionService,
                          shareService, cardAdapter, imageService,
-                         tcgdexService, intentService, artistService
+                         tcgdexService, intentService, artistService,
+                         binderService, snapshotMatcher,
+                         catalogIndexLoader, importSnapshotService
   styles/index.css
   utils/               — cache, cardUtils, format, imageUrl, keys, slug, sort
-public/                — icons, manifest.json, sw.js
+public/                — icons, manifest.json, sw.js, logo assets
 docs/                  — this documentation set + archive/ + sql/
+scripts/               — OL-0A audit, OL-0A2 simulation, OL-0C validation
 sync/                  — data sync / backfill scripts
 .github/workflows/build-check-gate2.yml — manual-only build smoke test
 index.html             — minimal Vite shell
 ```
 
-Components in `src/App.jsx` (in order): icon components, BlazLogo, FlameBackground, LandingPage, Dashboard, CardTile, PriceChart, CardModal, ArtistPage, ArtistSection, ArtistPicker, ShareLinkPanel, SettingsPanel, ErrorBoundary, SharedBinder, HuntStatusDot, HuntBoard, ArtistDirectory, App.
+`src/App.jsx` contains the existing product surfaces, including Dashboard,
+Artist Page, Binder, SharedBinder, Hunt Board, Artist Directory, Planned
+Binder index/detail, CardModal, Settings, and the top-level App shell.
 
 Do not split `App.jsx` unless explicitly approved.
 
 ## Supabase objects
 
-Tables/views in use: `cards`, `card_extras`, `cards_effective` (view), `artists`, `user_tracked_artists` (now with a per-user `tier` column, A-D2d), `illustrator_directory` (view), `user_collection`, `card_overrides`, `price_history`, `card_favorites`, `user_card_intent`.
+Tables/views in use:
 
-RPCs: `get_shared_collection(p_token)` (shared binder read path) and `add_artist_to_archive(p_illustrator)` (Add to Archive write path; UI arrives with A-D2c).
+- catalog/data: `cards`, `card_extras`, `cards_effective`, `artists`,
+  `illustrator_directory`
+- user archive/planning: `user_tracked_artists`, `user_collection`,
+  `card_overrides`, `card_favorites`, `user_card_intent`
+- planned binders: `user_binders`, `user_binder_cards`
+- import snapshots: `user_import_batches`, `user_import_rows`
+- pricing/history: `price_history`
+
+RPCs in use:
+
+- `get_shared_collection`
+- `add_artist_to_archive`
+- `activate_import_batch`
+- `fail_import_batch`
 
 ## Known limitations / open items
 
+- Owned Library UI is not built yet; active import snapshots are enumeration infrastructure only.
+- The OL-0C catalog index is loaded client-side in stable pages during signed-in CSV import. The loader is isolated so a future server-side resolver can replace it without changing the matcher.
 - Null-illustrator bulk enrichment for the six affected SWSH-era set ranges (~1,400 cards; TCGdex structural data gap) is still pending. It is a data-quality follow-up, not a feature blocker.
 - Saya Tsuruta alias (full-width space variant) remains unconfirmed.
 - Pricing features deferred: confidence labels, staleness display, Cardmarket link button, price alerts.
 - Hunt Board back button always returns to Dashboard, even when entered from the Binder header (known, deferred).
+
