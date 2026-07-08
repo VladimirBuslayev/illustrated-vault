@@ -404,16 +404,13 @@ Live Preview smoke-test batch for the then-current Collectr export:
 The child-row counts and stored match-rule totals reconciled exactly to the
 batch header.
 
-### Current boundary / next decision
+### ### Current boundary / next slice
 
-OL-0C creates enumeration infrastructure only. No Owned Library UI reads the
-snapshot tables yet, and existing ownership display still derives from
-`owned_keys` plus manual overrides.
+OL-0C creates enumeration infrastructure only. No Owned Library UI reads the snapshot tables yet, and existing ownership display still derives from `owned_keys` plus manual overrides.
 
-The next decision is to define and validate the smallest active-snapshot read
-model and Owned Library v0 surface before implementation. Do not begin a
-production ownership cutover, broad fuzzy matching, global aliases, or
-9-pocket page planning as part of that slice.
+The next slice is **OL-0D: Active Snapshot Read Model**. Its scope is limited to defining and validating an authenticated read contract for the current active import snapshot, including canonical-card quantity aggregation, unresolved-row summaries, catalog-drift handling, and pagination/filtering support for a future Owned Library.
+
+OL-0D must not build Owned Library UI, change ownership recognition, merge manual overrides into snapshot quantities, redesign the OL-0B schema without a proven blocker, or begin 9-pocket binder planning.
 
 ## Completion tracking
 
