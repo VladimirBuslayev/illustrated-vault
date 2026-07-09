@@ -404,13 +404,112 @@ Live Preview smoke-test batch for the then-current Collectr export:
 The child-row counts and stored match-rule totals reconciled exactly to the
 batch header.
 
-### ### Current boundary / next slice
+### OL-0D active snapshot read model — complete
 
-OL-0C creates enumeration infrastructure only. No Owned Library UI reads the snapshot tables yet, and existing ownership display still derives from `owned_keys` plus manual overrides.
+OL-0D establishes the authenticated read contract for the current active
+immutable import snapshot.
 
-The next slice is **OL-0D: Active Snapshot Read Model**. Its scope is limited to defining and validating an authenticated read contract for the current active import snapshot, including canonical-card quantity aggregation, unresolved-row summaries, catalog-drift handling, and pagination/filtering support for a future Owned Library.
+Database RPC:
 
-OL-0D must not build Owned Library UI, change ownership recognition, merge manual overrides into snapshot quantities, redesign the OL-0B schema without a proven blocker, or begin 9-pocket binder planning.
+`get_active_import_snapshot_read_model`
+
+Frontend service:
+
+`src/services/ownedLibraryService.js`
+
+Validation artifacts:
+
+- `docs/sql/ol-0d-2-active-snapshot-read-model-validation.sql`
+- `scripts/ol0d-active-snapshot-read-model.test.mjs`
+
+The RPC is:
+
+- read-only;
+- `SECURITY INVOKER`;
+- scoped internally to `auth.uid()`;
+- protected by the existing OL-0B RLS policies;
+- versioned with `contractVersion: 1`;
+- not callable with a caller-supplied user ID.
+
+Supported states:
+
+- `ready`
+- `no_active_batch`
+- `snapshot_changed`
+
+The read model:
+
+- resolves the caller’s single active import batch;
+- aggregates immutable matched source rows by canonical `card_id`;
+- sums physical quantity across duplicate source rows;
+- retains deterministic fallback evidence from the lowest contributing
+  `source_row_number`;
+- summarizes unresolved rows by stored `match_status` and `match_reason`;
+- left-joins current `cards_effective` metadata;
+- retains matched cards whose catalog record later becomes unavailable;
+- defensively deduplicates catalog rows before joining;
+- supports server-side search, filtering, deterministic sorting, and offset
+  pagination;
+- fails closed when active-batch header reconciliation no longer matches the
+  immutable child rows.
+
+OL-0D does not:
+
+- replace or modify `user_collection.owned_keys`;
+- change existing ownership recognition;
+- merge `manualOwned` or `manualMissing` into snapshot quantity;
+- modify the importer or matcher;
+- build Owned Library UI;
+- change `App.jsx`;
+- redesign the OL-0B schema.
+
+Validation completed:
+
+- rollback-safe Supabase SQL validation passed;
+- frontend-service harness: 38 passed, 0 failed;
+- real active snapshot returned `ready`;
+- Vercel production build and deployment passed.
+
+Real active snapshot validation:
+
+- batch matcher version: `ol0c-1`
+- 5,890 total source rows
+- 5,703 stored positive-quantity rows
+- 5,098 matched source rows
+- 7,043 matched physical copies
+- 4,589 distinct canonical cards
+- 157 ambiguous rows
+- 431 unmatched rows
+- 17 invalid rows
+- 605 unresolved rows
+- 700 unresolved quantity
+- 0 catalog-missing canonical cards
+- 0 catalog-missing quantity
+
+The difference between matched source rows and distinct canonical cards confirms
+that duplicate source rows are aggregated rather than emitted as duplicate
+library items.
+
+### Current boundary / next slice
+
+OL-0A through OL-0D now provide the validated foundation for enumerating the
+user’s imported physical collection without changing production ownership
+recognition.
+
+The next proposed slice is **Owned Library v0 UI**.
+
+Its purpose should be a complete, searchable, full-color visual archive of
+confidently matched owned cards. It should remain distinct from:
+
+- Artist Binder — artist-focused completion and archive;
+- Hunt Board — active acquisition planning;
+- Planned Binders — intentional collection-building lists and future physical
+  binder-page planning.
+
+The Owned Library v0 slice must use the OL-0D service contract and must not
+perform an ownership cutover, merge manual overrides into imported quantity,
+build unresolved-row repair tools, or turn Planned Binders into another
+catalog grid.
 
 ## Completion tracking
 
