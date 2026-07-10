@@ -2290,7 +2290,7 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
   const[disclosureOpen,setDisclosureOpen]=useState(false);
   const[selected,setSelected]=useState(null);
   const[liveMsg,setLiveMsg]=useState("");
-  const[req,setReq]=useState(()=>({kind:"primary",offset:0,search:"",sort:"name_asc",catalogStatus:"all",expected:"adopt",nonce:0}));
+  const[req,setReq]=useState(()=>({kind:"primary",reason:"user",offset:0,search:"",sort:"name_asc",catalogStatus:"all",expected:"adopt",nonce:0}));
   // ── refs ──
   const tokenRef=useRef(0);
   const expectedBatchIdRef=useRef(null);
@@ -2300,6 +2300,11 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
   const nonceRef=useRef(0);
   const searchTimerRef=useRef(null);
   const importEpochRef=useRef(importEpoch);
+  // Post-import refresh coordination (OL-1.1): the reload triggered by a settled
+  // import is tagged reason:"post-import" so a transient failure of THAT request
+  // can be retried once (bounded) without surfacing the full failure panel.
+  const postImportRetryRef=useRef(0);
+  const postImportTimerRef=useRef(null);
   // Latest-value refs so a request built later (debounced search) never uses a
   // stale sort/catalog/search. Handlers set these synchronously; a backstop
   // effect keeps them in sync with state.
@@ -2338,10 +2343,11 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
   const submitPrimary=useCallback((opts={})=>{
     const offset=opts.offset??0;
     const expected=opts.expected??"session";
+    const reason=opts.reason??"user";
     enterReplacement();
     nonceRef.current+=1;
     const s=appliedSearchRef.current;
-    setReq({kind:"primary",offset,search:s&&s.length?s:"",sort:sortRef.current,catalogStatus:catalogStatusRef.current,expected,nonce:nonceRef.current});
+    setReq({kind:"primary",reason,offset,search:s&&s.length?s:"",sort:sortRef.current,catalogStatus:catalogStatusRef.current,expected,nonce:nonceRef.current});
   },[enterReplacement]);
 
   // Single request executor. Every request carries its own search/sort/catalog
@@ -2369,6 +2375,7 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
         if(cancelled||token!==tokenRef.current)return;
         if(res.state==="no_active_batch"){
           firstLoadedRef.current=true;expectedBatchIdRef.current=null;autoReloadCountRef.current=0;
+          postImportRetryRef.current=0;
           setSummary(null);setUnresolved(null);setPageMeta(null);setDesktopItems([]);setMobileItems([]);
           setSnapshotChangedMsg(false);setManualReloadNeeded(false);
           setPhase("no_active_batch");
@@ -2397,6 +2404,7 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
         // ready
         expectedBatchIdRef.current=res.batch.id;
         autoReloadCountRef.current=0;
+        postImportRetryRef.current=0;
         firstLoadedRef.current=true;
         setSummary(res.summary);setUnresolved(res.unresolved);setPageMeta(res.page);
         setSnapshotChangedMsg(false);setManualReloadNeeded(false);
@@ -2410,8 +2418,28 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
       }catch(err){
         if(cancelled||token!==tokenRef.current)return;
         console.error("[OwnedLibrary] load failed",err);
-        if(isAppend){setMobileAppendError(true);setLiveMsg("Couldn't load more cards.");}
-        else{setPhase("failure");setLiveMsg("We couldn't load your owned library.");}
+        if(isAppend){setMobileAppendError(true);setLiveMsg("Couldn't load more cards.");return;}
+        // POST-IMPORT REFRESH ONLY: the read can transiently throw in the brief
+        // window right after a fresh snapshot is activated (DB contention/read
+        // visibility immediately following the large import write). Retry ONCE
+        // after a short bounded delay, keeping replacement skeletons up and NOT
+        // surfacing the failure panel or discarding the existing library. A
+        // normal user-initiated failure (reason "user") still shows failure
+        // immediately, and a second post-import failure falls through to it.
+        if(req.reason==="post-import"&&postImportRetryRef.current<1){
+          postImportRetryRef.current+=1;
+          tokenRef.current+=1;                       // invalidate self so finally can't clear busy
+          if(firstLoadedRef.current)setBusy(true);   // hold skeletons through the delay
+          setLiveMsg("Refreshing your library.");
+          if(postImportTimerRef.current)clearTimeout(postImportTimerRef.current);
+          postImportTimerRef.current=setTimeout(()=>{
+            postImportTimerRef.current=null;
+            submitPrimary({offset:0,expected:"adopt",reason:"post-import"});
+          },400);
+          return;
+        }
+        setPhase("failure");setLiveMsg("We couldn't load your owned library.");
+        postImportRetryRef.current=0;
       }finally{
         if(!cancelled&&token===tokenRef.current){setBusy(false);setMobileAppending(false);}
       }
@@ -2438,12 +2466,17 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
     if(importEpochRef.current===importEpoch)return; // skip mount
     importEpochRef.current=importEpoch;
     expectedBatchIdRef.current=null;autoReloadCountRef.current=0;
+    postImportRetryRef.current=0;
+    if(postImportTimerRef.current){clearTimeout(postImportTimerRef.current);postImportTimerRef.current=null;}
     setPage(0);setMobileItems([]);
-    submitPrimary({offset:0,expected:"adopt"});
+    submitPrimary({offset:0,expected:"adopt",reason:"post-import"});
   },[importEpoch,submitPrimary]);
 
-  // Clear any pending debounce timer on unmount.
-  useEffect(()=>()=>{if(searchTimerRef.current)clearTimeout(searchTimerRef.current);},[]);
+  // Clear any pending debounce / post-import retry timers on unmount.
+  useEffect(()=>()=>{
+    if(searchTimerRef.current)clearTimeout(searchTimerRef.current);
+    if(postImportTimerRef.current)clearTimeout(postImportTimerRef.current);
+  },[]);
 
   // ── control handlers ── (each updates state AND its latest-value ref
   // synchronously, then submits a primary request that reads from the refs)
@@ -2509,9 +2542,9 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
 
   const header=(
     <div className="ol-header">
-      <button onClick={onBack} className="btn-ghost ol-header-btn" aria-label="Back to Dashboard" style={{borderRadius:8,padding:".45rem .7rem",fontSize:".72rem",fontWeight:600,minHeight:44}}>← Dashboard</button>
+      <button onClick={onBack} className="btn-ghost ol-header-btn" aria-label="Back to Dashboard" style={{borderRadius:8,padding:".45rem .7rem",fontSize:".72rem",fontWeight:600,minHeight:44,display:"flex",alignItems:"center",gap:".3rem"}}><span aria-hidden="true">←</span><span className="ol-hlabel">Dashboard</span></button>
       <span className="font-display ol-header-title" style={{fontWeight:600,fontSize:"1.15rem",color:"#f4f0ea",letterSpacing:"-.01em"}}>Owned Library</span>
-      <button onClick={onUploadCSV} className="btn-ghost ol-header-btn" aria-label="Import new CSV" style={{borderRadius:8,padding:".45rem .7rem",fontSize:".72rem",fontWeight:600,color:"#8b6cd8",minHeight:44,display:"flex",alignItems:"center",gap:".35rem",whiteSpace:"nowrap"}}><IcoUpload/> Import new CSV</button>
+      <button onClick={onUploadCSV} className="btn-ghost ol-header-btn" aria-label="Import new CSV" style={{borderRadius:8,padding:".45rem .7rem",fontSize:".72rem",fontWeight:600,color:"#8b6cd8",minHeight:44,display:"flex",alignItems:"center",gap:".35rem"}}><IcoUpload/><span className="ol-hlabel">Import new CSV</span></button>
     </div>
   );
 
@@ -2555,17 +2588,17 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
   // initial | ready (with optional replacement busy)
   return wrap(
     <>
-      <p style={{fontSize:".82rem",color:"#8a8296",lineHeight:1.5,margin:"0 0 .85rem"}}>A visual archive of the cards confidently matched from your latest Collectr import.</p>
+      <p className="ol-intro" style={{fontSize:".82rem",color:"#8a8296",lineHeight:1.5}}>A visual archive of the cards confidently matched from your latest Collectr import.</p>
 
       {summary&&(
-        <div style={{display:"flex",alignItems:"baseline",gap:"1.4rem",margin:"0 0 1rem",flexWrap:"wrap"}}>
+        <div className="ol-counts" style={{display:"flex",alignItems:"baseline",gap:"1.4rem",flexWrap:"wrap"}}>
           <span><span style={{fontSize:"1.4rem",fontWeight:600,color:"#f4f0ea"}}>{summary.distinctCanonicalCards.toLocaleString()}</span> <span style={{fontSize:".76rem",color:"#8a8296"}}>distinct cards</span></span>
           <span><span style={{fontSize:"1.4rem",fontWeight:600,color:"#e8944a"}}>{summary.matchedQuantity.toLocaleString()}</span> <span style={{fontSize:".76rem",color:"#8a8296"}}>total copies</span></span>
         </div>
       )}
 
       {summary&&summary.unresolvedRows>0&&(
-        <div style={{margin:"0 0 1rem",background:"#12101c",border:"1px solid #26203a",borderRadius:10,overflow:"hidden"}}>
+        <div className="ol-disc" style={{background:"#12101c",border:"1px solid #26203a",borderRadius:10,overflow:"hidden"}}>
           <button onClick={()=>setDisclosureOpen(o=>!o)} aria-expanded={disclosureOpen} aria-controls="ol-unresolved-detail" style={{width:"100%",textAlign:"left",background:"none",border:"none",cursor:"pointer",color:"#c9bfe0",padding:".7rem .85rem",fontSize:".76rem",lineHeight:1.5,minHeight:44,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:".6rem"}}>
             <span>{summary.unresolvedRows.toLocaleString()} imported rows couldn't be matched confidently and aren't included below. They remain preserved with your import.</span>
             <span aria-hidden="true" style={{color:"#9f8fd8",flexShrink:0}}>{disclosureOpen?"▲":"▼"}</span>
@@ -2582,8 +2615,8 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
       )}
 
       {/* controls */}
-      <div style={{display:"flex",gap:".6rem",flexWrap:"wrap",alignItems:"center",margin:"0 0 .5rem"}}>
-        <div style={{flex:"1 1 240px",display:"flex",alignItems:"center",gap:".5rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,padding:"0 .6rem",minHeight:44}}>
+      <div className="ol-controls">
+        <div className="ol-search" style={{display:"flex",alignItems:"center",gap:".5rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,padding:"0 .6rem",minHeight:44}}>
           <span aria-hidden="true" style={{color:"#6f6880",display:"flex"}}><IcoSearch/></span>
           <input
             type="search"
@@ -2593,30 +2626,32 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
             onKeyDown={e=>{if(e.key==="Enter")onSearchEnter();}}
             placeholder="Search by card, set, number, or illustrator…"
             aria-label="Search your owned library"
-            style={{flex:1,background:"none",border:"none",color:"#e8e8f4",fontSize:".8rem",padding:".5rem 0",minHeight:44,outline:"none"}}
+            style={{flex:1,minWidth:0,background:"none",border:"none",color:"#e8e8f4",fontSize:".8rem",padding:".5rem 0",minHeight:44,outline:"none"}}
           />
-          {searchInput&&<button onClick={onSearchClear} disabled={controlsDisabled} aria-label="Clear search" style={{background:"none",border:"none",color:"#6f6880",cursor:controlsDisabled?"not-allowed":"pointer",opacity:controlsDisabled?.5:1,fontSize:"1rem",padding:"0 .2rem",minWidth:44,minHeight:44}}>×</button>}
+          {searchInput&&<button onClick={onSearchClear} disabled={controlsDisabled} aria-label="Clear search" style={{background:"none",border:"none",color:"#6f6880",cursor:controlsDisabled?"not-allowed":"pointer",opacity:controlsDisabled?.5:1,fontSize:"1rem",padding:"0 .2rem",minWidth:44,minHeight:44,flexShrink:0}}>×</button>}
         </div>
-        <label style={{display:"flex",alignItems:"center",gap:".35rem",fontSize:".7rem",color:"#7a7aa0"}}>
-          <span>Sort</span>
-          <select value={sort} disabled={controlsDisabled} onChange={e=>onSortChange(e.target.value)} aria-label="Sort owned library" style={selSt}>
-            <option value="name_asc">Name A–Z</option>
-            <option value="set_asc">Set A–Z</option>
-            <option value="quantity_desc">Quantity: high to low</option>
-          </select>
-        </label>
-        <label style={{display:"flex",alignItems:"center",gap:".35rem",fontSize:".7rem",color:"#7a7aa0"}}>
-          <span>Catalog</span>
-          <select value={catalogStatus} disabled={controlsDisabled} onChange={e=>onCatalogChange(e.target.value)} aria-label="Filter by catalog status" style={selSt}>
-            <option value="all">All cards</option>
-            <option value="available">Catalog details available</option>
-            <option value="missing">Catalog details unavailable</option>
-          </select>
-        </label>
+        <div className="ol-selects">
+          <label className="ol-field">
+            <span>Sort</span>
+            <select value={sort} disabled={controlsDisabled} onChange={e=>onSortChange(e.target.value)} aria-label="Sort owned library" style={selSt}>
+              <option value="name_asc">Name A–Z</option>
+              <option value="set_asc">Set A–Z</option>
+              <option value="quantity_desc">Quantity: high to low</option>
+            </select>
+          </label>
+          <label className="ol-field">
+            <span>Catalog</span>
+            <select value={catalogStatus} disabled={controlsDisabled} onChange={e=>onCatalogChange(e.target.value)} aria-label="Filter by catalog status" style={selSt}>
+              <option value="all">All cards</option>
+              <option value="available">Catalog details available</option>
+              <option value="missing">Catalog details unavailable</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       {phase==="ready"&&filterActive&&!busy&&(
-        <div style={{fontSize:".72rem",color:"#8a8296",margin:"0 0 .85rem"}}>{total.toLocaleString()} matching cards</div>
+        <div className="ol-rescount" style={{fontSize:".72rem",color:"#8a8296"}}>{total.toLocaleString()} matching cards</div>
       )}
       {!(phase==="ready"&&filterActive&&!busy)&&<div style={{height:".35rem"}}/>}
 
