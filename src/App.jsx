@@ -2419,6 +2419,30 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
         if(cancelled||token!==tokenRef.current)return;
         console.error("[OwnedLibrary] load failed",err);
         if(isAppend){setMobileAppendError(true);setLiveMsg("Couldn't load more cards.");return;}
+        // OL-1.2 diagnostics (POST-IMPORT PATH ONLY): the single 400ms retry does
+        // not always cover the post-import read window, yet the cause could not be
+        // proven statically (the retry state machine is correct — see the comment
+        // below — and importEpoch only bumps AFTER createImportSnapshot resolves
+        // "active", so the read runs against a committed active batch). Emit one
+        // structured record per failed post-import attempt so the next deployed
+        // reproduction reveals the real RPC error. Console-only; never shown to
+        // users; does not alter control flow, retries, or failure surfacing.
+        if(req.reason==="post-import"){
+          const attempt=postImportRetryRef.current+1; // 1 = initial post-import read, 2 = bounded retry
+          console.error("[OwnedLibrary][post-import] refresh read failed",{
+            attempt,
+            isBoundedRetry:postImportRetryRef.current>=1,
+            expectedMode:req.expected,                 // "adopt" for the post-import refresh
+            expectedBatchId:expected,                  // null when adopting the active batch
+            search:req.search||"",
+            sort:req.sort,
+            catalogStatus:req.catalogStatus,
+            rpcCode:(err&&err.rpcCode!==undefined)?err.rpcCode:null,
+            rpcMessage:(err&&(err.rpcMessage||err.message))||String(err),
+            rpcDetails:(err&&err.rpcDetails!==undefined)?err.rpcDetails:null,
+            rpcHint:(err&&err.rpcHint!==undefined)?err.rpcHint:null,
+          });
+        }
         // POST-IMPORT REFRESH ONLY: the read can transiently throw in the brief
         // window right after a fresh snapshot is activated (DB contention/read
         // visibility immediately following the large import write). Retry ONCE
@@ -2618,17 +2642,22 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
       <div className="ol-controls">
         <div className="ol-search" style={{display:"flex",alignItems:"center",gap:".5rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,padding:"0 .6rem",minHeight:44}}>
           <span aria-hidden="true" style={{color:"#6f6880",display:"flex"}}><IcoSearch/></span>
+          {/* OL-1.2 fix #1: the search input (and its clear button) must NEVER be
+              disabled during replacement loading. A disabled form control is blurred
+              by the browser, which is what dropped focus after every keystroke on
+              mobile. Only the result region enters aria-busy / skeletons; typing stays
+              live and safe because each submit supersedes in-flight requests via the
+              existing token logic. Sort / catalog / pagination remain gated below. */}
           <input
             type="search"
             value={searchInput}
-            disabled={controlsDisabled}
             onChange={e=>onSearchChange(e.target.value)}
             onKeyDown={e=>{if(e.key==="Enter")onSearchEnter();}}
             placeholder="Search by card, set, number, or illustrator…"
             aria-label="Search your owned library"
             style={{flex:1,minWidth:0,background:"none",border:"none",color:"#e8e8f4",fontSize:".8rem",padding:".5rem 0",minHeight:44,outline:"none"}}
           />
-          {searchInput&&<button onClick={onSearchClear} disabled={controlsDisabled} aria-label="Clear search" style={{background:"none",border:"none",color:"#6f6880",cursor:controlsDisabled?"not-allowed":"pointer",opacity:controlsDisabled?.5:1,fontSize:"1rem",padding:"0 .2rem",minWidth:44,minHeight:44,flexShrink:0}}>×</button>}
+          {searchInput&&<button onClick={onSearchClear} aria-label="Clear search" style={{background:"none",border:"none",color:"#6f6880",cursor:"pointer",opacity:1,fontSize:"1rem",padding:"0 .2rem",minWidth:44,minHeight:44,flexShrink:0}}>×</button>}
         </div>
         <div className="ol-selects">
           <label className="ol-field">
