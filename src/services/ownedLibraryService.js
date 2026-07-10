@@ -7,7 +7,9 @@
 // nothing here invents a second frontend card shape.
 //
 // This service is READ-ONLY. It never touches owned_keys, manual overrides,
-// intent, favorites, or binder state, and it must not be called from App.jsx.
+// intent, favorites, or binder state. Consumed only by the approved Owned
+// Library surface (OL-1). Do not use this read model as the app-wide ownership
+// source.
 //
 // It NEVER soft-fails to an empty collection:
 //   - Supabase / RPC errors throw.
