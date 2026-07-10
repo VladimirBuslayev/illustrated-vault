@@ -39,6 +39,7 @@ import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
 import { classifyCollectrRows, MATCHER_VERSION } from './services/snapshotMatcher.js';    // OL-0C
 import { loadCatalogIndex }                      from './services/catalogIndexLoader.js';  // OL-0C
 import { createImportSnapshot }                  from './services/importSnapshotService.js';// OL-0C
+import { fetchActiveSnapshotReadModel }          from './services/ownedLibraryService.js';   // OL-1 (Owned Library read model)
 
 // ── ICONS ─────────────────────────────────────────────────────────────────────
 const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -528,9 +529,16 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
         )}
 
         {/* V-C.1: intentional Explore Artists CTA near the artist sections. */}
-        <div style={{marginBottom:"1.5rem"}}>
+        <div style={{marginBottom:"1rem"}}>
           <button onClick={()=>onGoBinder("artists")} className="btn-ghost" style={{width:"100%",borderRadius:12,padding:".7rem",fontSize:".78rem",fontWeight:600,color:"#8b6cd8",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem"}}>Explore the artist archive →</button>
         </div>
+
+        {/* OL-1: quiet Owned Library doorway. No fetch here — data loads only
+            after entering the view. */}
+        <button onClick={()=>onGoBinder("owned-library")} className="artist-row" style={{width:"100%",display:"flex",flexDirection:"column",alignItems:"flex-start",gap:2,background:"rgba(255,255,255,0.02)",border:"1px solid #1a1a30",borderRadius:12,padding:".7rem .85rem",marginBottom:"1.5rem",textAlign:"left",cursor:"pointer"}}>
+          <span style={{fontSize:".82rem",fontWeight:600,color:"#e8e8f4"}}>Owned Library</span>
+          <span style={{fontSize:".7rem",color:"#7a7aa0"}}>Browse the cards matched from your latest import →</span>
+        </button>
 
         <div style={{textAlign:"center",padding:"1.5rem 0 3rem"}}>
           <button onClick={()=>onGoBinder("binder")} className="btn-flame" style={{borderRadius:50,padding:".85rem 2.5rem",fontSize:".95rem",fontWeight:800,letterSpacing:".08em",boxShadow:"0 4px 16px rgba(190,70,20,0.22)"}}>OPEN FULL BINDER →</button>
@@ -2186,6 +2194,490 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
   );
 }
 
+// ── OWNED LIBRARY (OL-1) ─────────────────────────────────────────────────────
+// Read-only visual archive of the cards confidently matched from the latest
+// Collectr import snapshot, read through the OL-0D active-snapshot read model.
+// Read-only throughout: never touches owned_keys recognition, manual overrides,
+// intent, favorites, or binder state. See OWNED_LIBRARY_V0_SPEC_v2.md.
+const OL_EMPTY_SET=new Set();
+
+// Catalog-backed tile: interactive button, reuses the app-wide image fallback
+// chain (TCGdex → pokemontcg.io → Limitless guess), quantity badge, and an
+// accessible name that always includes quantity.
+const OwnedLibraryCardButton=React.memo(function OwnedLibraryCardButton({card,quantity,onOpen}){
+  const sm=imgSmall(card);
+  const[fallback,setFallback]=useState(undefined);
+  const[limitlessFailed,setLimitlessFailed]=useState(false);
+  useEffect(()=>{
+    if(sm||fallback!==undefined)return;
+    let cancelled=false;
+    fetchFallbackImage(card.id).then(r=>{if(!cancelled)setFallback(r);});
+    return()=>{cancelled=true;};
+  },[sm,card.id]);
+  const limitlessGuess=fallback===false?buildLimitlessGuess(card):null;
+  const displaySrc=sm||(fallback&&fallback.small)||(limitlessGuess&&!limitlessFailed?limitlessGuess.small:null);
+  const isUnverified=!sm&&!(fallback&&fallback.small)&&!!displaySrc;
+  const setName=(card.set&&card.set.name)||"";
+  const number=card.localId||"";
+  const label=`Open ${card.name}, ${setName||"unknown set"}, number ${number||"unknown"}, quantity ${quantity}`;
+  return(
+    <button type="button" className="ol-tile" aria-label={label} onClick={e=>onOpen(card,e.currentTarget)}>
+      <div className="ol-frame">
+        {displaySrc
+          ?<img src={displaySrc} alt={card.name} loading="lazy" decoding="async" onError={isUnverified?()=>setLimitlessFailed(true):undefined}/>
+          :<div className="ol-miss" aria-hidden="true">{fallback===undefined?<IcoSpin/>:<IcoNoImage/>}<span style={{fontSize:10,color:"#5a5a82",marginTop:4}}>{card.name}</span></div>}
+        {quantity>1&&<span className="ol-badge" aria-hidden="true">×{quantity}</span>}
+      </div>
+      <div>
+        <div className="ol-cap-name">{card.name}</div>
+        <div className="ol-cap-sub">{setName||"—"} · #{number||"—"}</div>
+      </div>
+    </button>
+  );
+});
+
+// Dispatch tile: catalog-missing rows render as static, non-interactive content
+// (article semantics, not in the tab order). Catalog-backed rows delegate to the
+// interactive button above. No hooks run before this branch.
+const OwnedLibraryTile=React.memo(function OwnedLibraryTile({item,onOpen}){
+  const isMissing=item.catalogStatus==="missing"&&item.card===null;
+  if(isMissing){
+    const fb=item.fallback||{};
+    const name=fb.productName||"Imported card";
+    const setName=fb.setName||"Unknown set";
+    const number=fb.cardNumber||"—";
+    const quantity=item.quantity;
+    return(
+      <article className="ol-misstile" aria-label={`Catalog details unavailable. Imported match preserved: ${name}, ${setName}, number ${number}, quantity ${quantity}`} style={{display:"flex",flexDirection:"column",gap:5}}>
+        <div className="ol-frame">
+          <div className="ol-miss">
+            <IcoNoImage/>
+            <span style={{fontSize:11,fontWeight:600,color:"#c9bfe0",lineHeight:1.3,marginTop:4}}>Catalog details unavailable</span>
+            <span style={{fontSize:10,color:"#8a8296",lineHeight:1.3}}>Imported match preserved.</span>
+          </div>
+          {quantity>1&&<span className="ol-badge" aria-hidden="true">×{quantity}</span>}
+        </div>
+        <div>
+          <div className="ol-cap-name">{name}</div>
+          <div className="ol-cap-sub">{setName} · #{number}</div>
+        </div>
+      </article>
+    );
+  }
+  return <OwnedLibraryCardButton card={item.card} quantity={item.quantity} onOpen={onOpen}/>;
+});
+
+function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
+  const PAGE=60;
+  // ── controls ──
+  const[searchInput,setSearchInput]=useState("");
+  const[appliedSearch,setAppliedSearch]=useState("");
+  const[sort,setSort]=useState("name_asc");
+  const[catalogStatus,setCatalogStatus]=useState("all");
+  // ── data / phase ──
+  const[phase,setPhase]=useState("initial"); // initial | ready | no_active_batch | failure
+  const[busy,setBusy]=useState(false);       // replacement loading after first load
+  const[summary,setSummary]=useState(null);
+  const[unresolved,setUnresolved]=useState(null);
+  const[pageMeta,setPageMeta]=useState(null); // {limit,offset,totalItems,returnedItems}
+  const[desktopItems,setDesktopItems]=useState([]);
+  const[mobileItems,setMobileItems]=useState([]);
+  const[page,setPage]=useState(0);           // desktop, 0-based
+  const[mobileAppending,setMobileAppending]=useState(false);
+  const[mobileAppendError,setMobileAppendError]=useState(false);
+  const[snapshotChangedMsg,setSnapshotChangedMsg]=useState(false);
+  const[manualReloadNeeded,setManualReloadNeeded]=useState(false);
+  const[disclosureOpen,setDisclosureOpen]=useState(false);
+  const[selected,setSelected]=useState(null);
+  const[liveMsg,setLiveMsg]=useState("");
+  const[req,setReq]=useState(()=>({kind:"primary",offset:0,search:"",sort:"name_asc",catalogStatus:"all",expected:"adopt",nonce:0}));
+  // ── refs ──
+  const tokenRef=useRef(0);
+  const expectedBatchIdRef=useRef(null);
+  const autoReloadCountRef=useRef(0);
+  const firstLoadedRef=useRef(false);
+  const originTileRef=useRef(null);
+  const nonceRef=useRef(0);
+  const searchTimerRef=useRef(null);
+  const importEpochRef=useRef(importEpoch);
+  // Latest-value refs so a request built later (debounced search) never uses a
+  // stale sort/catalog/search. Handlers set these synchronously; a backstop
+  // effect keeps them in sync with state.
+  const appliedSearchRef=useRef("");
+  const sortRef=useRef("name_asc");
+  const catalogStatusRef=useRef("all");
+  // ── viewport (drives pagination mode; grid columns are CSS) ──
+  const[isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.matchMedia("(max-width: 767px)").matches);
+  useEffect(()=>{
+    if(typeof window==="undefined")return;
+    const mq=window.matchMedia("(max-width: 767px)");
+    const on=e=>setIsMobile(e.matches);
+    setIsMobile(mq.matches);
+    mq.addEventListener("change",on);
+    return()=>mq.removeEventListener("change",on);
+  },[]);
+
+  // Backstop: keep latest-value refs aligned with state.
+  useEffect(()=>{appliedSearchRef.current=appliedSearch;sortRef.current=sort;catalogStatusRef.current=catalogStatus;},[appliedSearch,sort,catalogStatus]);
+
+  // Enter replacement loading SYNCHRONOUSLY (before the next paint) so stale
+  // cards / stale counts can't flash beneath newly selected controls. Also
+  // guarantees a superseded mobile append is fully torn down (never left busy).
+  const enterReplacement=useCallback(()=>{
+    // Invalidate any active primary/append request synchronously, BEFORE setReq,
+    // so a response in flight can't write cards/errors/loading after it has been
+    // superseded. The subsequent request effect increments the token again.
+    tokenRef.current+=1;
+    if(firstLoadedRef.current)setBusy(true);
+    setMobileAppending(false);
+    setMobileAppendError(false);
+  },[]);
+
+  // All primary requests read the LATEST search/sort/catalog from refs, so a
+  // request queued earlier (debounced search) can't dispatch stale controls.
+  const submitPrimary=useCallback((opts={})=>{
+    const offset=opts.offset??0;
+    const expected=opts.expected??"session";
+    enterReplacement();
+    nonceRef.current+=1;
+    const s=appliedSearchRef.current;
+    setReq({kind:"primary",offset,search:s&&s.length?s:"",sort:sortRef.current,catalogStatus:catalogStatusRef.current,expected,nonce:nonceRef.current});
+  },[enterReplacement]);
+
+  // Single request executor. Every request carries its own search/sort/catalog
+  // so no stale closures; batch reconciliation uses a ref, never a dep.
+  useEffect(()=>{
+    if(!req)return;
+    let cancelled=false;
+    const token=++tokenRef.current;
+    const isAppend=req.kind==="append";
+    // Replacement loading for primary requests is entered SYNCHRONOUSLY at
+    // dispatch time (see submitPrimary / snapshot_changed recovery), not here,
+    // so no stale frame can paint. Append only flips its own append flag.
+    if(isAppend){setMobileAppending(true);setMobileAppendError(false);}
+    const expected=req.expected==="adopt"?null:expectedBatchIdRef.current;
+    (async()=>{
+      try{
+        const res=await fetchActiveSnapshotReadModel({
+          limit:PAGE,
+          offset:req.offset,
+          search:req.search&&req.search.length?req.search:null,
+          sort:req.sort,
+          catalogStatus:req.catalogStatus,
+          expectedBatchId:expected,
+        });
+        if(cancelled||token!==tokenRef.current)return;
+        if(res.state==="no_active_batch"){
+          firstLoadedRef.current=true;expectedBatchIdRef.current=null;autoReloadCountRef.current=0;
+          setSummary(null);setUnresolved(null);setPageMeta(null);setDesktopItems([]);setMobileItems([]);
+          setSnapshotChangedMsg(false);setManualReloadNeeded(false);
+          setPhase("no_active_batch");
+          return;
+        }
+        if(res.state==="snapshot_changed"){
+          // Recovery reload adopts whatever is active (expected=null never itself
+          // returns snapshot_changed); capped so a pathological loop can't spin.
+          if(autoReloadCountRef.current>=1){
+            setSnapshotChangedMsg(false);setManualReloadNeeded(true);
+            setBusy(false);setMobileAppending(false);
+            return;
+          }
+          autoReloadCountRef.current+=1;
+          expectedBatchIdRef.current=null;
+          setSnapshotChangedMsg(true);setManualReloadNeeded(false);
+          setLiveMsg("A newer import is available. Refreshing your library.");
+          setPage(0);setMobileItems([]);
+          // submitPrimary → enterReplacement bumps the token synchronously, so
+          // THIS request's finally (still token-valid until now) cannot clear the
+          // replacement skeleton, and it enters replacement loading + adopts the
+          // active batch while preserving search/sort/catalog.
+          submitPrimary({offset:0,expected:"adopt"});
+          return;
+        }
+        // ready
+        expectedBatchIdRef.current=res.batch.id;
+        autoReloadCountRef.current=0;
+        firstLoadedRef.current=true;
+        setSummary(res.summary);setUnresolved(res.unresolved);setPageMeta(res.page);
+        setSnapshotChangedMsg(false);setManualReloadNeeded(false);
+        if(isAppend){
+          setMobileItems(prev=>[...prev,...res.page.items]);
+        }else{
+          setDesktopItems(res.page.items);
+          if(req.offset===0)setMobileItems(res.page.items);
+        }
+        setPhase("ready");
+      }catch(err){
+        if(cancelled||token!==tokenRef.current)return;
+        console.error("[OwnedLibrary] load failed",err);
+        if(isAppend){setMobileAppendError(true);setLiveMsg("Couldn't load more cards.");}
+        else{setPhase("failure");setLiveMsg("We couldn't load your owned library.");}
+      }finally{
+        if(!cancelled&&token===tokenRef.current){setBusy(false);setMobileAppending(false);}
+      }
+    })();
+    return()=>{cancelled=true;};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[req]);
+
+  // Announce loaded ranges/counts politely once a ready page settles.
+  useEffect(()=>{
+    if(phase!=="ready"||!pageMeta)return;
+    if(isMobile){
+      setLiveMsg(`Showing ${mobileItems.length} of ${pageMeta.totalItems} cards`);
+    }else{
+      const start=pageMeta.totalItems===0?0:page*PAGE+1;
+      const end=page*PAGE+desktopItems.length;
+      setLiveMsg(`Showing ${start}\u2013${end} of ${pageMeta.totalItems} cards`);
+    }
+  },[phase,pageMeta,page,desktopItems.length,mobileItems.length,isMobile]);
+
+  // Reload after a CSV-import attempt settles (importEpoch bumped by App). Adopts
+  // whichever snapshot is active afterward; preserves search/sort/catalog.
+  useEffect(()=>{
+    if(importEpochRef.current===importEpoch)return; // skip mount
+    importEpochRef.current=importEpoch;
+    expectedBatchIdRef.current=null;autoReloadCountRef.current=0;
+    setPage(0);setMobileItems([]);
+    submitPrimary({offset:0,expected:"adopt"});
+  },[importEpoch,submitPrimary]);
+
+  // Clear any pending debounce timer on unmount.
+  useEffect(()=>()=>{if(searchTimerRef.current)clearTimeout(searchTimerRef.current);},[]);
+
+  // ── control handlers ── (each updates state AND its latest-value ref
+  // synchronously, then submits a primary request that reads from the refs)
+  const onSearchChange=v=>{
+    setSearchInput(v);
+    if(searchTimerRef.current)clearTimeout(searchTimerRef.current);
+    searchTimerRef.current=setTimeout(()=>{
+      const t=v.trim();
+      setAppliedSearch(t);appliedSearchRef.current=t;
+      setPage(0);setMobileItems([]);
+      submitPrimary({offset:0,expected:"session"}); // uses latest sort/catalog via refs
+    },300);
+  };
+  const onSearchEnter=()=>{
+    if(searchTimerRef.current)clearTimeout(searchTimerRef.current);
+    const t=searchInput.trim();
+    setAppliedSearch(t);appliedSearchRef.current=t;
+    setPage(0);setMobileItems([]);
+    submitPrimary({offset:0,expected:"session"});
+  };
+  const onSearchClear=()=>{
+    if(searchTimerRef.current)clearTimeout(searchTimerRef.current);
+    setSearchInput("");setAppliedSearch("");appliedSearchRef.current="";
+    setPage(0);setMobileItems([]);
+    submitPrimary({offset:0,expected:"session"});
+  };
+  const onSortChange=v=>{setSort(v);sortRef.current=v;setPage(0);setMobileItems([]);submitPrimary({offset:0,expected:"session"});};
+  const onCatalogChange=v=>{setCatalogStatus(v);catalogStatusRef.current=v;setPage(0);setMobileItems([]);submitPrimary({offset:0,expected:"session"});};
+  const resetView=()=>{
+    if(searchTimerRef.current)clearTimeout(searchTimerRef.current);
+    setSearchInput("");setAppliedSearch("");appliedSearchRef.current="";
+    setSort("name_asc");sortRef.current="name_asc";
+    setCatalogStatus("all");catalogStatusRef.current="all";
+    setPage(0);setMobileItems([]);
+    submitPrimary({offset:0,expected:"session"});
+  };
+  const goToPage=n=>{setPage(n);submitPrimary({offset:n*PAGE,expected:"session"});};
+  const loadMore=()=>{
+    setMobileAppendError(false);
+    nonceRef.current+=1;
+    setReq({kind:"append",offset:mobileItems.length,search:appliedSearchRef.current&&appliedSearchRef.current.length?appliedSearchRef.current:"",sort:sortRef.current,catalogStatus:catalogStatusRef.current,expected:"session",nonce:nonceRef.current});
+  };
+  const retryInitial=()=>{setPhase("initial");firstLoadedRef.current=false;setPage(0);setMobileItems([]);submitPrimary({offset:0,expected:"adopt"});};
+  const reloadManual=()=>{setManualReloadNeeded(false);autoReloadCountRef.current=0;setPage(0);setMobileItems([]);submitPrimary({offset:0,expected:"adopt"});};
+
+  const openCard=useCallback((card,el)=>{originTileRef.current=el||null;setSelected(card);},[]);
+  const closeCard=useCallback(()=>{
+    setSelected(null);
+    const el=originTileRef.current;originTileRef.current=null;
+    if(el&&typeof el.focus==="function")requestAnimationFrame(()=>{try{el.focus();}catch(_){/*tile unmounted*/}});
+  },[]);
+
+  // ── derived ──
+  const total=pageMeta?pageMeta.totalItems:0;
+  const pageCount=Math.max(1,Math.ceil(total/PAGE));
+  const items=isMobile?mobileItems:desktopItems;
+  const filterActive=(appliedSearch.trim()!=="")||catalogStatus!=="all";
+  const emptyResult=phase==="ready"&&total===0&&!busy;
+  const showSkeleton=phase==="initial"||(phase==="ready"&&busy);
+  const skelCount=isMobile?9:12;
+  const controlsDisabled=busy||phase==="initial";
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,color:"#e8e8f4",padding:".5rem .6rem",fontSize:".78rem",minHeight:44};
+
+  const header=(
+    <div className="ol-header">
+      <button onClick={onBack} className="btn-ghost ol-header-btn" aria-label="Back to Dashboard" style={{borderRadius:8,padding:".45rem .7rem",fontSize:".72rem",fontWeight:600,minHeight:44}}>← Dashboard</button>
+      <span className="font-display ol-header-title" style={{fontWeight:600,fontSize:"1.15rem",color:"#f4f0ea",letterSpacing:"-.01em"}}>Owned Library</span>
+      <button onClick={onUploadCSV} className="btn-ghost ol-header-btn" aria-label="Import new CSV" style={{borderRadius:8,padding:".45rem .7rem",fontSize:".72rem",fontWeight:600,color:"#8b6cd8",minHeight:44,display:"flex",alignItems:"center",gap:".35rem",whiteSpace:"nowrap"}}><IcoUpload/> Import new CSV</button>
+    </div>
+  );
+
+  const wrap=children=>(
+    <div style={{minHeight:"100dvh",background:"#07070f"}}>
+      <div style={{maxWidth:1120,margin:"0 auto",padding:"0 1rem 3rem"}}>
+        {header}
+        <div className="ol-sr" aria-live="polite" role="status">{liveMsg}</div>
+        {children}
+      </div>
+      {selected&&<CardModal card={selected} owned={true} manualOwned={OL_EMPTY_SET} manualMissing={OL_EMPTY_SET} isFavorite={false} priceHistory={{}} onToggleManual={()=>{}} onToggleFavorite={()=>{}} onRecordPrice={()=>{}} onClose={closeCard} readOnly/>}
+    </div>
+  );
+
+  if(phase==="failure"){
+    return wrap(
+      <div style={{textAlign:"center",padding:"3rem 1rem",border:"1px solid #1e1e35",borderRadius:14,background:"#0d0d1a"}}>
+        <div style={{fontSize:".95rem",fontWeight:600,color:"#e8e8f4",marginBottom:".4rem"}}>We couldn't load your owned library.</div>
+        <div style={{fontSize:".8rem",color:"#8a8296",marginBottom:"1.1rem"}}>Your imported collection hasn't been changed.</div>
+        <div style={{display:"flex",gap:".6rem",justifyContent:"center",flexWrap:"wrap"}}>
+          <button onClick={retryInitial} className="btn-flame" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".8rem",fontWeight:700,minHeight:44}}>Try again</button>
+          <button onClick={onBack} className="btn-ghost" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".8rem",fontWeight:600,minHeight:44}}>Back to Dashboard</button>
+        </div>
+      </div>
+    );
+  }
+
+  if(phase==="no_active_batch"){
+    return wrap(
+      <div style={{textAlign:"center",padding:"3rem 1rem",border:"1px solid #1e1e35",borderRadius:14,background:"#0d0d1a"}}>
+        <div style={{fontSize:".95rem",fontWeight:600,color:"#e8e8f4",marginBottom:".4rem"}}>Your owned library starts with a Collectr CSV.</div>
+        <div style={{fontSize:".8rem",color:"#8a8296",marginBottom:"1.1rem",lineHeight:1.5,maxWidth:420,marginLeft:"auto",marginRight:"auto"}}>Import a current Collectr export to build a detailed snapshot of your physical collection.</div>
+        <div style={{display:"flex",gap:".6rem",justifyContent:"center",flexWrap:"wrap"}}>
+          <button onClick={onUploadCSV} className="btn-flame" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".8rem",fontWeight:700,minHeight:44}}>Import CSV</button>
+          <button onClick={onBack} className="btn-ghost" style={{borderRadius:10,padding:".55rem 1.1rem",fontSize:".8rem",fontWeight:600,minHeight:44}}>Back to Dashboard</button>
+        </div>
+      </div>
+    );
+  }
+
+  // initial | ready (with optional replacement busy)
+  return wrap(
+    <>
+      <p style={{fontSize:".82rem",color:"#8a8296",lineHeight:1.5,margin:"0 0 .85rem"}}>A visual archive of the cards confidently matched from your latest Collectr import.</p>
+
+      {summary&&(
+        <div style={{display:"flex",alignItems:"baseline",gap:"1.4rem",margin:"0 0 1rem",flexWrap:"wrap"}}>
+          <span><span style={{fontSize:"1.4rem",fontWeight:600,color:"#f4f0ea"}}>{summary.distinctCanonicalCards.toLocaleString()}</span> <span style={{fontSize:".76rem",color:"#8a8296"}}>distinct cards</span></span>
+          <span><span style={{fontSize:"1.4rem",fontWeight:600,color:"#e8944a"}}>{summary.matchedQuantity.toLocaleString()}</span> <span style={{fontSize:".76rem",color:"#8a8296"}}>total copies</span></span>
+        </div>
+      )}
+
+      {summary&&summary.unresolvedRows>0&&(
+        <div style={{margin:"0 0 1rem",background:"#12101c",border:"1px solid #26203a",borderRadius:10,overflow:"hidden"}}>
+          <button onClick={()=>setDisclosureOpen(o=>!o)} aria-expanded={disclosureOpen} aria-controls="ol-unresolved-detail" style={{width:"100%",textAlign:"left",background:"none",border:"none",cursor:"pointer",color:"#c9bfe0",padding:".7rem .85rem",fontSize:".76rem",lineHeight:1.5,minHeight:44,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:".6rem"}}>
+            <span>{summary.unresolvedRows.toLocaleString()} imported rows couldn't be matched confidently and aren't included below. They remain preserved with your import.</span>
+            <span aria-hidden="true" style={{color:"#9f8fd8",flexShrink:0}}>{disclosureOpen?"▲":"▼"}</span>
+          </button>
+          {disclosureOpen&&(
+            <div id="ol-unresolved-detail" style={{padding:"0 .85rem .8rem",fontSize:".72rem",color:"#a79ec0",lineHeight:1.7}}>
+              <div>{summary.ambiguousRows.toLocaleString()} ambiguous</div>
+              <div>{summary.unmatchedRows.toLocaleString()} unmatched</div>
+              <div>{summary.invalidRows.toLocaleString()} invalid</div>
+              <div style={{marginTop:".3rem",color:"#8a8296"}}>These rows represent {summary.unresolvedQuantity.toLocaleString()} imported copies.</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* controls */}
+      <div style={{display:"flex",gap:".6rem",flexWrap:"wrap",alignItems:"center",margin:"0 0 .5rem"}}>
+        <div style={{flex:"1 1 240px",display:"flex",alignItems:"center",gap:".5rem",background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,padding:"0 .6rem",minHeight:44}}>
+          <span aria-hidden="true" style={{color:"#6f6880",display:"flex"}}><IcoSearch/></span>
+          <input
+            type="search"
+            value={searchInput}
+            disabled={controlsDisabled}
+            onChange={e=>onSearchChange(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter")onSearchEnter();}}
+            placeholder="Search by card, set, number, or illustrator…"
+            aria-label="Search your owned library"
+            style={{flex:1,background:"none",border:"none",color:"#e8e8f4",fontSize:".8rem",padding:".5rem 0",minHeight:44,outline:"none"}}
+          />
+          {searchInput&&<button onClick={onSearchClear} disabled={controlsDisabled} aria-label="Clear search" style={{background:"none",border:"none",color:"#6f6880",cursor:controlsDisabled?"not-allowed":"pointer",opacity:controlsDisabled?.5:1,fontSize:"1rem",padding:"0 .2rem",minWidth:44,minHeight:44}}>×</button>}
+        </div>
+        <label style={{display:"flex",alignItems:"center",gap:".35rem",fontSize:".7rem",color:"#7a7aa0"}}>
+          <span>Sort</span>
+          <select value={sort} disabled={controlsDisabled} onChange={e=>onSortChange(e.target.value)} aria-label="Sort owned library" style={selSt}>
+            <option value="name_asc">Name A–Z</option>
+            <option value="set_asc">Set A–Z</option>
+            <option value="quantity_desc">Quantity: high to low</option>
+          </select>
+        </label>
+        <label style={{display:"flex",alignItems:"center",gap:".35rem",fontSize:".7rem",color:"#7a7aa0"}}>
+          <span>Catalog</span>
+          <select value={catalogStatus} disabled={controlsDisabled} onChange={e=>onCatalogChange(e.target.value)} aria-label="Filter by catalog status" style={selSt}>
+            <option value="all">All cards</option>
+            <option value="available">Catalog details available</option>
+            <option value="missing">Catalog details unavailable</option>
+          </select>
+        </label>
+      </div>
+
+      {phase==="ready"&&filterActive&&!busy&&(
+        <div style={{fontSize:".72rem",color:"#8a8296",margin:"0 0 .85rem"}}>{total.toLocaleString()} matching cards</div>
+      )}
+      {!(phase==="ready"&&filterActive&&!busy)&&<div style={{height:".35rem"}}/>}
+
+      {snapshotChangedMsg&&(
+        <div style={{margin:"0 0 .85rem",background:"#161020",border:"1px solid #33264a",borderRadius:9,padding:".6rem .85rem",fontSize:".74rem",color:"#c9bfe0"}}>A newer import is available. Refreshing your library…</div>
+      )}
+      {manualReloadNeeded&&(
+        <div style={{margin:"0 0 .85rem",background:"#161020",border:"1px solid #33264a",borderRadius:9,padding:".6rem .85rem",fontSize:".74rem",color:"#c9bfe0",display:"flex",alignItems:"center",justifyContent:"space-between",gap:".6rem",flexWrap:"wrap"}}>
+          <span>Your library couldn't refresh automatically.</span>
+          <button onClick={reloadManual} className="btn-ghost" style={{borderRadius:8,padding:".35rem .7rem",fontSize:".72rem",fontWeight:600,minHeight:44}}>Reload</button>
+        </div>
+      )}
+
+      {/* grid / skeleton / empty */}
+      <div aria-busy={showSkeleton?"true":"false"}>
+        {showSkeleton?(
+          <div className="ol-grid" aria-hidden="true">
+            {Array.from({length:skelCount}).map((_,i)=><div key={i} className="ol-skel"/>)}
+          </div>
+        ):emptyResult?(
+          <div style={{textAlign:"center",padding:"2.5rem 1rem",border:"1px dashed #26203a",borderRadius:12,color:"#8a8296"}}>
+            <div style={{fontSize:".9rem",fontWeight:600,color:"#e8e8f4",marginBottom:".3rem"}}>No cards match this view.</div>
+            <div style={{fontSize:".78rem",marginBottom:"1rem"}}>Try a different search or reset the filters.</div>
+            <button onClick={resetView} className="btn-ghost" style={{borderRadius:10,padding:".5rem 1rem",fontSize:".78rem",fontWeight:600,color:"#8b6cd8",minHeight:44}}>Reset view</button>
+          </div>
+        ):(
+          <div className="ol-grid">
+            {items.map(it=><OwnedLibraryTile key={it.cardId} item={it} onOpen={openCard}/>)}
+          </div>
+        )}
+      </div>
+
+      {/* pagination */}
+      {phase==="ready"&&!emptyResult&&!showSkeleton&&(
+        isMobile?(
+          <div style={{textAlign:"center",padding:"1rem 0 0"}}>
+            {mobileItems.length<total&&(
+              <button onClick={loadMore} disabled={mobileAppending} className="btn-ghost" style={{width:"100%",borderRadius:10,padding:".7rem",fontSize:".8rem",fontWeight:600,color:"#cdc6da",minHeight:44,opacity:mobileAppending?.6:1}}>
+                {mobileAppending?"Loading…":((total-mobileItems.length)>=PAGE?"Load 60 more":`Load remaining ${total-mobileItems.length}`)}
+              </button>
+            )}
+            {mobileAppendError&&(
+              <div style={{marginTop:".6rem",fontSize:".74rem",color:"#e0a0a0"}}>Couldn't load more cards. <button onClick={loadMore} style={{background:"none",border:"none",color:"#9f8fd8",cursor:"pointer",fontWeight:600,padding:0,minHeight:44}}>Try again</button></div>
+            )}
+            <div style={{marginTop:".6rem",fontSize:".7rem",color:"#6f6880"}}>Showing {mobileItems.length.toLocaleString()} of {total.toLocaleString()}</div>
+          </div>
+        ):(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:".75rem",padding:"1rem 0 0",marginTop:".5rem",borderTop:"1px solid #16162a",flexWrap:"wrap"}}>
+            <span style={{fontSize:".72rem",color:"#7d7689"}}>Showing {(total===0?0:page*PAGE+1).toLocaleString()}–{(page*PAGE+desktopItems.length).toLocaleString()} of {total.toLocaleString()} cards</span>
+            <div style={{display:"flex",alignItems:"center",gap:".6rem"}}>
+              <button onClick={()=>goToPage(page-1)} disabled={page===0||busy} className="ol-pgbtn btn-ghost" style={{borderRadius:8,fontSize:".74rem",opacity:(page===0||busy)?.5:1}}>‹ Previous</button>
+              <span style={{fontSize:".72rem",color:"#a79ec0"}}>Page {page+1} of {pageCount}</span>
+              <button onClick={()=>goToPage(page+1)} disabled={page>=pageCount-1||busy} className="ol-pgbtn btn-ghost" style={{borderRadius:8,fontSize:".74rem",opacity:(page>=pageCount-1||busy)?.5:1}}>Next ›</button>
+            </div>
+          </div>
+        )
+      )}
+    </>
+  );
+}
+
 function App(){
   const[view,          setView]         =useState("checking-auth");
   const[artistSlug,    setArtistSlug]   =useState(null);
@@ -2208,6 +2700,7 @@ function App(){
   const[showAllColor, setShowAllColor] =useState(()=>{const v=lsGet("pb_show_all_color");return v===null?false:v;});
   const[csvStatus,     setCsvStatus]    =useState(null);
   const[syncStatus,    setSyncStatus]   =useState("idle");
+  const[importEpoch,   setImportEpoch]  =useState(0);   // OL-1: bumps once per settled CSV-import attempt so a mounted Owned Library can reload against the now-active snapshot
   const[dynamicArtists,setDynamicArtists]=useState([]); // A-D2b0: user-tracked artists beyond the curated roster
   const[dynRefresh,    setDynRefresh]    =useState(0);  // A-D2c: bump to re-run the tracked-artist fetch after Add to Archive
   // V-C.3: lifted from Dashboard so the featured hero card and Vault Queue
@@ -2378,24 +2871,34 @@ function App(){
   const persistCsvImport=useCallback(async(uid,data,keys)=>{
     setSyncStatus("syncing");
     const warnNotSaved=()=>alert("Your CSV was read, but the collection could not be saved to your account. The cards may appear until you refresh, but this import was not persisted. Please try importing again.");
-    let res;
     try{
-      res=await saveCollection(uid,keys);
-    }catch(e){
-      console.error("[CSV import] saveCollection threw",e);
-      setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);
-      warnNotSaved();
-      return; // owned_keys write not confirmed — do not build a snapshot
+      let res;
+      try{
+        res=await saveCollection(uid,keys);
+      }catch(e){
+        console.error("[CSV import] saveCollection threw",e);
+        setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);
+        warnNotSaved();
+        return; // owned_keys write not confirmed — do not build a snapshot
+      }
+      if(res&&res.error){
+        console.error("[CSV import] saveCollection returned an error",res.error);
+        setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);
+        warnNotSaved();
+        return; // owned_keys write not confirmed — do not build a snapshot
+      }
+      setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);
+      // owned_keys write confirmed successful — now safe to build the secondary snapshot
+      await buildImportSnapshot(data,uid);
+    }finally{
+      // OL-1: signal that a CSV-import attempt has SETTLED — whether snapshot
+      // creation succeeded or the secondary snapshot failed (early returns above
+      // run this too). A mounted Owned Library reloads page one against whichever
+      // snapshot is active after the attempt. This does not alter importer
+      // sequencing, owned_keys handling, warnings, partial-success messaging, or
+      // snapshot lifecycle — it only advances a reload signal.
+      setImportEpoch(e=>e+1);
     }
-    if(res&&res.error){
-      console.error("[CSV import] saveCollection returned an error",res.error);
-      setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);
-      warnNotSaved();
-      return; // owned_keys write not confirmed — do not build a snapshot
-    }
-    setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);
-    // owned_keys write confirmed successful — now safe to build the secondary snapshot
-    await buildImportSnapshot(data,uid);
   },[buildImportSnapshot]);
 
   const handleCSV=useCallback(file=>{
@@ -2546,6 +3049,11 @@ function App(){
   if(view==="plan"&&planId)return(<>
     <BinderPlanPage planId={planId} user={user} onBack={()=>setView("plans")} checkOwned={checkOwned} onCardClick={setSelectedCard}/>
     {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+  </>);
+
+  if(view==="owned-library")return(<>
+    <OwnedLibrary onBack={()=>setView("dashboard")} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} importEpoch={importEpoch}/>
+    <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
   </>);
 
   const visibleArtists=filterSlug==="all"?effectiveRoster:effectiveRoster.filter(a=>toSlug(a.name)===filterSlug); // A-D2b0
