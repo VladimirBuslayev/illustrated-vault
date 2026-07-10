@@ -2228,7 +2228,7 @@ const OwnedLibraryCardButton=React.memo(function OwnedLibraryCardButton({card,qu
           :<div className="ol-miss" aria-hidden="true">{fallback===undefined?<IcoSpin/>:<IcoNoImage/>}<span style={{fontSize:10,color:"#5a5a82",marginTop:4}}>{card.name}</span></div>}
         {quantity>1&&<span className="ol-badge" aria-hidden="true">×{quantity}</span>}
       </div>
-      <div>
+      <div className="ol-cap">
         <div className="ol-cap-name">{card.name}</div>
         <div className="ol-cap-sub">{setName||"—"} · #{number||"—"}</div>
       </div>
@@ -2257,7 +2257,7 @@ const OwnedLibraryTile=React.memo(function OwnedLibraryTile({item,onOpen}){
           </div>
           {quantity>1&&<span className="ol-badge" aria-hidden="true">×{quantity}</span>}
         </div>
-        <div>
+        <div className="ol-cap">
           <div className="ol-cap-name">{name}</div>
           <div className="ol-cap-sub">{setName} · #{number}</div>
         </div>
