@@ -117,15 +117,47 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
 @keyframes olShimmer{100%{transform:translateX(100%);}}
 .ol-pgbtn{min-height:44px;min-width:44px;padding:.4rem .8rem;}
 .ol-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}
-/* Header: Back / title / Import new CSV. Wraps safely at 320–375px without
-   redesigning the app shell — the title drops to its own top row and the two
-   actions share the row below; both actions keep >=44px targets and full names. */
+/* Header: Back / title / Import new CSV. Desktop/tablet keep full text labels.
+   At <=420px it collapses to ONE compact row: Back (←) left, title centered,
+   Import (icon) right — labels hide visually but aria-labels keep full names,
+   all controls stay >=44px, no overflow at 320/375px. Desktop is untouched. */
 .ol-header{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:14px 0;border-bottom:1px solid #16162a;margin-bottom:1rem;flex-wrap:wrap;}
 .ol-header-title{flex:1 1 auto;text-align:center;min-width:0;}
 .ol-header-btn{min-height:44px;flex:0 0 auto;}
+.ol-hlabel{display:inline;}
 @media(max-width:420px){
-  .ol-header-title{flex:1 1 100%;order:-1;text-align:left;}
-  .ol-header-btn{flex:1 1 auto;justify-content:center;}
+  .ol-header{flex-wrap:nowrap;gap:.35rem;}
+  .ol-header-title{flex:1 1 auto;text-align:center;font-size:1rem;order:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ol-header-btn{min-width:44px;justify-content:center;padding:.45rem .55rem;}
+  .ol-hlabel{display:none;}
+}
+/* Controls: search full width; Sort + Catalog inline on desktop, a two-column
+   row (label above select) on mobile; selects fill their column; no 320px
+   overflow; all existing values/behavior preserved. */
+.ol-controls{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin:0 0 .5rem;}
+.ol-search{flex:1 1 240px;min-width:0;}
+.ol-selects{display:flex;gap:.6rem;}
+.ol-field{display:flex;align-items:center;gap:.35rem;font-size:.7rem;color:#7a7aa0;}
+.ol-field>span{white-space:nowrap;}
+.ol-field select{min-height:44px;}
+@media(max-width:640px){
+  .ol-controls{flex-direction:column;align-items:stretch;gap:.5rem;}
+  .ol-search{flex:1 1 auto;width:100%;}
+  .ol-selects{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;width:100%;}
+  .ol-field{flex-direction:column;align-items:stretch;gap:2px;min-width:0;}
+  .ol-field select{width:100%;}
+}
+/* Vertical rhythm: tighter on mobile without shrinking cards or hiding content. */
+.ol-intro{margin:0 0 .85rem;}
+.ol-counts{margin:0 0 1rem;}
+.ol-disc{margin:0 0 1rem;}
+.ol-rescount{margin:0 0 .85rem;}
+@media(max-width:640px){
+  .ol-intro{margin:0 0 .5rem;}
+  .ol-counts{margin:0 0 .55rem;}
+  .ol-disc{margin:0 0 .6rem;}
+  .ol-controls{margin:0 0 .45rem;}
+  .ol-rescount{margin:0 0 .5rem;}
 }
 @media(prefers-reduced-motion:reduce){
   .ol-skel::after{animation:none;}
