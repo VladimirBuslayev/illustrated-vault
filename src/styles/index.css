@@ -91,3 +91,44 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
 @media(max-width:480px){
   .hide-on-narrow{display:none!important;}
 }
+
+/* ── OL-1 Owned Library ─────────────────────────────────────────────────────
+   Read-only imported-collection archive surface. Additive and scoped to .ol-*
+   (does not affect .card-tile or any existing surface). Explicit column counts
+   at 3/4/5/6 per the spec (auto-fill can't guarantee them); fixed 5:7 frame;
+   skeleton shimmer and hover lift both respect prefers-reduced-motion. */
+.ol-grid{display:grid;gap:10px;grid-template-columns:repeat(3,1fr);}
+@media(min-width:560px){.ol-grid{grid-template-columns:repeat(4,1fr);}}
+@media(min-width:768px){.ol-grid{grid-template-columns:repeat(5,1fr);}}
+@media(min-width:1024px){.ol-grid{grid-template-columns:repeat(6,1fr);}}
+.ol-frame{position:relative;width:100%;aspect-ratio:5/7;border-radius:8px;overflow:hidden;background:#12121f;border:1px solid #1e1e35;}
+.ol-frame img{width:100%;height:100%;object-fit:cover;display:block;}
+.ol-tile{display:flex;flex-direction:column;gap:5px;width:100%;background:none;border:none;padding:0;margin:0;text-align:left;color:inherit;font:inherit;cursor:pointer;border-radius:8px;}
+.ol-tile .ol-frame{transition:transform .15s ease,border-color .15s ease;}
+.ol-tile:hover .ol-frame{transform:translateY(-2px);border-color:#2e2550;}
+.ol-tile:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+.ol-misstile{display:flex;flex-direction:column;gap:5px;}
+.ol-miss{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:2px;height:100%;padding:10px;color:#9f8fd8;background:repeating-linear-gradient(135deg,#13131f,#13131f 8px,#171728 8px,#171728 16px);}
+.ol-badge{position:absolute;top:5px;right:5px;background:rgba(12,10,16,0.85);color:#f4d9a6;font-size:10px;font-weight:600;border-radius:6px;padding:2px 6px;pointer-events:none;}
+.ol-cap-name{font-size:11.5px;font-weight:500;color:#e8e2d8;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ol-cap-sub{font-size:10.5px;color:#7d7689;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ol-skel{position:relative;width:100%;aspect-ratio:5/7;border-radius:8px;background:#12121f;overflow:hidden;}
+.ol-skel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,0.05),transparent);animation:olShimmer 1.4s infinite;}
+@keyframes olShimmer{100%{transform:translateX(100%);}}
+.ol-pgbtn{min-height:44px;min-width:44px;padding:.4rem .8rem;}
+.ol-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+/* Header: Back / title / Import new CSV. Wraps safely at 320–375px without
+   redesigning the app shell — the title drops to its own top row and the two
+   actions share the row below; both actions keep >=44px targets and full names. */
+.ol-header{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:14px 0;border-bottom:1px solid #16162a;margin-bottom:1rem;flex-wrap:wrap;}
+.ol-header-title{flex:1 1 auto;text-align:center;min-width:0;}
+.ol-header-btn{min-height:44px;flex:0 0 auto;}
+@media(max-width:420px){
+  .ol-header-title{flex:1 1 100%;order:-1;text-align:left;}
+  .ol-header-btn{flex:1 1 auto;justify-content:center;}
+}
+@media(prefers-reduced-motion:reduce){
+  .ol-skel::after{animation:none;}
+  .ol-tile .ol-frame{transition:none;}
+  .ol-tile:hover .ol-frame{transform:none;}
+}
