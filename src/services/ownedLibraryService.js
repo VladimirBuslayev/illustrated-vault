@@ -228,7 +228,18 @@ export async function fetchActiveSnapshotReadModel(options = {}) {
 
   // Supabase does not throw on query errors — inspect error explicitly.
   const { data, error } = await db.rpc(RPC_NAME, args);
-  if (error) fail(`RPC error: ${error.message || error}`);
+  if (error) {
+    // OL-1.2: preserve the PostgREST error fields on the thrown Error for the
+    // post-import diagnostic path. This does NOT change the read-model contract:
+    // the message format is unchanged, and the returned shape / states / strict
+    // normalization are untouched. These are diagnostic own-properties only.
+    const e = new Error(`ownedLibraryService: RPC error: ${error.message || error}`);
+    e.rpcCode = error.code ?? null;
+    e.rpcDetails = error.details ?? null;
+    e.rpcHint = error.hint ?? null;
+    e.rpcMessage = error.message ?? null;
+    throw e;
+  }
 
   if (!isObj(data)) fail('RPC returned a non-object payload');
   if (data.contractVersion !== CONTRACT_VERSION) {
