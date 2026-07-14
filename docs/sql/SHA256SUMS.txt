@@ -1,0 +1,4 @@
+395531d61b3ef0ad50c48cf12be521542c672ab51ec76a8f5b9c58b49cc63cc1  ol-0d-4-active-snapshot-performance-hardening.sql
+6be8505d0ee39b564f483b71c541f3b92daf6bb4666bd0eebfdcbc3203bb87d2  ol-0d-4-candidate-validation-guc.sql
+3ba07ca4efe52155ecf198e9ddd7dc77e7af05af3bd665f499d44fd14600f133  ol-0d-4-postdeploy-plans-guc.sql
+12120d86aed2e620c065da68a4b3ec15ab1eaee678457146c40d7692c1c6f0ee  ol-0d-4-rollback.sql
