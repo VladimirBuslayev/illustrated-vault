@@ -41,6 +41,50 @@ import { loadCatalogIndex }                      from './services/catalogIndexLo
 import { createImportSnapshot }                  from './services/importSnapshotService.js';// OL-0C
 import { fetchActiveSnapshotReadModel }          from './services/ownedLibraryService.js';   // OL-1 (Owned Library read model)
 
+// ── NAV-1A: URL-backed top-level surface persistence ─────────────────────────
+// Diagnosis: `view` is plain useState seeded to "checking-auth", and the data
+// load unconditionally ends with setView("dashboard"). Nothing about the current
+// surface ever reaches the URL, so a hard refresh always lands on Dashboard.
+//
+// Fix, deliberately narrow — no router, no route tree, no path segments (so
+// Vercel needs no rewrite rules and no SPA fallback change):
+//   • One query param, ?v=<surface>, appended to the existing URL.
+//   • Only the simple, identifier-free top-level surfaces are addressable.
+//     "artist" (needs a slug) and "plan" (needs a uuid) are DEFERRED: never
+//     written to the URL, never restored from it.
+//   • SharedBinder is untouched. It is mounted off ?share=<token> outside this
+//     component, so App never renders on a share URL; as defence in depth we
+//     also refuse to read or write ?v= whenever ?share= is present.
+//   • "dashboard" is canonical and is represented by the ABSENCE of ?v=, so the
+//     bare root URL keeps working and stays clean.
+const NAV_PARAM = "v";
+const NAV_SURFACES = new Set(["dashboard","binder","hunt","hunt-show","artists","plans","owned-library"]);
+const navHasShare = () => { try { return new URLSearchParams(window.location.search).has("share"); } catch(e){ return false; } };
+// URL → surface. Unknown / absent / identifier-bearing values collapse to
+// "dashboard". Validating against the allowlist is load-bearing: App's render
+// chain treats ANY unmatched `view` as the Binder fallthrough, so an unvalidated
+// param would silently render the wrong surface.
+function navReadSurface(){
+  try{
+    if(navHasShare())return "dashboard";
+    const v=new URLSearchParams(window.location.search).get(NAV_PARAM);
+    return v&&NAV_SURFACES.has(v)?v:"dashboard";
+  }catch(e){ return "dashboard"; }
+}
+// surface → URL. Every other query param and the hash are preserved verbatim.
+// Returns null when the URL already says what we want, so we never push a
+// duplicate history entry.
+function navBuildUrl(surface){
+  try{
+    const params=new URLSearchParams(window.location.search);
+    const next=surface==="dashboard"?null:surface;
+    if((params.get(NAV_PARAM)||null)===next)return null;
+    if(next===null)params.delete(NAV_PARAM);else params.set(NAV_PARAM,next);
+    const qs=params.toString();
+    return window.location.pathname+(qs?"?"+qs:"")+window.location.hash;
+  }catch(e){ return null; }
+}
+
 // ── ICONS ─────────────────────────────────────────────────────────────────────
 const Ico=({children,size})=><svg width={size||16} height={size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
 const IcoSearch=()=><Ico><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Ico>;
@@ -2775,6 +2819,11 @@ function App(){
   const[queuePage,     setQueuePage]     =useState(0);
   const[planId,        setPlanId]        =useState(null); // BP-0A2: current planned binder (uuid); detail page self-fetches
   const fileRef=useRef(null),searchRef=useRef(null);
+  // NAV-1A: the surface the URL asked for at first paint. Read once, at mount,
+  // before any auth/data work; consumed once by the first successful load. Every
+  // later loadData call (e.g. a fresh sign-in) falls back to "dashboard" exactly
+  // as before.
+  const pendingSurfaceRef=useRef(navReadSurface());
 
   const withSync=async fn=>{setSyncStatus("syncing");try{await fn();setSyncStatus("synced");setTimeout(()=>setSyncStatus("idle"),2000);}catch(e){console.error(e);setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);}};
 
@@ -2784,7 +2833,10 @@ function App(){
       const{ownedKeys,manualOwned:mo,manualMissing:mm,priceHistory:ph,favorites:fav}=await loadUserData(uid);
       setOwnedKeySet(ownedKeys);setManualOwned(mo);setManualMissing(mm);setPriceHistory(ph);setFavorites(fav);
     }catch(e){console.error("Load error:",e);}
-    setView("dashboard");
+    // NAV-1A: restore the URL-requested surface instead of hardcoding Dashboard.
+    const restore=pendingSurfaceRef.current;
+    pendingSurfaceRef.current=null;
+    setView(restore&&NAV_SURFACES.has(restore)?restore:"dashboard");
   },[]);
 
   useEffect(()=>{
@@ -2794,6 +2846,37 @@ function App(){
       else if(event==="SIGNED_OUT"){setUser(null);setOwnedKeySet(new Set());setManualOwned(new Set());setManualMissing(new Set());setFavorites(new Set());setPriceHistory({});setView("landing");}
     });
     return()=>subscription.unsubscribe();
+  },[]);
+
+  // ── NAV-1A: write side — surface → URL ───────────────────────────────────────
+  // Whenever `view` settles on an addressable surface, push it into the URL.
+  // Transient views (checking-auth / loading-data), "landing", and the
+  // identifier-bearing views ("artist" / "plan") are never written: they inherit
+  // whatever addressable URL they were opened from, so a refresh on an Artist
+  // page returns to the surface it was reached from rather than 404-ing on an
+  // un-restorable slug. navBuildUrl returns null when the URL already matches,
+  // so restoring from ?v= on first load does NOT push a duplicate entry.
+  useEffect(()=>{
+    if(!NAV_SURFACES.has(view)||navHasShare())return;
+    const url=navBuildUrl(view);
+    if(url)window.history.pushState({[NAV_PARAM]:view},"",url);
+  },[view]);
+
+  // ── NAV-1A: read side — URL → surface (Back / Forward) ───────────────────────
+  // Back/Forward walks the entries pushed above, so mirror the URL back into
+  // `view`. Any open CardModal is dismissed, since a Back press that swaps the
+  // surface underneath it would otherwise leave the modal floating over the
+  // wrong screen. Modal state itself stays session-only and is deliberately NOT
+  // in the URL. Auth-gated views (landing / checking-auth / loading-data) are
+  // left alone — a signed-out user is never navigated into the app by a URL.
+  useEffect(()=>{
+    const onPop=()=>{
+      if(navHasShare())return;
+      setSelectedCard(null);
+      setView(v=>(v==="landing"||v==="checking-auth"||v==="loading-data")?v:navReadSurface());
+    };
+    window.addEventListener("popstate",onPop);
+    return()=>window.removeEventListener("popstate",onPop);
   },[]);
 
   // ── A-D2b0: dynamic tracked artists ──────────────────────────────────────────
