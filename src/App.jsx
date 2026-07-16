@@ -39,7 +39,7 @@ import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
 import { classifyCollectrRows, MATCHER_VERSION } from './services/snapshotMatcher.js';    // OL-0C
 import { loadCatalogIndex }                      from './services/catalogIndexLoader.js';  // OL-0C
 import { createImportSnapshot }                  from './services/importSnapshotService.js';// OL-0C
-import { fetchActiveSnapshotReadModel }          from './services/ownedLibraryService.js';   // OL-1 (Owned Library read model)
+import { fetchActiveSnapshotReadModel, fetchActiveSnapshotOwnedCardIds } from './services/ownedLibraryService.js'; // OL-1 (Owned Library read model) + OWN-0A (authoritative ownership read)
 
 // ── NAV-1A: URL-backed top-level surface persistence ─────────────────────────
 // Diagnosis: `view` is plain useState seeded to "checking-auth", and the data
@@ -2809,6 +2809,18 @@ function App(){
   const[csvStatus,     setCsvStatus]    =useState(null);
   const[syncStatus,    setSyncStatus]   =useState("idle");
   const[importEpoch,   setImportEpoch]  =useState(0);   // OL-1: bumps once per settled CSV-import attempt so a mounted Owned Library can reload against the now-active snapshot
+  // ── OWN-0A: authoritative snapshot ownership read (DARK-LOADED) ──────────────
+  // The active import snapshot's complete distinct set of matched canonical
+  // card_ids, plus an authority state. Held for validation/telemetry ONLY in this
+  // slice — it is NOT consumed by checkOwned, isCardOwned, overrides, owned_keys,
+  // manual state, or any rendering. OWN-0B is what repoints checkOwned onto this
+  // Set. Authority mirrors the RPC contract: "loading" | "ready" |
+  // "no_active_batch" | "multiple_active_batches" | "error". A non-"ready"
+  // authority is never treated as empty ownership.
+  const[snapshotOwnedIds,     setSnapshotOwnedIds]     =useState(()=>new Set());
+  const[snapshotAuthority,    setSnapshotAuthority]    =useState("loading");
+  const[snapshotOwnedBatchId, setSnapshotOwnedBatchId] =useState(null);
+  const snapshotOwnedReqRef=useRef(0); // supersession guard: only the newest request may commit
   const[dynamicArtists,setDynamicArtists]=useState([]); // A-D2b0: user-tracked artists beyond the curated roster
   const[dynRefresh,    setDynRefresh]    =useState(0);  // A-D2c: bump to re-run the tracked-artist fetch after Add to Archive
   // V-C.3: lifted from Dashboard so the featured hero card and Vault Queue
@@ -2847,6 +2859,45 @@ function App(){
     });
     return()=>subscription.unsubscribe();
   },[]);
+
+  // ── OWN-0A: dark-load / refresh the authoritative ownership read ─────────────
+  // Runs on sign-in (user) and after every settled CSV import (importEpoch).
+  // Batch-bound replacement semantics: a newer request always supersedes an older
+  // in-flight one (snapshotOwnedReqRef); on a "ready" response the Set is REPLACED
+  // wholesale for its batchId — never merged, never retained across a batch change.
+  // Signed-out clears the dark state. Nothing here is consumed by rendering.
+  useEffect(()=>{
+    if(!user){setSnapshotOwnedIds(new Set());setSnapshotOwnedBatchId(null);setSnapshotAuthority("loading");return;}
+    const reqId=++snapshotOwnedReqRef.current;
+    let alive=true;
+    setSnapshotAuthority("loading");
+    (async()=>{
+      try{
+        const res=await fetchActiveSnapshotOwnedCardIds();
+        if(!alive||reqId!==snapshotOwnedReqRef.current)return; // superseded — do not commit
+        if(res.state==="ready"){
+          setSnapshotOwnedIds(res.ownedCardIds);   // strict wrapper returns a Set of canonical card_ids
+          setSnapshotOwnedBatchId(res.batchId);
+          setSnapshotAuthority("ready");
+        }else if(res.state==="no_active_batch"){
+          setSnapshotOwnedIds(new Set());
+          setSnapshotOwnedBatchId(null);
+          setSnapshotAuthority("no_active_batch");
+        }else{ // "multiple_active_batches" | "error" — terminal non-ready: invalidate stale data
+          setSnapshotOwnedIds(new Set());
+          setSnapshotOwnedBatchId(null);
+          setSnapshotAuthority(res.state==="multiple_active_batches"?"multiple_active_batches":"error");
+        }
+      }catch(e){
+        if(!alive||reqId!==snapshotOwnedReqRef.current)return;
+        console.error("[OWN-0A] authoritative ownership read failed",e);
+        setSnapshotOwnedIds(new Set());        // thrown/transport error: invalidate stale data
+        setSnapshotOwnedBatchId(null);
+        setSnapshotAuthority("error");
+      }
+    })();
+    return()=>{alive=false;};
+  },[user,importEpoch]);
 
   // ── NAV-1A: write side — surface → URL ───────────────────────────────────────
   // Whenever `view` settles on an addressable surface, push it into the URL.
