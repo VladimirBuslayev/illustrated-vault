@@ -7,8 +7,9 @@
 // keys.js unchanged. Replicates the accepted OL-0A baseline classifier
 // (scripts/ol0a-match-audit.mjs runAudit, lines ~173-241) and the approved
 // OL-0A2b combined resolution (scripts/ol0a2-refinement-sim.mjs resolveUnder /
-// combined section), gated by the frozen 33-entry allowlist and purely-numeric
-// leading-zero equivalence. Every successful strategy must agree on one
+// combined section), gated by the set-name allowlist (the frozen 33-entry OL-0A2b
+// core plus the approved one-entry OL-2B extension = 34 total; see ol0aAllowlist.js)
+// and purely-numeric leading-zero equivalence. Every successful strategy must agree on one
 // canonical card ID or the row is left unresolved (conflict). It does NOT read,
 // write, or reinterpret owned_keys.
 //
@@ -21,7 +22,10 @@ import { normName, normNum, normSet } from '../utils/keys.js';
 import { OL0A_SET_ALLOWLIST } from '../constants/ol0aAllowlist.js';
 
 // Bump when matcher policy changes; stored in user_import_batches.matcher_version.
-export const MATCHER_VERSION = 'ol0c-1';
+// OL-2B: adds the recovery-scoped cross-language guard (languageMarked) and the
+// one-entry McDonald's Promos 2024 alias (in ol0aAllowlist.js). No change to gate(),
+// classifyEligible, normalizers, agreement/conflict logic, or the match_rule vocabulary.
+export const MATCHER_VERSION = 'ol2b-1';
 
 // ── ported harness helpers (verbatim; see provenance above) ───────────────────
 export function stripTrailingParens(s) {
@@ -214,6 +218,22 @@ function classifyEligible(src, ix) {
   return { bucket: 'unmatched', reason };
 }
 
+// ── OL-2B cross-language guard (recovery-scoped) ──────────────────────────────
+// Inspects the RAW source fields BEFORE the frozen normalizers run — necessary
+// because normName turns a trailing "(JP)" into " jp" in the exact variant and
+// erases it entirely in the paren-stripped variant. Used ONLY to skip OL-2B
+// recovery (combinedResolve) for JP/CN/KR-marked rows. It NEVER runs against gate()
+// or baseline classifyEligible, so the four baseline-matched JP rows keep their exact
+// IDs/rules. Narrow by design: a trailing (JP)/(CN)/(KR) product-name token, or a
+// Japanese/Chinese/Korean set-label word.
+const OL2B_LANG_PAREN = /\((?:JP|CN|KR)\)\s*$/i;          // trailing product-name marker
+const OL2B_LANG_SET   = /\b(?:japanese|chinese|korean)\b/i; // set-label marker
+export function languageMarked(src) {
+  const name = ((src && src.productName) || '').trim();
+  const set  = ((src && src.set) || '');
+  return OL2B_LANG_PAREN.test(name) || OL2B_LANG_SET.test(set);
+}
+
 // ── main entry ────────────────────────────────────────────────────────────────
 // dataRows: Papa.parse header rows (objects keyed by Collectr column names).
 // ix: catalog index from buildCatalogIndex.
@@ -260,7 +280,10 @@ export function classifyCollectrRows(dataRows, ix) {
       return;
     }
 
-    const combined = combinedResolve(src, ix);
+    // OL-2B cross-language guard (recovery-scoped): JP/CN/KR-marked rows are excluded
+    // from alias/LZ recovery and keep their baseline disposition. Baseline matches were
+    // already returned above, so the four baseline-matched JP rows are unaffected.
+    const combined = languageMarked(src) ? { resolved: false } : combinedResolve(src, ix);
     if (combined.resolved) {
       counts.matched_rows++;
       stored.push({ ...evidence, matchStatus: 'matched', cardId: combined.cardId, matchRule: combined.matchRule,
