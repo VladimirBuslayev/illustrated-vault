@@ -1,6 +1,6 @@
 # Illustrated Vault — Current State
 
-Last updated: 2026-07-08
+Last updated: 2026-07-16
 
 ## Production
 
@@ -17,7 +17,8 @@ Domain: illustratedvault.com (Porkbun). GitHub Pages is unpublished. Transaction
 | Gate 2 | Vite 5 / React 18 modular migration, Vercel cutover | ✓ Closed 2026-07-01 (`gate-2-complete` tag) |
 | Gate 3 | Data foundation: artists table, FK identity, cleanup | ✓ Closed |
 | Hunt Board H-1/H-2/H-3 | Global hunt planning surface | ✓ Complete |
-| Owned Library OL-0A/0A2/0B/0C | Audit, matcher, snapshot schema, importer integration | ✓ Foundation complete 2026-07-08 |
+| Owned Library OL-0A–OL-2B | Audit through live UI and verified matching recovery | ✓ Complete through OL-2B |
+| OWN-0A | Authoritative snapshot ownership read, dark-loaded in App | ✓ Complete 2026-07-16 |
 
 Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or deferred cleanup remains.
 
@@ -230,10 +231,10 @@ block (`.vault-queue` + one mobile media query) — its only change since the
 Gate 2 verbatim copy. Ownership, intent, favorites, Hunt Board,
 SharedBinder, Artist Page, and A-D2c/A-D2d behavior untouched.
 
-## Owned Library foundation
+## Owned Library and ownership truth
 
-Owned Library is the future surface for enumerating the user’s complete
-imported physical collection. It remains distinct from:
+Owned Library is live as the complete imported physical-collection archive. It
+remains distinct from:
 
 - Artist Binder: owned/missing cards across intentionally tracked artists.
 - Planned Binder: a collection the user is intentionally building.
@@ -241,11 +242,13 @@ imported physical collection. It remains distinct from:
 
 The architecture deliberately separates:
 
-- `user_collection.owned_keys` — existing lossy recognition infrastructure;
-- import snapshots — canonical enumeration infrastructure;
-- `manualOwned` / `manualMissing` — separate ownership overrides.
+- `user_collection.owned_keys` — legacy, lossy recognition infrastructure;
+- active import snapshots — canonical physical-printing enumeration authority;
+- `manualOwned` / `manualMissing` — explicit per-card overrides.
 
-No production ownership cutover has occurred.
+Owned Library already reads the active snapshot directly. Other authenticated
+collection surfaces still use the existing `checkOwned` → `isCardOwned` path
+until OWN-0B. No visible authenticated ownership cutover has occurred yet.
 
 ### OL-0A matching audit — complete
 
@@ -490,34 +493,152 @@ The difference between matched source rows and distinct canonical cards confirms
 that duplicate source rows are aggregated rather than emitted as duplicate
 library items.
 
-### Current boundary / next slice
+### OL-1 — Owned Library v0 UI — live
 
-OL-0A through OL-0D now provide the validated foundation for enumerating the
-user’s imported physical collection without changing production ownership
-recognition.
+Owned Library is reachable from the Dashboard and uses the OL-0D read model
+directly. Current behavior:
 
-The next proposed slice is **Owned Library v0 UI**.
+- full-color grid of confidently matched owned cards;
+- server-backed search, sort, and catalog-status filtering;
+- page size 60 with `Load 60 more`;
+- showing-range and total-count disclosure;
+- matched / ambiguous / unmatched / invalid / catalog-missing diagnostics;
+- read-only CardModal inspection path;
+- mobile header, grid overflow, and search-focus issues corrected;
+- post-import refresh through `importEpoch`;
+- no merge of manual overrides into imported quantity.
 
-Its purpose should be a complete, searchable, full-color visual archive of
-confidently matched owned cards. It should remain distinct from:
+Owned Library is the trusted owner-facing snapshot surface. It does not use
+`owned_keys` to decide whether a canonical printing is present.
 
-- Artist Binder — artist-focused completion and archive;
-- Hunt Board — active acquisition planning;
-- Planned Binders — intentional collection-building lists and future physical
-  binder-page planning.
+### OL-2A / OL-2B — Verified Matching Recovery — complete
 
-The Owned Library v0 slice must use the OL-0D service contract and must not
-perform an ownership cutover, merge manual overrides into imported quantity,
-build unresolved-row repair tools, or turn Planned Binders into another
-catalog grid.
+OL-2B approved and deployed one narrow Tier-A alias:
 
+`McDonald's Promos 2024` → `McDonald's Collection 2024`
+
+Production active batch:
+
+- batch: `1dd67dd6-15fb-4452-8edd-3626681e2a1d`
+- matcher version: `ol2b-1`
+- total source rows: 6,141
+- stored positive-quantity rows: 5,969
+- matched source rows: 5,307
+- ambiguous rows: 167
+- unmatched rows: 478
+- invalid rows: 17
+- distinct canonical owned cards: 4,776
+- matched physical copies: 7,390
+- catalog-missing canonical cards: 0
+
+OL-2A baseline → OL-2B active delta:
+
+- distinct owned cards: 4,769 → 4,776
+- added: 7
+- removed: 0
+- net: +7
+- eight recovered source rows because `2024sv-12` appeared twice
+- recovered canonical IDs:
+  `2024sv-4`, `2024sv-5`, `2024sv-8`, `2024sv-11`,
+  `2024sv-12`, `2024sv-14`, `2024sv-15`
+
+OL-2B is complete and accepted. The McDonald's alias is approved, deployed,
+and must not be revisited without new evidence.
+
+### OWN-0A — Authoritative Snapshot Ownership Read — complete
+
+OWN-0A is deployed and validated.
+
+It added:
+
+- `get_active_snapshot_owned_card_ids()` — read-only, `SECURITY DEFINER`,
+  `auth.uid()`-scoped, fail-closed on multiple active batches or header/row
+  mismatch;
+- strict `fetchActiveSnapshotOwnedCardIds()` service wrapper returning a
+  canonical-ID `Set`;
+- dark-loaded App authority state:
+  `loading | ready | no_active_batch | multiple_active_batches | error`;
+- refresh on sign-in and `importEpoch`;
+- request supersession, batch-bound wholesale replacement, and terminal
+  invalidation.
+
+Production validation:
+
+- RPC state: `ready`
+- active batch: `1dd67dd6-15fb-4452-8edd-3626681e2a1d`
+- owned ID length: 4,776
+- distinct matched IDs: 4,776
+- matched rows: 5,307
+- deployed OL-0D read-model count: 4,776
+- no users with multiple active batches
+- catalog available / missing: 4,776 / 0
+- query execution: approximately 7.6 ms; no sequential scan; no new index
+  justified
+
+Ownership-truth evidence:
+
+- Komiya Expedition Pidgeot `ecard1-23` is absent from the active snapshot;
+- Komiya Expedition Pidgeot `ecard1-59` is absent from the active snapshot;
+- Komiya positive control: 185 exact snapshot-owned cards.
+
+`checkOwned` and `isCardOwned` remain unchanged. OWN-0A is a dark authority
+input only and corrected no additional visible surface. Owned Library remains
+on its existing snapshot read path.
+
+Closeout:
+
+`/docs/OWN-0A_CLOSEOUT.md`
+
+### Current ownership boundary / next slice
+
+Confirmed current split:
+
+1. **Owned Library** — active snapshot canonical `card_id`; trusted.
+2. **Authenticated collection surfaces** — still use loose `owned_keys` through
+   the existing App `checkOwned` closure.
+3. **SharedBinder** — separate share-token `owned_keys` path; unresolved
+   external ownership boundary.
+
+OWN-0B is the next ownership slice, but it is **architecture inspection only**
+until the following are resolved:
+
+- 17 manual overrides outside `cards_effective`;
+- at least two Pokémon GO / TCGdex override IDs;
+- remaining legacy or alternate override namespaces;
+- Pokémon GO set-path cards using a different ID namespace;
+- loading / error / no-snapshot behavior as ownership unavailable, not missing;
+- strict canonical precedence:
+  force-missing → force-owned → active snapshot canonical ID → missing;
+- no `owned_keys` fallback;
+- SharedBinder remains out of the authenticated cutover.
+
+Roadmap after OWN-0B:
+
+`OL-2C.1 Image Resilience → CAT-0 Catalog Source & Coverage Audit → next
+evidence-backed catalog slice → OWN-1 Artwork vs Printing ownership policy`
+
+Locked ownership principles:
+
+- physical-printing ownership, artwork identity, and future artwork-goal
+  satisfaction are separate concepts;
+- owning one language or printing never implies owning another;
+- false-positive physical ownership is more harmful than a temporary false
+  negative;
+- artwork-level goal satisfaction, if introduced later, is policy—not
+  ownership.
 ## Completion tracking
 
-Existed before the intent system and is unchanged:
+Current authenticated completion counts still flow through the existing App
+`checkOwned` closure:
+
 - Artist hero shows owned/total percentage; Dashboard shows artist progress rows.
 - Counts derive from `visibleCardData`, so hiding TCG Pocket affects totals.
 - Manual overrides are respected.
-- Do not rebuild completion counts unless explicitly requested.
+- Until OWN-0B, loose `owned_keys` collisions can inflate counts on these
+  surfaces.
+- Owned Library counts are separate and snapshot-authoritative.
+- Do not patch counts surface-by-surface; OWN-0B must change the centralized
+  ownership seam.
 
 ## Current repo structure — main branch
 
@@ -531,12 +652,13 @@ src/
                          shareService, cardAdapter, imageService,
                          tcgdexService, intentService, artistService,
                          binderService, snapshotMatcher,
-                         catalogIndexLoader, importSnapshotService
+                         catalogIndexLoader, importSnapshotService,
+                         ownedLibraryService
   styles/index.css
   utils/               — cache, cardUtils, format, imageUrl, keys, slug, sort
 public/                — icons, manifest.json, sw.js, logo assets
 docs/                  — this documentation set + archive/ + sql/
-scripts/               — OL-0A audit, OL-0A2 simulation, OL-0C validation
+scripts/               — OL-0A audit, OL-0A2 simulation, OL-0C/OL-0D validation
 sync/                  — data sync / backfill scripts
 .github/workflows/build-check-gate2.yml — manual-only build smoke test
 index.html             — minimal Vite shell
@@ -566,13 +688,33 @@ RPCs in use:
 - `add_artist_to_archive`
 - `activate_import_batch`
 - `fail_import_batch`
+- `get_active_import_snapshot_read_model`
+- `get_active_snapshot_owned_card_ids`
 
 ## Known limitations / open items
 
-- Owned Library UI is not built yet; active import snapshots are enumeration infrastructure only.
-- The OL-0C catalog index is loaded client-side in stable pages during signed-in CSV import. The loader is isolated so a future server-side resolver can replace it without changing the matcher.
-- Null-illustrator bulk enrichment for the six affected SWSH-era set ranges (~1,400 cards; TCGdex structural data gap) is still pending. It is a data-quality follow-up, not a feature blocker.
+- OWN-0B authenticated ownership cutover has not started. Artist Page, Binder,
+  Dashboard, CardModal, Hunt Board, Artist Directory, and Planned Binder still
+  consume the loose `owned_keys` path.
+- 17 manual overrides use IDs outside `cards_effective`; at least two are
+  Pokémon GO / TCGdex IDs. Do not delete or rewrite them before the OWN-0B
+  namespace and reachability audit.
+- Pokémon GO set-path cards use a different ID space from snapshot canonical
+  IDs and need an explicit narrow policy before cutover.
+- SharedBinder remains on its separate loose share-token ownership path and is
+  not corrected by OWN-0A.
+- Image resilience remains OL-2C.1. Never silently substitute another
+  printing's image; cross-language or cross-printing proxies require explicit
+  labeling.
+- CAT-0 remains a diagnostic catalog-source and coverage audit, not an
+  implementation rewrite.
+- The OL-0C catalog index is loaded client-side in stable pages during signed-in
+  CSV import. The loader is isolated so a future server-side resolver can
+  replace it without changing the matcher.
+- Null-illustrator bulk enrichment for the six affected SWSH-era set ranges
+  (~1,400 cards; TCGdex structural data gap) remains a data-quality follow-up.
 - Saya Tsuruta alias (full-width space variant) remains unconfirmed.
-- Pricing features deferred: confidence labels, staleness display, Cardmarket link button, price alerts.
-- Hunt Board back button always returns to Dashboard, even when entered from the Binder header (known, deferred).
-
+- Pricing features deferred: confidence labels, staleness display, Cardmarket
+  link button, price alerts.
+- Hunt Board back button always returns to Dashboard, even when entered from
+  the Binder header.
