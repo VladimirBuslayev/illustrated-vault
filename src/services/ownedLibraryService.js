@@ -7,9 +7,14 @@
 // nothing here invents a second frontend card shape.
 //
 // This service is READ-ONLY. It never touches owned_keys, manual overrides,
-// intent, favorites, or binder state. Consumed only by the approved Owned
-// Library surface (OL-1). Do not use this read model as the app-wide ownership
-// source.
+// intent, favorites, or binder state. It exposes two distinct reads:
+//   - fetchActiveSnapshotReadModel: the paginated Owned Library (OL-1) read.
+//     It backs the Owned Library surface only and is NOT the app-wide ownership
+//     source (it is filtered/paginated and joins the catalog).
+//   - fetchActiveSnapshotOwnedCardIds: the separate OWN-0A authoritative read
+//     returning the active batch's complete distinct set of matched canonical
+//     card_ids (see its own doc block below). This is the printing-exact
+//     ownership source OWN-0B will consume; OWN-0A only dark-loads it.
 //
 // It NEVER soft-fails to an empty collection:
 //   - Supabase / RPC errors throw.
@@ -259,4 +264,99 @@ export async function fetchActiveSnapshotReadModel(options = {}) {
     };
   }
   return normalizeReady(data);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OWN-0A — Authoritative Snapshot Ownership Read client.
+//
+// Wraps the read-only, purpose-built RPC get_active_snapshot_owned_card_ids(),
+// which returns — atomically for the caller's single active batch — the complete
+// distinct set of MATCHED canonical card_ids plus minimal row/count reconciliation.
+// This is the printing-exact ownership source that OWN-0B will feed to checkOwned.
+//
+// Distinct from fetchActiveSnapshotReadModel: no pagination, no filters, and no
+// cards_effective catalog join. It never returns catalog availability — a matched
+// id is owned whether or not it renders as a catalog tile.
+//
+// Strictness matches the read-model client: Supabase/RPC errors throw (with the
+// PostgREST diagnostic fields preserved), malformed/unsupported contract responses
+// throw, and it NEVER soft-fails to an empty owned set. States are returned
+// explicitly. On "ready", ownedCardIds is a Set<string> and
+// ownedCardIds.size === reconciliation.distinctMatchedCardIds is enforced.
+
+const OWNED_IDS_RPC = 'get_active_snapshot_owned_card_ids';
+const OWNED_IDS_STATES = new Set([
+  'ready', 'no_active_batch', 'multiple_active_batches', 'error',
+]);
+
+// options: { client? }  (client injectable for unit tests; default lazy import)
+// Returns one of:
+//   { contractVersion, state:'ready', batchId, activatedAt, matcherVersion,
+//     ownedCardIds:Set<string>, reconciliation:{ distinctMatchedCardIds, matchedRows } }
+//   { contractVersion, state:'no_active_batch' }
+//   { contractVersion, state:'multiple_active_batches' }
+//   { contractVersion, state:'error', reason }
+export async function fetchActiveSnapshotOwnedCardIds(options = {}) {
+  const db = options.client || (await defaultClient());
+
+  // Supabase does not throw on query errors — inspect error explicitly and
+  // preserve the PostgREST fields on the thrown Error (diagnostic path).
+  const { data, error } = await db.rpc(OWNED_IDS_RPC);
+  if (error) {
+    const e = new Error(`ownedLibraryService: owned-ids RPC error: ${error.message || error}`);
+    e.rpcCode = error.code ?? null;
+    e.rpcDetails = error.details ?? null;
+    e.rpcHint = error.hint ?? null;
+    e.rpcMessage = error.message ?? null;
+    throw e;
+  }
+
+  if (!isObj(data)) fail('owned-ids RPC returned a non-object payload');
+  if (data.contractVersion !== CONTRACT_VERSION) {
+    fail(`owned-ids: unsupported contractVersion ${JSON.stringify(data.contractVersion)}`);
+  }
+  const state = data.state;
+  if (!OWNED_IDS_STATES.has(state)) fail(`owned-ids: unsupported state ${JSON.stringify(state)}`);
+
+  if (state === 'no_active_batch' || state === 'multiple_active_batches') {
+    return { contractVersion: CONTRACT_VERSION, state };
+  }
+  if (state === 'error') {
+    return { contractVersion: CONTRACT_VERSION, state, reason: asStr(data.reason ?? '', 'owned-ids.reason') };
+  }
+
+  // state === 'ready'
+  const rawIds = data.ownedCardIds;
+  if (!Array.isArray(rawIds)) fail('owned-ids: ownedCardIds must be an array');
+  const ownedCardIds = new Set();
+  for (let i = 0; i < rawIds.length; i++) {
+    const id = asStr(rawIds[i], `owned-ids.ownedCardIds[${i}]`, { allowEmpty: false });
+    if (ownedCardIds.has(id)) fail(`owned-ids: duplicate card id ${JSON.stringify(id)}`);
+    ownedCardIds.add(id);
+  }
+
+  const r = data.reconciliation;
+  if (!isObj(r)) fail('owned-ids: reconciliation missing or malformed');
+  const distinctMatchedCardIds = asInt(r.distinctMatchedCardIds, 'owned-ids.reconciliation.distinctMatchedCardIds');
+  const matchedRows = asInt(r.matchedRows, 'owned-ids.reconciliation.matchedRows');
+
+  if (rawIds.length !== distinctMatchedCardIds) {
+    fail(`owned-ids: ownedCardIds length (${rawIds.length}) must equal distinctMatchedCardIds (${distinctMatchedCardIds})`);
+  }
+  if (ownedCardIds.size !== distinctMatchedCardIds) {
+    fail(`owned-ids: distinct ownedCardIds (${ownedCardIds.size}) must equal distinctMatchedCardIds (${distinctMatchedCardIds})`);
+  }
+  if (matchedRows < distinctMatchedCardIds) {
+    fail(`owned-ids: matchedRows (${matchedRows}) must be >= distinctMatchedCardIds (${distinctMatchedCardIds})`);
+  }
+
+  return {
+    contractVersion: CONTRACT_VERSION,
+    state,
+    batchId: asStr(data.batchId, 'owned-ids.batchId', { allowEmpty: false }),
+    activatedAt: asTimestamp(data.activatedAt, 'owned-ids.activatedAt'),
+    matcherVersion: asStr(data.matcherVersion, 'owned-ids.matcherVersion', { allowEmpty: false }),
+    ownedCardIds,
+    reconciliation: { distinctMatchedCardIds, matchedRows },
+  };
 }
