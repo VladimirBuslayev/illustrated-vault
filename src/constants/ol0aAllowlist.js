@@ -1,23 +1,32 @@
 // src/constants/ol0aAllowlist.js
-// OL-0C — FROZEN Collectr→catalog set-name allowlist.
+// OL-0C — Collectr→catalog set-name allowlist.
+// OL-0A2b-frozen core (33 entries) + one OL-2B-approved extension (1 entry) = 34.
 //
-// Provenance: extracted verbatim from the APPROVED OL-0A2b simulation output
-// (scripts/ol0a2-refinement-sim.mjs → ol0a2-report.json,
-//  setMappingEvidence.allowlistCandidates). These 33 mappings are the only
-// production-safe set-name aliases. They are scoped to the OL-0C snapshot
-// importer ONLY — they are NOT a global alias system and MUST NOT touch
+// Provenance (core 33): extracted verbatim from the APPROVED OL-0A2b simulation
+// output (scripts/ol0a2-refinement-sim.mjs → ol0a2-report.json,
+//  setMappingEvidence.allowlistCandidates). These 33 mappings are the OL-0A2b
+// production-safe set-name aliases. They are scoped to the OL-0C snapshot importer
+// ONLY — they are NOT a global alias system and MUST NOT touch
 // user_collection.owned_keys recognition.
 //
-// Do NOT recompute at runtime. Do NOT add cross-language/-release or low-support
-// mappings. The 7 deferred and 34 rejected labels are retained below purely so
-// the load-time assertion can prove they are excluded.
+// OL-2B amendment (2026-07-15): exactly ONE entry appended —
+//   "McDonald's Promos 2024" → "McDonald's Collection 2024"
+// approved under docs/OL-2B_VERIFIED_MATCHING_SPEC.md v1.0 after validation against
+// the complete current catalog (23,604 rows): 8 unique recoveries via
+// set_alias_leading_zero, 0 conflicts, 0 regressions, 0 matched-ID changes. The
+// integrity count is amended 33 → 34 accordingly. No OL-0A2b entry is edited, and no
+// rejected/deferred label is admitted.
 //
-// Each entry maps a raw Collectr `Set` label to a catalog `set_name`. Matching
-// is performed on normSet(label) at classify time (see snapshotMatcher.js).
+// Do NOT recompute at runtime. Do NOT add cross-language/-release or low-support
+// mappings. The 7 deferred and 34 rejected labels are retained below purely so the
+// load-time assertion can prove they are excluded.
+//
+// Each entry maps a raw Collectr `Set` label to a catalog `set_name`. Matching is
+// performed on normSet(label) at classify time (see snapshotMatcher.js).
 
 import { normSet } from '../utils/keys.js';
 
-// ── 33 production-safe allowlist mappings (order = report distinct-pair rank) ──
+// ── 33 OL-0A2b core mappings (order = report distinct-pair rank) + 1 OL-2B extension ──
 export const OL0A_SET_ALLOWLIST = Object.freeze([
   { collectrLabel: 'Scarlet & Violet Base Set',                 catalogSet: 'Scarlet & Violet' },
   { collectrLabel: 'SV: 151',                                   catalogSet: '151' },
@@ -52,6 +61,12 @@ export const OL0A_SET_ALLOWLIST = Object.freeze([
   { collectrLabel: 'Diamond and Pearl Promos',                  catalogSet: 'DP Black Star Promos' },
   { collectrLabel: 'Lost Origin Trainer Gallery',               catalogSet: 'Lost Origin' },
   { collectrLabel: "McDonald's Promos 2022",                    catalogSet: "McDonald's Collection 2022" },
+
+  // ── OL-2B extension (approved 2026-07-15; docs/OL-2B_VERIFIED_MATCHING_SPEC.md v1.0) ──
+  // Year-sibling of the McDonald's 2022 entry above. Verified against the complete
+  // current catalog (23,604 rows): recovers 8 rows to McDonald's Collection 2024
+  // (2024sv-*) via set_alias_leading_zero; 0 conflicts / 0 regressions / 0 ID changes.
+  { collectrLabel: "McDonald's Promos 2024",                    catalogSet: "McDonald's Collection 2024" },
 ]);
 
 // ── Excluded mappings (must NEVER appear in the allowlist) ─────────────────────
@@ -84,16 +99,16 @@ export const OL0A_ALLOWLIST_META = Object.freeze({
   allowlistCount: OL0A_SET_ALLOWLIST.length,
   deferredCount: OL0A_DEFERRED_LABELS.length,
   rejectedCount: OL0A_REJECTED_LABELS.length,
-  source: 'ol0a2-report.json (OL-0A2b, approved)',
+  source: 'ol0a2-report.json (OL-0A2b, approved) + OL-2B one-entry extension',
 });
 
 // ── Load-time integrity assertion (deterministic; throws on any drift) ─────────
-// 1. Exactly 33 entries.
+// 1. Exactly 34 entries (33 OL-0A2b core + 1 OL-2B extension).
 // 2. No duplicate normalized keys.
 // 3. Every deferred and rejected label is excluded from the allowlist.
 (function assertAllowlistIntegrity() {
-  if (OL0A_SET_ALLOWLIST.length !== 33) {
-    throw new Error(`OL0A allowlist integrity: expected 33 entries, found ${OL0A_SET_ALLOWLIST.length}.`);
+  if (OL0A_SET_ALLOWLIST.length !== 34) {
+    throw new Error(`OL0A allowlist integrity: expected 34 entries, found ${OL0A_SET_ALLOWLIST.length}.`);
   }
   const keys = new Set();
   for (const e of OL0A_SET_ALLOWLIST) {
