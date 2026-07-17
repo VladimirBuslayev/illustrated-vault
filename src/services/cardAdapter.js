@@ -13,6 +13,7 @@
 function supaRowToCard(row) {
   return {
     id:               row.id,
+    ownershipNamespace: "canonical",   // OWN-0B: single canonical marker point (artist path, Owned Library, plan cards)
     name:             row.name,
     localId:          row.local_id,
     rarity:           row.rarity             || null,
