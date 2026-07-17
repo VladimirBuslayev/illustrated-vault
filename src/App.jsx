@@ -2835,42 +2835,6 @@ function OwnershipAuthorityScreen({authority,onImport,onRetry,onSignOut}){
   );
 }
 
-// ── OWN-0B PREVIEW INSTRUMENTATION (temporary — removed for production) ───────
-// Read-only ownership before/after audit over the real in-memory Sets. Emits a CSV
-// via the existing Blob/download pattern. Entire block removed for production.
-function runOwnDeltaAudit(visibleCardData, ownedKeySet, snapshotOwnedIds, manualOwned, manualMissing){
-  const esc=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
-  const rows=[["card_id","context","old_verdict","new_verdict","override_status","in_snapshot","namespace","reason"]];
-  const counts={owned_keys_false_positive_removed:0,snapshot_true_positive_added:0,external_set_inference_removed:0,unexplained:0,unchanged:0};
-  Object.keys(visibleCardData||{}).forEach(slug=>{
-    (visibleCardData[slug]||[]).forEach(card=>{
-      const oldV=isCardOwned(card,ownedKeySet,manualOwned,manualMissing);
-      const newV=effectiveOwned(card,snapshotOwnedIds,manualOwned,manualMissing);
-      const override=manualMissing.has(card.id)?"force-missing":(manualOwned.has(card.id)?"force-owned":"none");
-      const inSnap=snapshotOwnedIds.has(card.id);
-      const ns=card.ownershipNamespace||"(unset)";
-      let reason;
-      if(oldV===newV)reason="unchanged";
-      else if(override!=="none")reason="unexplained";
-      else if(!oldV&&newV&&ns==="canonical"&&inSnap)reason="snapshot_true_positive_added";
-      else if(oldV&&!newV&&ns==="canonical"&&!inSnap)reason="owned_keys_false_positive_removed";
-      else if(oldV&&!newV&&ns!=="canonical")reason="external_set_inference_removed";
-      else reason="unexplained";
-      counts[reason]=(counts[reason]||0)+1;
-      rows.push([card.id,slug,oldV,newV,override,inSnap,ns,reason]);
-    });
-  });
-  console.log("[OWN-0B delta] counts",counts);
-  const csv="\uFEFF"+rows.map(r=>r.map(esc).join(",")).join("\r\n");
-  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url;a.download=`own-0b-delta-${todayStr()}.csv`;
-  document.body.appendChild(a);a.click();document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  return counts;
-}
-
 function App(){
   const[view,          setView]         =useState("checking-auth");
   const[artistSlug,    setArtistSlug]   =useState(null);
@@ -3285,14 +3249,6 @@ function App(){
   },[cardData,hideTcgPocket]);
 
   const checkOwned=useCallback(card=>effectiveOwned(card,snapshotOwnedIds,manualOwned,manualMissing),[snapshotOwnedIds,manualOwned,manualMissing]);
-
-  // ── OWN-0B PREVIEW INSTRUMENTATION (temporary — removed for production) ─────
-  useEffect(()=>{
-    if(typeof window==="undefined")return;
-    if(/(^|\.)illustratedvault\.com$/i.test(window.location.hostname))return; // never on the production domain
-    window.__ownDeltaExport=()=>runOwnDeltaAudit(visibleCardData,ownedKeySet,snapshotOwnedIds,manualOwned,manualMissing);
-    return()=>{try{delete window.__ownDeltaExport;}catch(e){window.__ownDeltaExport=undefined;}};
-  },[visibleCardData,ownedKeySet,snapshotOwnedIds,manualOwned,manualMissing]);
 
   const goTo=useCallback((target)=>{
     if(target==="landing"){setView("landing");return;}
