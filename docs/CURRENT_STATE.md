@@ -1,6 +1,6 @@
 # Illustrated Vault — Current State
 
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
 ## Production
 
@@ -18,7 +18,8 @@ Domain: illustratedvault.com (Porkbun). GitHub Pages is unpublished. Transaction
 | Gate 3 | Data foundation: artists table, FK identity, cleanup | ✓ Closed |
 | Hunt Board H-1/H-2/H-3 | Global hunt planning surface | ✓ Complete |
 | Owned Library OL-0A–OL-2B | Audit through live UI and verified matching recovery | ✓ Complete through OL-2B |
-| OWN-0A | Authoritative snapshot ownership read, dark-loaded in App | ✓ Complete 2026-07-16 |
+| OWN-0A | Authoritative snapshot ownership read | ✓ Complete 2026-07-16 |
+| OWN-0B | Authenticated ownership cutover to active snapshot authority | ✓ Complete 2026-07-17 |
 
 Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or deferred cleanup remains.
 
@@ -26,7 +27,7 @@ Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or
 
 - `artists` table exists and is well-formed (with alias arrays).
 - `cards_effective` view exposes `artist_id`.
-- Frontend artist queries use the FK-based `artist_id` path (`.eq('artist_id', ...)`), with the old ILIKE path retained only as a fallback for entries without an `artistId`. Cache key bumped `pb7_supa_` → `pb8_supa_` to invalidate stale ILIKE caches.
+- Frontend artist queries use the FK-based `artist_id` path (`.eq('artist_id', ...)`), with the old ILIKE path retained only as a fallback for entries without an `artistId`. Gate 3 bumped `pb7_supa_` → `pb8_supa_` to invalidate stale ILIKE caches; OWN-0B later bumped the live canonical-card cache to `pb9_supa_` and the external-set cache to `pb7_cards_` so every returned card carries an explicit ownership namespace.
 - The old `sui` ILIKE false-positive bug (substring match on "Misa Tsutsui") is fixed.
 - Tetsu Kayama alias/FK cleanup done.
 - Three `card_extras` seed FK fixes: `swsh11-186` → `shinji-kanda`, `swsh12.5-GG19` → `asako-ito`, `swsh12.5-GG69` → `akira-egawa`.
@@ -173,8 +174,9 @@ artist-focused archive, complete Owned Library, and active Hunt Board.
 - Users can create, rename, describe, and delete planned binders.
 - Binder plans support global catalog search, add/remove, duplicate prevention,
   and Supabase persistence.
-- Existing ownership recognition is reused live: owned cards render normally;
-  planned but unowned cards render dimmed.
+- Authenticated strict ownership is reused live: canonical plan cards resolve through
+  `cards_effective` / `supaRowToCard`, owned cards render normally, and planned
+  but unowned cards render dimmed.
 - Planned binder cards open the existing `CardModal`.
 - This is still a list-based planning surface, not a 9-pocket physical page
   planner. Page layout, slot positions, and physical storage modeling remain
@@ -246,9 +248,11 @@ The architecture deliberately separates:
 - active import snapshots — canonical physical-printing enumeration authority;
 - `manualOwned` / `manualMissing` — explicit per-card overrides.
 
-Owned Library already reads the active snapshot directly. Other authenticated
-collection surfaces still use the existing `checkOwned` → `isCardOwned` path
-until OWN-0B. No visible authenticated ownership cutover has occurred yet.
+Owned Library reads the active snapshot through OL-0D. Since OWN-0B, every
+ownership-dependent authenticated collection surface uses the same active-snapshot
+canonical-ID authority through the centralized App `checkOwned` seam. The loose
+`owned_keys` predicate is no longer an authenticated ownership fallback; it remains
+legacy recognition infrastructure and still powers the separate SharedBinder boundary.
 
 ### OL-0A matching audit — complete
 
@@ -556,7 +560,7 @@ It added:
   mismatch;
 - strict `fetchActiveSnapshotOwnedCardIds()` service wrapper returning a
   canonical-ID `Set`;
-- dark-loaded App authority state:
+- App authority state, introduced dark in OWN-0A and consumed by OWN-0B:
   `loading | ready | no_active_batch | multiple_active_batches | error`;
 - refresh on sign-in and `importEpoch`;
 - request supersession, batch-bound wholesale replacement, and terminal
@@ -581,41 +585,124 @@ Ownership-truth evidence:
 - Komiya Expedition Pidgeot `ecard1-59` is absent from the active snapshot;
 - Komiya positive control: 185 exact snapshot-owned cards.
 
-`checkOwned` and `isCardOwned` remain unchanged. OWN-0A is a dark authority
-input only and corrected no additional visible surface. Owned Library remains
-on its existing snapshot read path.
+OWN-0A did not change visible ownership on its own. OWN-0B now consumes the Set
+through the centralized authenticated ownership selector and authority gate. Owned
+Library remains on its independent OL-0D snapshot read path.
 
 Closeout:
 
 `/docs/OWN-0A_CLOSEOUT.md`
 
+### OWN-0B — Authenticated Ownership Cutover — complete
+
+OWN-0B is merged to `main`, deployed to production, and smoke-tested.
+
+Production files changed:
+
+- `src/App.jsx`
+- `src/services/cardAdapter.js`
+- `src/services/cardService.js`
+
+Effective authenticated ownership is now centralized:
+
+- canonical cards:
+  `force-missing → force-owned → active snapshot canonical ID → missing`;
+- external-set or unknown cards:
+  `force-missing → force-owned → missing`;
+- no authenticated `owned_keys` fallback.
+
+The single authenticated App `checkOwned` closure uses the strict selector.
+SharedBinder keeps its separate share-token `isCardOwned` / `owned_keys` closure
+and remains explicitly out of this cutover.
+
+Authority behavior:
+
+- `ready` — ownership-dependent authenticated surfaces render normally;
+- `loading` — those surfaces are gated; a retained prior Set is not shown;
+- `no_active_batch` — blocked import/onboarding state, not an all-missing collection;
+- `error` / `multiple_active_batches` — fail-closed retry states;
+- retry calls the authority read directly and does not misuse `importEpoch`;
+- the requested `view`, `artistSlug`, and `planId` remain preserved while gated.
+
+Ownership namespace contract:
+
+- `supaRowToCard` marks canonical `cards_effective` cards with
+  `ownershipNamespace: "canonical"`;
+- the currently unwired TCGdex set path marks cards
+  `ownershipNamespace: "external-set"`;
+- absent or unknown namespace fails conservatively to override-only / missing;
+- current canonical caches use `pb9_supa_`; external-set caches use
+  `pb7_cards_`; cache-hit normalization prevents unmarked legacy objects from
+  escaping; Settings cache clearing removes both current and retained legacy
+  prefixes.
+
+Planned Binder verification confirmed both `fetchCardsByIds` and
+`searchCatalogCards` query `cards_effective`, preserve canonical IDs, adapt through
+`supaRowToCard`, and use no card-object cache. No BinderPlan-specific ownership
+stamp or `binderService.js` change was required.
+
+Preview ownership-delta validation:
+
+- 3,295 rendered canonical cards audited;
+- old loose-owned: 1,461;
+- new strict-owned: 1,344;
+- 168 `owned_keys` false-positive verdicts removed;
+- 51 snapshot true-positive verdicts added;
+- net visible change: −117 owned cards;
+- 0 unexplained changes;
+- 0 external-set cards rendered;
+- 125 override-controlled rows remained verdict-stable
+  (96 force-owned, 29 force-missing);
+- every snapshot-positive card not force-missing remained owned.
+
+Komiya Expedition Pidgeot evidence after cutover:
+
+- `ecard1-59` — absent from snapshot, no override, correctly missing;
+- `ecard1-23` — absent from snapshot but intentionally remains owned because an
+  explicit force-owned override is present.
+
+The 17 previously identified noncanonical override rows remain untouched and
+inert: none resolve to `cards`, `cards_effective`, the active snapshot, or a
+currently rendered external-set card ID.
+
+Production validation:
+
+- Vercel Preview build passed;
+- temporary Preview audit instrumentation was removed before merge;
+- production package contains no audit hook;
+- merged to `main`;
+- Vercel production deployment passed;
+- production smoke test passed.
+
+Closeout:
+
+`/docs/OWN-0B_CLOSEOUT.md`
+
 ### Current ownership boundary / next slice
 
 Confirmed current split:
 
-1. **Owned Library** — active snapshot canonical `card_id`; trusted.
-2. **Authenticated collection surfaces** — still use loose `owned_keys` through
-   the existing App `checkOwned` closure.
-3. **SharedBinder** — separate share-token `owned_keys` path; unresolved
-   external ownership boundary.
+1. **Owned Library** — OL-0D active-snapshot read model; trusted enumeration and
+   quantity surface.
+2. **Authenticated collection surfaces** — strict active-snapshot canonical IDs
+   plus exact manual overrides through one centralized App seam.
+3. **SharedBinder** — separate share-token loose `owned_keys` boundary; known and
+   intentionally deferred.
+4. **External-set cards** — none render today; future set-path cards are
+   override-only until a separately validated canonical mapping exists.
 
-OWN-0B is the next ownership slice, but it is **architecture inspection only**
-until the following are resolved:
+Recommended next slice:
 
-- 17 manual overrides outside `cards_effective`;
-- at least two Pokémon GO / TCGdex override IDs;
-- remaining legacy or alternate override namespaces;
-- Pokémon GO set-path cards using a different ID namespace;
-- loading / error / no-snapshot behavior as ownership unavailable, not missing;
-- strict canonical precedence:
-  force-missing → force-owned → active snapshot canonical ID → missing;
-- no `owned_keys` fallback;
-- SharedBinder remains out of the authenticated cutover.
+`OL-2C.1 Image Resilience`
 
-Roadmap after OWN-0B:
+This is the next high-value containment slice because ownership truth is now
+stable enough that missing or incorrect card imagery becomes the clearest archive
+integrity risk. It must preserve the locked rule: never silently substitute another
+printing's image; any cross-language or cross-printing proxy requires explicit
+labeling. After OL-2C.1:
 
-`OL-2C.1 Image Resilience → CAT-0 Catalog Source & Coverage Audit → next
-evidence-backed catalog slice → OWN-1 Artwork vs Printing ownership policy`
+`CAT-0 Catalog Source & Coverage Audit → next evidence-backed catalog slice →
+OWN-1 Artwork vs Printing ownership policy`
 
 Locked ownership principles:
 
@@ -626,19 +713,21 @@ Locked ownership principles:
   negative;
 - artwork-level goal satisfaction, if introduced later, is policy—not
   ownership.
+
 ## Completion tracking
 
-Current authenticated completion counts still flow through the existing App
+Authenticated completion counts flow through the centralized strict App
 `checkOwned` closure:
 
 - Artist hero shows owned/total percentage; Dashboard shows artist progress rows.
+- Binder, Hunt surfaces, Artist Directory, CardModal, and Planned Binder consume
+  the same strict canonical ownership verdict.
 - Counts derive from `visibleCardData`, so hiding TCG Pocket affects totals.
-- Manual overrides are respected.
-- Until OWN-0B, loose `owned_keys` collisions can inflate counts on these
-  surfaces.
-- Owned Library counts are separate and snapshot-authoritative.
-- Do not patch counts surface-by-surface; OWN-0B must change the centralized
-  ownership seam.
+- Exact force-missing overrides precede force-owned overrides, which precede
+  active-snapshot canonical membership.
+- Loose `owned_keys` collisions no longer inflate authenticated counts.
+- Owned Library counts remain separate and snapshot-authoritative through OL-0D.
+- SharedBinder remains intentionally separate on its share-token legacy path.
 
 ## Current repo structure — main branch
 
@@ -693,19 +782,17 @@ RPCs in use:
 
 ## Known limitations / open items
 
-- OWN-0B authenticated ownership cutover has not started. Artist Page, Binder,
-  Dashboard, CardModal, Hunt Board, Artist Directory, and Planned Binder still
-  consume the loose `owned_keys` path.
-- 17 manual overrides use IDs outside `cards_effective`; at least two are
-  Pokémon GO / TCGdex IDs. Do not delete or rewrite them before the OWN-0B
-  namespace and reachability audit.
-- Pokémon GO set-path cards use a different ID space from snapshot canonical
-  IDs and need an explicit narrow policy before cutover.
-- SharedBinder remains on its separate loose share-token ownership path and is
-  not corrected by OWN-0A.
-- Image resilience remains OL-2C.1. Never silently substitute another
-  printing's image; cross-language or cross-printing proxies require explicit
-  labeling.
+- SharedBinder remains on its separate loose share-token `owned_keys` path.
+  This divergence is known and intentionally out of OWN-0B; any future share
+  cutover requires its own authority and compatibility design.
+- The 17 noncanonical legacy override rows remain stored but inert. Do not delete,
+  rewrite, or remap them without evidence-backed namespace and identity work.
+- No external-set / Pokémon GO path renders today. If one is reintroduced, its
+  default ownership is override-only; do not infer snapshot ownership without a
+  separately validated canonical mapping.
+- Image resilience is the next recommended slice, OL-2C.1. Never silently
+  substitute another printing's image; cross-language or cross-printing proxies
+  require explicit labeling.
 - CAT-0 remains a diagnostic catalog-source and coverage audit, not an
   implementation rewrite.
 - The OL-0C catalog index is loaded client-side in stable pages during signed-in
