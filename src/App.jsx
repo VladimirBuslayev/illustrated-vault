@@ -2786,6 +2786,91 @@ function OwnedLibrary({onBack,onUploadCSV,importEpoch}){
   );
 }
 
+// ── OWN-0B: effective ownership (authenticated) ─────────────────────────────
+// Pure and module-scope: shared by the authenticated checkOwned closure (and the
+// Preview delta audit). Precedence: force-missing → force-owned →
+// (canonical ? snapshot membership : missing). External-set / unknown namespaces
+// never consult the snapshot and are never owned via owned_keys. SharedBinder keeps
+// its own isCardOwned closure and is untouched.
+export function effectiveOwned(card, snapshotOwnedIds, manualOwned, manualMissing){
+  if(manualMissing.has(card.id))return false;   // force-missing (both namespaces)
+  if(manualOwned.has(card.id))return true;       // force-owned   (both namespaces)
+  if(card.ownershipNamespace==="canonical")return snapshotOwnedIds.has(card.id);
+  return false;                                  // external-set / unknown → missing
+}
+
+// ── OWN-0B: authority gate screen ────────────────────────────────────
+// Calm, minimal ownership-authority states. GENERIC copy only — backend
+// diagnostics are console-only, never surfaced. States: loading | no_active_batch |
+// error | multiple_active_batches. "ready" is never rendered here (the gate passes
+// the real surface through).
+function OwnershipAuthorityScreen({authority,onImport,onRetry,onSignOut}){
+  const wrap={position:"fixed",inset:0,background:"radial-gradient(ellipse at 50% 110%,#2a0a00 0%,#150400 42%,#030100 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"1rem",padding:"2rem",textAlign:"center"};
+  const eyebrow={fontSize:".62rem",letterSpacing:".22em",textTransform:"uppercase",color:"#8a5a3a",fontWeight:700};
+  const title={fontFamily:"'Playfair Display',serif",fontSize:"1.5rem",color:"#f5ede6",margin:0};
+  const body={fontSize:".88rem",color:"#b79c8c",maxWidth:340,lineHeight:1.5,margin:0};
+  const rowS={display:"flex",gap:".6rem",flexWrap:"wrap",justifyContent:"center",marginTop:".4rem"};
+  const primary={background:"#e8712c",color:"#1a0a02",border:"none",borderRadius:10,padding:".62rem 1.1rem",fontWeight:700,fontSize:".82rem",display:"inline-flex",alignItems:"center",gap:".4rem",cursor:"pointer"};
+  const ghost={background:"transparent",color:"#8a7a70",border:"1px solid #3a2a20",borderRadius:10,padding:".62rem 1.1rem",fontWeight:600,fontSize:".82rem",cursor:"pointer"};
+  if(authority==="loading"){
+    return <div style={wrap}><div style={eyebrow}>Your Vault</div><IcoSpin size={22}/><p style={body}>Checking your collection…</p></div>;
+  }
+  let t,b;
+  if(authority==="no_active_batch"){t="No collection imported yet";b="Import your Collectr CSV to see which cards you own across your artists.";}
+  else if(authority==="multiple_active_batches"){t="Your collection needs attention";b="Ownership is paused as a safety check. Please try again in a moment.";}
+  else{t="Couldn't load your collection";b="Something went wrong. Please try again.";}
+  const showImport=authority==="no_active_batch";
+  return (
+    <div style={wrap}>
+      <div style={eyebrow}>Your Vault</div>
+      <h2 style={title}>{t}</h2>
+      <p style={body}>{b}</p>
+      <div style={rowS}>
+        {showImport
+          ? <button style={primary} onClick={onImport}><IcoUpload/> Import CSV</button>
+          : <button style={primary} onClick={onRetry}><IcoRetry/> Try again</button>}
+        <button style={ghost} onClick={onSignOut}>Sign out</button>
+      </div>
+    </div>
+  );
+}
+
+// ── OWN-0B PREVIEW INSTRUMENTATION (temporary — removed for production) ───────
+// Read-only ownership before/after audit over the real in-memory Sets. Emits a CSV
+// via the existing Blob/download pattern. Entire block removed for production.
+function runOwnDeltaAudit(visibleCardData, ownedKeySet, snapshotOwnedIds, manualOwned, manualMissing){
+  const esc=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
+  const rows=[["card_id","context","old_verdict","new_verdict","override_status","in_snapshot","namespace","reason"]];
+  const counts={owned_keys_false_positive_removed:0,snapshot_true_positive_added:0,external_set_inference_removed:0,unexplained:0,unchanged:0};
+  Object.keys(visibleCardData||{}).forEach(slug=>{
+    (visibleCardData[slug]||[]).forEach(card=>{
+      const oldV=isCardOwned(card,ownedKeySet,manualOwned,manualMissing);
+      const newV=effectiveOwned(card,snapshotOwnedIds,manualOwned,manualMissing);
+      const override=manualMissing.has(card.id)?"force-missing":(manualOwned.has(card.id)?"force-owned":"none");
+      const inSnap=snapshotOwnedIds.has(card.id);
+      const ns=card.ownershipNamespace||"(unset)";
+      let reason;
+      if(oldV===newV)reason="unchanged";
+      else if(override!=="none")reason="unexplained";
+      else if(!oldV&&newV&&ns==="canonical"&&inSnap)reason="snapshot_true_positive_added";
+      else if(oldV&&!newV&&ns==="canonical"&&!inSnap)reason="owned_keys_false_positive_removed";
+      else if(oldV&&!newV&&ns!=="canonical")reason="external_set_inference_removed";
+      else reason="unexplained";
+      counts[reason]=(counts[reason]||0)+1;
+      rows.push([card.id,slug,oldV,newV,override,inSnap,ns,reason]);
+    });
+  });
+  console.log("[OWN-0B delta] counts",counts);
+  const csv="\uFEFF"+rows.map(r=>r.map(esc).join(",")).join("\r\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download=`own-0b-delta-${todayStr()}.csv`;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return counts;
+}
+
 function App(){
   const[view,          setView]         =useState("checking-auth");
   const[artistSlug,    setArtistSlug]   =useState(null);
@@ -2809,14 +2894,15 @@ function App(){
   const[csvStatus,     setCsvStatus]    =useState(null);
   const[syncStatus,    setSyncStatus]   =useState("idle");
   const[importEpoch,   setImportEpoch]  =useState(0);   // OL-1: bumps once per settled CSV-import attempt so a mounted Owned Library can reload against the now-active snapshot
-  // ── OWN-0A: authoritative snapshot ownership read (DARK-LOADED) ──────────────
+  // ── OWN-0B: authoritative snapshot ownership read (LIVE) ─────────────────────
   // The active import snapshot's complete distinct set of matched canonical
-  // card_ids, plus an authority state. Held for validation/telemetry ONLY in this
-  // slice — it is NOT consumed by checkOwned, isCardOwned, overrides, owned_keys,
-  // manual state, or any rendering. OWN-0B is what repoints checkOwned onto this
-  // Set. Authority mirrors the RPC contract: "loading" | "ready" |
-  // "no_active_batch" | "multiple_active_batches" | "error". A non-"ready"
-  // authority is never treated as empty ownership.
+  // card_ids, plus an authority state. As of OWN-0B this Set is CONSUMED: the
+  // authenticated checkOwned closure reads it through effectiveOwned (canonical
+  // ownership == snapshot membership), and snapshotAuthority gates ownership-
+  // dependent rendering via the central authority gate. SharedBinder's separate
+  // closure does not read it. Authority mirrors the RPC contract: "loading" |
+  // "ready" | "no_active_batch" | "multiple_active_batches" | "error". A
+  // non-"ready" authority is never treated as empty ownership — it gates instead.
   const[snapshotOwnedIds,     setSnapshotOwnedIds]     =useState(()=>new Set());
   const[snapshotAuthority,    setSnapshotAuthority]    =useState("loading");
   const[snapshotOwnedBatchId, setSnapshotOwnedBatchId] =useState(null);
@@ -2860,44 +2946,57 @@ function App(){
     return()=>subscription.unsubscribe();
   },[]);
 
-  // ── OWN-0A: dark-load / refresh the authoritative ownership read ─────────────
-  // Runs on sign-in (user) and after every settled CSV import (importEpoch).
-  // Batch-bound replacement semantics: a newer request always supersedes an older
-  // in-flight one (snapshotOwnedReqRef); on a "ready" response the Set is REPLACED
-  // wholesale for its batchId — never merged, never retained across a batch change.
-  // Signed-out clears the dark state. Nothing here is consumed by rendering.
-  useEffect(()=>{
-    if(!user){setSnapshotOwnedIds(new Set());setSnapshotOwnedBatchId(null);setSnapshotAuthority("loading");return;}
+  // ── OWN-0B: authoritative ownership read + retry (LIVE — consumed by render) ─
+  // Stable callback shared by the sign-in/import effect and the AuthorityScreen
+  // "Try again". Preserves OWN-0A semantics: supersession guard, "loading" on entry,
+  // batch-bound wholesale replacement on "ready", terminal invalidation on
+  // non-ready/error. Retry calls this DIRECTLY and NEVER bumps importEpoch. Backend
+  // diagnostics are console-only.
+  const readOwnershipAuthority=useCallback(async()=>{
     const reqId=++snapshotOwnedReqRef.current;
-    let alive=true;
     setSnapshotAuthority("loading");
-    (async()=>{
-      try{
-        const res=await fetchActiveSnapshotOwnedCardIds();
-        if(!alive||reqId!==snapshotOwnedReqRef.current)return; // superseded — do not commit
-        if(res.state==="ready"){
-          setSnapshotOwnedIds(res.ownedCardIds);   // strict wrapper returns a Set of canonical card_ids
-          setSnapshotOwnedBatchId(res.batchId);
-          setSnapshotAuthority("ready");
-        }else if(res.state==="no_active_batch"){
-          setSnapshotOwnedIds(new Set());
-          setSnapshotOwnedBatchId(null);
-          setSnapshotAuthority("no_active_batch");
-        }else{ // "multiple_active_batches" | "error" — terminal non-ready: invalidate stale data
-          setSnapshotOwnedIds(new Set());
-          setSnapshotOwnedBatchId(null);
-          setSnapshotAuthority(res.state==="multiple_active_batches"?"multiple_active_batches":"error");
-        }
-      }catch(e){
-        if(!alive||reqId!==snapshotOwnedReqRef.current)return;
-        console.error("[OWN-0A] authoritative ownership read failed",e);
-        setSnapshotOwnedIds(new Set());        // thrown/transport error: invalidate stale data
+    try{
+      const res=await fetchActiveSnapshotOwnedCardIds();
+      if(reqId!==snapshotOwnedReqRef.current)return; // superseded — do not commit
+      if(res.state==="ready"){
+        setSnapshotOwnedIds(res.ownedCardIds);   // strict wrapper returns a Set of canonical card_ids
+        setSnapshotOwnedBatchId(res.batchId);
+        setSnapshotAuthority("ready");
+      }else if(res.state==="no_active_batch"){
+        setSnapshotOwnedIds(new Set());
         setSnapshotOwnedBatchId(null);
-        setSnapshotAuthority("error");
+        setSnapshotAuthority("no_active_batch");
+      }else{ // "multiple_active_batches" | "error"
+        if(res.state==="error"){
+          // OWN-0B: surface the returned error-state diagnostics (console-only; never shown in the UI).
+          console.error("[OWN-0B] authoritative ownership read returned error",{reason:res.reason,rpcCode:res.rpcCode,rpcDetails:res.rpcDetails,rpcHint:res.rpcHint,rpcMessage:res.rpcMessage});
+        }
+        setSnapshotOwnedIds(new Set());
+        setSnapshotOwnedBatchId(null);
+        setSnapshotAuthority(res.state==="multiple_active_batches"?"multiple_active_batches":"error");
       }
-    })();
-    return()=>{alive=false;};
-  },[user,importEpoch]);
+    }catch(e){
+      if(reqId!==snapshotOwnedReqRef.current)return;
+      console.error("[OWN-0B] authoritative ownership read failed",e);
+      setSnapshotOwnedIds(new Set());
+      setSnapshotOwnedBatchId(null);
+      setSnapshotAuthority("error");
+    }
+  },[]);
+
+  // OWN-0B: key the read to the user id, not the whole user object, so a
+  // TOKEN_REFRESHED-driven setUser(session.user) does not retrigger the read/gate.
+  const ownershipUserId=user?.id??null;
+  useEffect(()=>{
+    if(ownershipUserId===null){
+      snapshotOwnedReqRef.current++;              // supersede any signed-in request still in flight
+      setSnapshotOwnedIds(new Set());
+      setSnapshotOwnedBatchId(null);
+      setSnapshotAuthority("loading");
+      return;
+    }
+    readOwnershipAuthority();
+  },[ownershipUserId,importEpoch,readOwnershipAuthority]);
 
   // ── NAV-1A: write side — surface → URL ───────────────────────────────────────
   // Whenever `view` settles on an addressable surface, push it into the URL.
@@ -3139,9 +3238,11 @@ function App(){
     // adds the pb8 key (Gate 3D bumped pb7→pb8 in cardService; without this
     // line "Clear card cache" silently no-ops on the live caches).
     effectiveRoster.forEach(e=>{
-      lsDel(`pb6_cards_${toSlug(e.name)}`);            // old TCGdex cache
-      lsDel(`pb7_supa_${toSlug(e.name)}`);             // stale Gate 2 ILIKE cache
-      lsDel(`pb8_supa_${e.artistId??toSlug(e.name)}`); // current Supabase cache (Gate 3D key)
+      lsDel(`pb6_cards_${toSlug(e.name)}`);             // old TCGdex set cache (retain)
+      lsDel(`pb7_cards_${toSlug(e.name)}`);             // OWN-0B live TCGdex set cache
+      lsDel(`pb7_supa_${toSlug(e.name)}`);             // stale Gate 2 ILIKE cache (retain)
+      lsDel(`pb8_supa_${e.artistId??toSlug(e.name)}`); // old Gate 3D Supabase cache (retain)
+      lsDel(`pb9_supa_${e.artistId??toSlug(e.name)}`); // OWN-0B live Supabase artist cache
     });
     // Purge per-card fallback image cache so stale "not found" results
     // don't persist after TCGdex gains images for previously imageless cards.
@@ -3183,7 +3284,15 @@ function App(){
     return out;
   },[cardData,hideTcgPocket]);
 
-  const checkOwned=useCallback(card=>isCardOwned(card,ownedKeySet,manualOwned,manualMissing),[ownedKeySet,manualOwned,manualMissing]);
+  const checkOwned=useCallback(card=>effectiveOwned(card,snapshotOwnedIds,manualOwned,manualMissing),[snapshotOwnedIds,manualOwned,manualMissing]);
+
+  // ── OWN-0B PREVIEW INSTRUMENTATION (temporary — removed for production) ─────
+  useEffect(()=>{
+    if(typeof window==="undefined")return;
+    if(/(^|\.)illustratedvault\.com$/i.test(window.location.hostname))return; // never on the production domain
+    window.__ownDeltaExport=()=>runOwnDeltaAudit(visibleCardData,ownedKeySet,snapshotOwnedIds,manualOwned,manualMissing);
+    return()=>{try{delete window.__ownDeltaExport;}catch(e){window.__ownDeltaExport=undefined;}};
+  },[visibleCardData,ownedKeySet,snapshotOwnedIds,manualOwned,manualMissing]);
 
   const goTo=useCallback((target)=>{
     if(target==="landing"){setView("landing");return;}
@@ -3207,6 +3316,19 @@ function App(){
   );
 
   if(view==="landing")return<LandingPage user={user} onEnter={()=>setView("dashboard")} onSendLink={handleSendLink} onVerifyCode={handleVerifyCode} onSignOut={handleSignOut}/>;
+
+  // ── OWN-0B: central authority gate ─────────────────────────────────
+  // Ownership-dependent authenticated surfaces do not render until the authoritative
+  // snapshot read is "ready". Short-circuits the surface (no banner); the retained
+  // prior Set is never shown while loading. Exempt: owned-library (own read model)
+  // and the plans index (no ownership). view / artistSlug / planId are left untouched
+  // so the surface restores automatically once ready.
+  if(user&&snapshotAuthority!=="ready"&&view!=="owned-library"&&view!=="plans"){
+    return(<>
+      <OwnershipAuthorityScreen authority={snapshotAuthority} onImport={()=>fileRef.current&&fileRef.current.click()} onRetry={readOwnershipAuthority} onSignOut={handleSignOut}/>
+      <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
+    </>);
+  }
 
   if(view==="dashboard")return(
     <>
