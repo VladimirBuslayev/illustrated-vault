@@ -40,9 +40,9 @@ async function fetchArtistCards(entry) {
   // ── Set path ────────────────────────────────────────────────────────────────
   // Set-based entries (e.g. Pokémon GO promo set) keep the TCGdex path.
   if (entry.isSet) {
-    const ck = `pb6_cards_${toSlug(entry.name)}`;
+    const ck = `pb7_cards_${toSlug(entry.name)}`;  // OWN-0B: bumped pb6->pb7 to invalidate pre-marker set caches
     const cached = lsGet(ck);
-    if (cached && cached.ts && Date.now() - cached.ts < CACHE_TTL) return cached.cards;
+    if (cached && cached.ts && Date.now() - cached.ts < CACHE_TTL) return cached.cards.map(c => c.ownershipNamespace ? c : { ...c, ownershipNamespace: "external-set" }); // OWN-0B: normalize cache-hit
     const rawBriefs = await fetchCardBriefs(entry);
     const seen = new Set();
     const briefs = rawBriefs.filter(b => { if (!b || !b.id || seen.has(b.id)) return false; seen.add(b.id); return true; });
@@ -54,17 +54,18 @@ async function fetchArtistCards(entry) {
     }
     if (briefs.length > 0 && fullCards.length === 0) throw new Error(`Found ${briefs.length} cards but all detail fetches failed — likely rate-limited`);
     if (failCount > 0) throw new Error(`${failCount} of ${briefs.length} card detail fetches failed — likely rate-limited, retry shortly`);
+    fullCards.forEach(c => { c.ownershipNamespace = "external-set"; }); // OWN-0B: external-set namespace
     fullCards.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     lsSet(ck, { cards: fullCards, ts: Date.now() });
     return fullCards;
   }
 
   // ── Artist path ─────────────────────────────────────────────────────────────
-  // Cache key: pb8 prefix (invalidates all pb7 ILIKE caches from Gate 2).
+  // Cache key: pb9 prefix (OWN-0B; bumped pb8->pb9 to invalidate pre-marker Supabase caches).
   // Suffix: artistId slug when available (stable), else display-name slug.
-  const ck = `pb8_supa_${entry.artistId ?? toSlug(entry.name)}`;
+  const ck = `pb9_supa_${entry.artistId ?? toSlug(entry.name)}`;
   const cached = lsGet(ck);
-  if (cached && cached.ts && Date.now() - cached.ts < CACHE_TTL) return cached.cards;
+  if (cached && cached.ts && Date.now() - cached.ts < CACHE_TTL) return cached.cards.map(c => c.ownershipNamespace ? c : { ...c, ownershipNamespace: "canonical" }); // OWN-0B: normalize cache-hit
 
   // Build the Supabase query.
   // Order of branches:
