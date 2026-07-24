@@ -683,7 +683,7 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 
         <div style={{display:"flex",gap:"1rem",marginBottom:"1.25rem"}}>
           <div style={{flexShrink:0,width:128}}>
-            {displayLg?<img key={modalImg.identityKey} src={displayLg} alt={card.name} decoding="async" onClick={()=>setZoomed(true)} style={{width:"100%",borderRadius:8,cursor:"zoom-in"}} onError={modalImg.onError} onLoad={modalImg.onLoad}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{modalImg.state==="loading"?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{modalImg.state==="loading"?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
+            {displayLg?<img key={modalImg.renderKey} src={displayLg} alt={card.name} decoding="async" onClick={()=>setZoomed(true)} style={{width:"100%",borderRadius:8,cursor:"zoom-in"}} onError={modalImg.onError} onLoad={modalImg.onLoad}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{modalImg.state==="loading"?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{modalImg.state==="loading"?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
             {modalImg.tier==="ptcgio-verified"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Pokémon TCG API — verified exact printing.</div>}
           </div>
           <div style={{flex:1,minWidth:0}}>
