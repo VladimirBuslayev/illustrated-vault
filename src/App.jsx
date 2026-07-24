@@ -23,6 +23,12 @@ import { getBestPrice, sortCards }                        from './utils/sort.js'
 import { fmtPrice, todayStr }                             from './utils/format.js';
 import { imgSmall, imgLarge }                             from './utils/imageUrl.js';
 
+// ── OL-2C.1: the single card-image resilience seam ───────────────────────────
+// All fallback source selection lives in CardImage.jsx. App.jsx has NO direct
+// imageService import: imgSmall/imgLarge are retained here only for editorial
+// candidate PREFILTERS (:278, :839, :2070), which remain primary-image-gated.
+import { CardImage, useCardImage }                         from './components/CardImage.jsx';
+
 // ── Services ──────────────────────────────────────────────────────────────────
 import { supabase }                                       from './services/supabaseClient.js';
 import { loadUserData, saveCollection, saveOverride, savePricePoint }
@@ -32,7 +38,6 @@ import { fetchTrackedArtistTiers, fetchArtistIdentities,
          searchIllustratorDirectory, addArtistToArchive,
          updateArtistTier, removeArtistFromArchive } from './services/artistService.js'; // A-D2b0 + A-D2c + A-D2d
 import { fetchArtistCards }                               from './services/cardService.js';
-import { fetchFallbackImage, buildLimitlessGuess }        from './services/imageService.js';
 import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
          fetchBinderCardIds, addCardToBinder, removeCardFromBinder,
          searchCatalogCards, fetchCardsByIds } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B
@@ -377,7 +382,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
             <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"1.75rem",marginBottom:"1.5rem"}}>
               <div onClick={()=>onCardClick&&onCardClick(vaultFeature.card)} style={{position:"relative",flexShrink:0,cursor:"pointer",width:"clamp(118px,26vw,164px)"}}>
                 <div style={{position:"absolute",inset:"-16%",borderRadius:"50%",background:"radial-gradient(circle,rgba(139,108,216,0.20) 0%,rgba(207,84,23,0.07) 55%,transparent 78%)",filter:"blur(14px)",pointerEvents:"none"}}/>
-                <img src={imgLarge(vaultFeature.card)||imgSmall(vaultFeature.card)} alt={vaultFeature.card.name} loading="lazy" decoding="async" style={{position:"relative",display:"block",width:"100%",height:"auto",borderRadius:10,border:"1px solid rgba(255,255,255,0.08)",boxShadow:"0 10px 30px rgba(0,0,0,0.5)"}}/>
+                <CardImage card={vaultFeature.card} size="large" surface="dashboard-hero" variant="inline" loadingAttr="lazy" missing={<IcoNoImage size={22}/>} className="iv-frame-57" style={{position:"relative",display:"block",width:"100%",height:"auto",borderRadius:10,border:"1px solid rgba(255,255,255,0.08)",boxShadow:"0 10px 30px rgba(0,0,0,0.5)"}}/>
               </div>
               <div style={{flex:1,minWidth:200}}>
                 <div style={{fontSize:".6rem",letterSpacing:".2em",color:"#c8925a",fontWeight:700,marginBottom:".55rem"}}>{vaultFeature.label}</div>
@@ -403,7 +408,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
                   </div>
                   {vaultQueue.map(q=>(
                     <button key={q.card.id} className="vault-queue-item" onClick={()=>setHeroPick(q.card.id)}>
-                      <img src={imgSmall(q.card)} alt={q.card.name} loading="lazy" decoding="async" style={{width:34,height:"auto",borderRadius:4,flexShrink:0,display:"block"}}/>
+                      <CardImage card={q.card} size="small" surface="dashboard-queue" variant="inline" loadingAttr="lazy" missing={<IcoNoImage size={12}/>} className="iv-frame-57 iv-img" style={{width:34,height:"auto",borderRadius:4,flexShrink:0,display:"block"}}/>
                       <div style={{minWidth:0}}>
                         <div style={{fontSize:".7rem",color:"#c8c8e0",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{q.card.name}</div>
                         <div style={{fontSize:".58rem",color:"#54547a",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{q.artist.name}</div>
@@ -496,7 +501,7 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
                 return(
                   <div key={card.id} className="wanted-row" onClick={()=>onCardClick&&onCardClick(card)} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".6rem .75rem",cursor:"pointer"}}>
                     <div style={{fontSize:".7rem",color:"#3a3a5a",fontWeight:700,flexShrink:0,width:18}}>{i+1}</div>
-                    {sm&&<img src={sm} alt={card.name} style={{width:38,height:"auto",borderRadius:4,filter:"grayscale(0.15)",flexShrink:0}}/>}
+                    <CardImage card={card} size="small" surface="dashboard-wanted" variant="inline" missing={<IcoNoImage size={12}/>} className="iv-frame-57 iv-img" style={{width:38,height:"auto",borderRadius:4,filter:"grayscale(0.15)",flexShrink:0}}/>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:".85rem",color:"#e8e8f4",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
                       <div style={{fontSize:".67rem",color:"#6b6b90"}}>{artist.name} · {card.set?.name}</div>
@@ -593,24 +598,12 @@ function Dashboard({cardData,checkOwned,favorites,user,intentMap,onGoBinder,onUp
 }
 
 // ── CARD TILE ──────────────────────────────────────────────────────────────────
-const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissing,isFavorite,onCardClick,onToggleFavorite,readOnly,intentStatus}){
+const CardTile=React.memo(function CardTile({card,owned,manualOwned,manualMissing,isFavorite,onCardClick,onToggleFavorite,readOnly,intentStatus,auditSurface}){
   const badge=owned?{color:"#22c55e",label:"✓"}:null;
-  const sm=imgSmall(card);
-  const[fallback,setFallback]=useState(undefined); // undefined=not tried yet, false=tried & missing, {small,large}=found
-  const[limitlessFailed,setLimitlessFailed]=useState(false);
-  useEffect(()=>{
-    if(sm||fallback!==undefined)return;
-    let cancelled=false;
-    fetchFallbackImage(card.id).then(r=>{if(!cancelled)setFallback(r);});
-    return()=>{cancelled=true;};
-  },[sm,card.id]);
-  const limitlessGuess=fallback===false?buildLimitlessGuess(card):null;
-  const displaySrc=sm||(fallback&&fallback.small)||(limitlessGuess&&!limitlessFailed?limitlessGuess.small:null);
-  const isUnverified=!sm&&!(fallback&&fallback.small)&&!!displaySrc;
   return(
     <div className={`card-tile ${owned?"owned":"missing"}`}>
       <div onClick={()=>onCardClick(card)} style={{display:"block"}}>
-        {displaySrc?<img src={displaySrc} alt={card.name} loading="lazy" decoding="async" onError={isUnverified?()=>setLimitlessFailed(true):undefined}/>:<div className="card-blank"><div className="blank-inner">{fallback===undefined?<IcoSpin/>:<IcoNoImage/>}<span>{card.name}</span></div></div>}
+        <CardImage card={card} size="small" surface={auditSurface||"card-tile"} variant="card-blank" loadingAttr="lazy" spinner={<IcoSpin/>} missing={<IcoNoImage/>}/>
       </div>
       {badge&&<div style={{position:"absolute",top:3,right:3,background:badge.color,borderRadius:"50%",width:14,height:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700,pointerEvents:"none"}}>{badge.label}</div>}
       {!readOnly&&!owned&&(intentStatus==="hunting"||intentStatus==="want")&&<div title={`Hunt status: ${intentStatus}`} style={{position:"absolute",top:3,left:3,width:9,height:9,borderRadius:"50%",background:intentStatus==="hunting"?"#9b7fe8":"transparent",border:intentStatus==="hunting"?"1.5px solid rgba(7,7,15,0.85)":"1.5px solid #9b7fe8",boxShadow:"0 1px 4px rgba(0,0,0,0.6)",pointerEvents:"none"}}/>}
@@ -662,21 +655,10 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
   const ebayQ=encodeURIComponent(`${card.name} ${card.localId||""} ${(card.set?.name||"").replace(/&/g,"and")} pokemon card near mint`);
   const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Complete=1&LH_Sold=1`;
   const tcgplayerUrl=`https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q=${encodeURIComponent(card.name+" "+(card.set?.name||""))}`;
-  const lg=imgLarge(card);
-  const[modalFallback,setModalFallback]=useState(undefined);
-  const[modalLimitlessFailed,setModalLimitlessFailed]=useState(false);
   const[zoomed,setZoomed]=useState(false);
-  useEffect(()=>{
-    setModalFallback(undefined);
-    setModalLimitlessFailed(false);
-    if(lg)return;
-    let cancelled=false;
-    fetchFallbackImage(card.id).then(r=>{if(!cancelled)setModalFallback(r);});
-    return()=>{cancelled=true;};
-  },[lg,card.id]);
-  const modalLimitlessGuess=modalFallback===false?buildLimitlessGuess(card):null;
-  const displayLg=lg||(modalFallback&&(modalFallback.large||modalFallback.small))||(modalLimitlessGuess&&!modalLimitlessFailed?modalLimitlessGuess.large:null);
-  const sourceTier=lg?"tcgdex":((modalFallback&&(modalFallback.large||modalFallback.small))?"ptcgio":(displayLg?"limitless":null));
+  // OL-2C.1: single resilience seam. Limitless is not used at runtime.
+  const modalImg=useCardImage(card,{size:"large",surface:"card-modal"});
+  const displayLg=modalImg.src;
 
   useEffect(()=>{if(readOnly||!card||!price)return;const td=todayStr();if(!cardHistory.find(h=>h.date===td))onRecordPrice(card.id,price.amount,td);},[card&&card.id]);
   useEffect(()=>{const fn=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",fn);return()=>window.removeEventListener("keydown",fn);},[onClose]);
@@ -701,9 +683,8 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 
         <div style={{display:"flex",gap:"1rem",marginBottom:"1.25rem"}}>
           <div style={{flexShrink:0,width:128}}>
-            {displayLg?<img src={displayLg} alt={card.name} onClick={()=>setZoomed(true)} style={{width:"100%",borderRadius:8,cursor:"zoom-in"}} onError={sourceTier==="limitless"?()=>setModalLimitlessFailed(true):undefined}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{!lg&&modalFallback===undefined?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{!lg&&modalFallback===undefined?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
-            {sourceTier==="ptcgio"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Pokémon TCG API archive (TCGdex has none for this card)</div>}
-            {sourceTier==="limitless"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Limitless TCG — unverified match, TCGdex has none for this card</div>}
+            {displayLg?<img key={modalImg.renderKey} src={displayLg} alt={card.name} decoding="async" onClick={()=>setZoomed(true)} style={{width:"100%",borderRadius:8,cursor:"zoom-in"}} onError={modalImg.onError}/>:<div className="card-blank" style={{borderRadius:8}}><div className="blank-inner">{modalImg.state==="loading"?<IcoSpin size={26}/>:<IcoNoImage size={26}/>}<span style={{fontSize:".68rem"}}>{modalImg.state==="loading"?"Checking for an image…":<>No image available<br/>for this card</>}</span></div></div>}
+            {modalImg.tier==="ptcgio-verified"&&<div style={{fontSize:".6rem",color:"#4a4a70",marginTop:4,textAlign:"center"}}>Image via Pokémon TCG API — verified exact printing.</div>}
           </div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{marginBottom:".75rem"}}>
@@ -864,7 +845,7 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
         <div style={{position:"absolute",inset:0,zIndex:1,background:"linear-gradient(to right, #07070f 36%, rgba(7,7,15,0.75) 56%, transparent 100%)"}}/>
         {heroCards.map((card,i)=>{
           const p=POSES[i];
-          return(<img key={card.id} src={imgSmall(card)} alt={card.name} style={{position:"absolute",zIndex:0,right:p.r,top:p.t,width:p.w,height:"auto",borderRadius:9,transform:`rotate(${p.rot})`,opacity:p.op,boxShadow:`0 14px 44px rgba(0,0,0,0.72), 0 0 28px ${accent}28`,filter:"brightness(0.88)"}}/>);
+          return(<CardImage key={card.id} card={card} size="small" surface="artist-collage" variant="decorative" alt="" aria-hidden="true" style={{position:"absolute",zIndex:0,right:p.r,top:p.t,width:p.w,height:"auto",borderRadius:9,transform:`rotate(${p.rot})`,opacity:p.op,boxShadow:`0 14px 44px rgba(0,0,0,0.72), 0 0 28px ${accent}28`,filter:"brightness(0.88)"}}/>);
         })}
         <div style={{position:"relative",zIndex:2,maxWidth:"63%",minWidth:170}}>
           {meta.tags&&<div style={{fontSize:".58rem",letterSpacing:".16em",color:accent,fontWeight:800,marginBottom:".55rem",opacity:.85,lineHeight:1.6}}>{meta.tags}</div>}
@@ -922,7 +903,7 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
                     return(
                       <div key={card.id} onClick={()=>onCardClick(card)} style={{flexShrink:0,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:5,width:90,paddingBottom:4}}>
                         <div style={{borderRadius:9,overflow:"hidden",boxShadow:isOwned?`0 0 0 2px ${accent}, 0 6px 22px rgba(0,0,0,0.55)`:"0 4px 14px rgba(0,0,0,0.45)",transition:"transform .15s,box-shadow .15s"}} onMouseEnter={e=>{e.currentTarget.style.transform="scale(1.05)";e.currentTarget.style.boxShadow=isOwned?`0 0 0 2px ${accent}, 0 10px 30px rgba(0,0,0,0.7)`:"0 8px 24px rgba(0,0,0,0.65)";}} onMouseLeave={e=>{e.currentTarget.style.transform="scale(1)";e.currentTarget.style.boxShadow=isOwned?`0 0 0 2px ${accent}, 0 6px 22px rgba(0,0,0,0.55)`:"0 4px 14px rgba(0,0,0,0.45)";}}>
-                          {sm&&<img src={sm} alt={card.name} style={{display:"block",width:90,height:"auto",filter:isOwned?"brightness(1.05)":"grayscale(0.2) brightness(0.85)"}}/>}
+                          <CardImage card={card} size="small" surface="artist-notable" variant="inline" missing={<IcoNoImage size={18}/>} className="iv-frame-57 iv-img" style={{display:"block",width:90,height:"auto",filter:isOwned?"brightness(1.05)":"grayscale(0.2) brightness(0.85)"}}/>
                         </div>
                         <span style={{fontSize:".58rem",color:"#6b6b90",fontWeight:isOwned?600:500,textAlign:"center",lineHeight:1.2,width:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isOwned?"✓ ":""}{card.name}</span>
                       </div>
@@ -982,7 +963,7 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
 
 
 // ── ARTIST SECTION ─────────────────────────────────────────────────────────────
-function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader,intentMap,soloSections,startCollapsed}){
+function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader,intentMap,soloSections,startCollapsed,auditSurface}){
   const isSecondary=entry.tier==="secondary";
   // B-1: startCollapsed is opt-in (default false) so only the Binder's own
   // ArtistSection calls it — ArtistPage (noHeader=true, always shows its one
@@ -1020,10 +1001,10 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
       )}
       {(open||noHeader)&&(
         groupedBySet?(
-          <>{viewMode==="hunting"&&(groupedBySet.huntingCount+groupedBySet.wantCount===0)&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>No hunt targets for this artist yet — mark a missing card as Hunting and it will gather here.</div>)}{soloSections&&viewMode==="missing"&&groupedBySet.missingCount===0&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>Complete — no missing cards for this artist.</div>)}{soloSections&&viewMode==="owned"&&groupedBySet.ownedCount===0&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>No owned cards yet for this artist.</div>)}{(viewMode==="hunting"?[{key:"hunt",label:"HUNTING",count:groupedBySet.huntingCount,groups:groupedBySet.hunting,ownedFlag:false,hdr:"#b9a3f2",hdrLine:"rgba(155,127,232,0.25)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"want",label:"ON THE LIST",count:groupedBySet.wantCount,groups:groupedBySet.want,ownedFlag:false,hdr:"#8888b8",hdrLine:"rgba(136,136,184,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]:viewMode==="missing"?(soloSections?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]:[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]):(soloSections?[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}])).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}</div></div>))}</div>))}</>
+          <>{viewMode==="hunting"&&(groupedBySet.huntingCount+groupedBySet.wantCount===0)&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>No hunt targets for this artist yet — mark a missing card as Hunting and it will gather here.</div>)}{soloSections&&viewMode==="missing"&&groupedBySet.missingCount===0&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>Complete — no missing cards for this artist.</div>)}{soloSections&&viewMode==="owned"&&groupedBySet.ownedCount===0&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>No owned cards yet for this artist.</div>)}{(viewMode==="hunting"?[{key:"hunt",label:"HUNTING",count:groupedBySet.huntingCount,groups:groupedBySet.hunting,ownedFlag:false,hdr:"#b9a3f2",hdrLine:"rgba(155,127,232,0.25)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"want",label:"ON THE LIST",count:groupedBySet.wantCount,groups:groupedBySet.want,ownedFlag:false,hdr:"#8888b8",hdrLine:"rgba(136,136,184,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]:viewMode==="missing"?(soloSections?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]:[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]):(soloSections?[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}])).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly} auditSurface={auditSurface}/>)}</div></div>))}</div>))}</>
         ):(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>
-            {displayCards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly}/>)}
+            {displayCards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly} auditSurface={auditSurface}/>)}
           </div>
         )
       )}
@@ -1368,7 +1349,7 @@ function SharedBinder({token}){
           const isLoading=loadingSet.has(slug),err=errors[slug];
           if(isLoading&&!cards.length)return<div key={entry.name} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".6rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading {entry.name}…</div>;
           if(err||!cards.length)return null;
-          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={()=>{}} searchQuery={search} sortBy={sortBy} viewMode={viewMode} readOnly/>;
+          return<ArtistSection key={entry.name} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={()=>{}} searchQuery={search} sortBy={sortBy} viewMode={viewMode} readOnly auditSurface="shared-binder-tile"/>;
         })}
         {search&&!visibleArtists.some(entry=>{const cards=visibleCardData[toSlug(entry.name)]||[];const q=search.toLowerCase();return cards.some(c=>(c.name||"").toLowerCase().includes(q));})&&(
           <div style={{textAlign:"center",padding:"3rem 1rem",color:"#6b6b90",fontSize:".875rem"}}>No cards matching "{search}"</div>
@@ -1527,7 +1508,7 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,rost
                         return(
                           <div key={card.id} onClick={()=>onCardClick(card)} style={{cursor:"pointer"}}>
                             <div className="card-tile" style={{marginBottom:".4rem"}}>
-                              {src?<img src={src} alt={card.name} loading="lazy" decoding="async" style={{width:"100%",height:"auto",display:"block",borderRadius:6}}/>:<div className="card-blank"><div className="blank-inner"><IcoNoImage/><span>{card.name}</span></div></div>}
+                              <CardImage card={card} size="large" surface="hunt-board-grid" variant="card-blank" loadingAttr="lazy" spinner={<IcoSpin/>} missing={<IcoNoImage/>} style={{width:"100%",height:"auto",display:"block",borderRadius:6}}/>
                             </div>
                             <div style={{fontSize:".76rem",color:"#e8e8f4",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
                             <div style={{fontSize:".64rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{g.artist}</div>
@@ -1542,7 +1523,7 @@ function HuntBoard({visibleCardData,intentMap,checkOwned,onCardClick,onBack,rost
                       const sm=imgSmall(card);
                       return(
                         <div key={card.id} className="wanted-row" onClick={()=>onCardClick(card)} style={{display:"flex",alignItems:"center",gap:".7rem",padding:".5rem .6rem",cursor:"pointer",borderRadius:10}}>
-                          {sm&&<img src={sm} alt={card.name} style={{width:38,height:"auto",borderRadius:4,flexShrink:0}}/>}
+                          <CardImage card={card} size="small" surface="hunt-board-row" variant="inline" missing={<IcoNoImage size={12}/>} className="iv-frame-57 iv-img" style={{width:38,height:"auto",borderRadius:4,flexShrink:0}}/>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:".82rem",fontWeight:700,color:"#e8e8f4",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
                             <div style={{fontSize:".64rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{g.artist} · {(card.set&&card.set.name)||"—"}{card.localId?` · #${card.localId}`:""}{card.rarity?` · ${card.rarity}`:""}</div>
@@ -1597,7 +1578,7 @@ function HuntShow({visibleCardData,intentMap,checkOwned,onCardClick,onBack,roste
       {items.map(({card,artist})=>(
         <div key={card.id} onClick={()=>onCardClick(card)} style={{cursor:"pointer"}}>
           <div className="card-tile" style={{marginBottom:".4rem"}}>
-            <img src={imgLarge(card)||imgSmall(card)} alt={card.name} loading="lazy" decoding="async" style={{width:"100%",height:"auto",display:"block",borderRadius:6}}/>
+            <CardImage card={card} size="large" surface="hunt-show" variant="card-blank" loadingAttr="lazy" spinner={<IcoSpin/>} missing={<IcoNoImage/>} style={{width:"100%",height:"auto",display:"block",borderRadius:6}}/>
           </div>
           <div style={{fontSize:".76rem",color:"#e8e8f4",fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
           <div style={{fontSize:".64rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{artist}</div>
@@ -1921,7 +1902,7 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
                     const sm=imgSmall(card);
                     return(
                       <div key={card.id} className="wanted-row" onClick={()=>onCardClick(card)} style={{display:"flex",alignItems:"center",gap:".65rem",padding:".45rem .55rem",cursor:"pointer"}}>
-                        {sm?<img src={sm} alt={card.name} loading="lazy" decoding="async" style={{width:34,height:"auto",borderRadius:4,flexShrink:0}}/>:<div style={{width:34,height:47,borderRadius:4,background:"#13131f",border:"1px solid #1e1e35",flexShrink:0}}/>}
+                        <CardImage card={card} size="small" surface="planned-binder-search" variant="inline" loadingAttr="lazy" missing={<IcoNoImage size={12}/>} className="iv-frame-57 iv-img" style={{width:34,height:"auto",borderRadius:4,flexShrink:0}}/>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:".8rem",fontWeight:600,color:"#e8e8f4",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
                           <div style={{fontSize:".62rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(card.set&&card.set.name)||"—"}{card.localId?` · #${card.localId}`:""}{card.illustrator?` · ${card.illustrator}`:""}</div>
@@ -2215,7 +2196,7 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
                         {a.picks.map(c=>{
                           const sm=imgSmall(c);
                           if(!sm)return null;
-                          return<img key={c.id} src={sm} alt={c.name} loading="lazy" onError={e=>{e.currentTarget.style.display="none";}} style={{width:54,height:"auto",borderRadius:5,background:"#1a1a2e"}}/>;
+                          return<CardImage key={c.id} card={c} size="small" surface="artist-directory-preview" variant="inline" loadingAttr="lazy" missing={<IcoNoImage size={14}/>} className="iv-frame-57 iv-img" style={{width:54,height:"auto",borderRadius:5,background:"#1a1a2e"}}/>;
                         })}
                       </div>
                     )}
@@ -2245,31 +2226,19 @@ function ArtistDirectory({visibleCardData,checkOwned,loadingSet,errors,onOpenArt
 // intent, favorites, or binder state. See OWNED_LIBRARY_V0_SPEC_v2.md.
 const OL_EMPTY_SET=new Set();
 
-// Catalog-backed tile: interactive button, reuses the app-wide image fallback
-// chain (TCGdex → pokemontcg.io → Limitless guess), quantity badge, and an
-// accessible name that always includes quantity.
+// Catalog-backed tile: interactive button, reuses the app-wide image
+// resilience seam (OL-2C.1: exact TCGdex primary → one retry → verified exact
+// Pokémon TCG API fallback → one retry → neutral unavailable; Limitless is not
+// part of runtime selection), quantity badge, and an accessible name that
+// always includes quantity.
 const OwnedLibraryCardButton=React.memo(function OwnedLibraryCardButton({card,quantity,onOpen}){
-  const sm=imgSmall(card);
-  const[fallback,setFallback]=useState(undefined);
-  const[limitlessFailed,setLimitlessFailed]=useState(false);
-  useEffect(()=>{
-    if(sm||fallback!==undefined)return;
-    let cancelled=false;
-    fetchFallbackImage(card.id).then(r=>{if(!cancelled)setFallback(r);});
-    return()=>{cancelled=true;};
-  },[sm,card.id]);
-  const limitlessGuess=fallback===false?buildLimitlessGuess(card):null;
-  const displaySrc=sm||(fallback&&fallback.small)||(limitlessGuess&&!limitlessFailed?limitlessGuess.small:null);
-  const isUnverified=!sm&&!(fallback&&fallback.small)&&!!displaySrc;
   const setName=(card.set&&card.set.name)||"";
   const number=card.localId||"";
   const label=`Open ${card.name}, ${setName||"unknown set"}, number ${number||"unknown"}, quantity ${quantity}`;
   return(
     <button type="button" className="ol-tile" aria-label={label} onClick={e=>onOpen(card,e.currentTarget)}>
       <div className="ol-frame">
-        {displaySrc
-          ?<img src={displaySrc} alt={card.name} loading="lazy" decoding="async" onError={isUnverified?()=>setLimitlessFailed(true):undefined}/>
-          :<div className="ol-miss" aria-hidden="true">{fallback===undefined?<IcoSpin/>:<IcoNoImage/>}<span style={{fontSize:10,color:"#5a5a82",marginTop:4}}>{card.name}</span></div>}
+        <CardImage card={card} size="small" surface="owned-library" variant="ol-miss" loadingAttr="lazy" spinner={<IcoSpin/>} missing={<IcoNoImage/>}/>
         {quantity>1&&<span className="ol-badge" aria-hidden="true">×{quantity}</span>}
       </div>
       <div className="ol-cap">
@@ -3210,7 +3179,9 @@ function App(){
     });
     // Purge per-card fallback image cache so stale "not found" results
     // don't persist after TCGdex gains images for previously imageless cards.
-    Object.keys(localStorage).filter(k=>k.startsWith("pb_fallback_img_")).forEach(k=>lsDel(k));
+    // OL-2C.1: clear image-verification verdicts alongside card caches. Covers
+    // the legacy unverified prefix AND the new verified-verdict prefix.
+    Object.keys(localStorage).filter(k=>k.startsWith("pb_fallback_img_")||k.startsWith("pb_img2_")).forEach(k=>lsDel(k));
     setCardData({});setErrors({});loadAllEntries();
   };
   const clearManual=async()=>{setManualOwned(new Set());setManualMissing(new Set());if(user)withSync(async()=>{await supabase.from("card_overrides").delete().eq("user_id",user.id);});};

@@ -170,3 +170,32 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
   .ol-tile .ol-frame{transition:none;}
   .ol-tile:hover .ol-frame{transform:none;}
 }
+
+/* ── OL-2C.1 Image Resilience ────────────────────────────────────────────────
+   Neutral frame / loading / unavailable treatment for the inline and thumbnail
+   image sites that previously had no frame at all and could therefore surface
+   the raw browser broken-image glyph and shift layout on a dead URL.
+
+   Additive and scoped to .iv-*. The existing .card-blank, .blank-inner,
+   .ol-frame, .ol-miss, .ol-skel and every .card-tile img rule are retained
+   unchanged — they already satisfy the requirements on their surfaces.
+
+   Loading is visibly distinct from unavailable: .iv-load is a flat panel with a
+   moving shimmer and no icon; .iv-miss is a static diagonal hatch with the
+   no-image icon. No card-back or generic card artwork is used anywhere. */
+.iv-frame{position:relative;display:block;border-radius:inherit;overflow:hidden;}
+/* Reserve the 5:7 card aspect so nothing collapses or reflows before load. The
+   caller sets width; height follows from the ratio. */
+.iv-frame-57{aspect-ratio:5/7;height:auto;}
+.iv-miss{display:flex;align-items:center;justify-content:center;text-align:center;
+  border:1px solid #1e1e35;border-radius:inherit;color:#46466a;
+  background:repeating-linear-gradient(135deg,#13131f,#13131f 8px,#171728 8px,#171728 16px);}
+.iv-load{background:#12121f;border:1px solid #1a1a30;border-radius:inherit;position:relative;overflow:hidden;}
+.iv-load::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,0.05),transparent);
+  animation:olShimmer 1.4s infinite;}
+/* Matches .card-tile img so a decoding gap never shows the page background. */
+.iv-img{display:block;background:#1a1a2e;}
+@media(prefers-reduced-motion:reduce){
+  .iv-load::after{animation:none;}
+}
