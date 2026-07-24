@@ -124,7 +124,18 @@ function initialState(identity, hasPrimary) {
  * @returns {{src:string|null, state:'loading'|'ready'|'unavailable',
  *            tier:'primary'|'ptcgio-verified'|'none', verified:boolean,
  *            retryCountCurrent:number, retryCountTotal:number,
- *            onError:Function, onLoad:Function, identityKey:string}}
+ *            onError:Function, onLoad:Function, identityKey:string,
+ *            renderKey:string}}
+ *
+ * identityKey is the VERIFICATION identity (reset/cache/supersession).
+ * renderKey is the RENDER-ATTEMPT identity and must be used as the React key on
+ * the rendered <img>. They are deliberately different: a permitted retry can
+ * reuse the exact same URL string (fixture primary:[bad,bad], or a real
+ * cache-busted retry that resolves to the same resource), and if the element
+ * key did not change React would reuse the same DOM node with the same src, the
+ * browser would never re-attempt the load, and no second onError would fire —
+ * so the chain could never advance past the retry. renderKey forces a remount
+ * per attempt.
  */
 export function useCardImage(card, options) {
   const size = (options && options.size) || "small";
@@ -303,6 +314,11 @@ export function useCardImage(card, options) {
     emit("ready", reason, tier, src, cur.retryCurrent, cur.retryTotal);
   }, [cur.phase, cur.retryCurrent, cur.retryTotal, tier, src, emit]);
 
+  // Render-attempt identity. Derived from the verification identity plus the
+  // current phase and src, so every distinct attempt remounts the <img>.
+  // Does NOT affect reset, cache fingerprinting, supersession, counters or latches.
+  const renderKey = `${identityKey}|${cur.phase}|${src ?? "null"}`;
+
   return {
     src: state === "ready" ? src : null,
     state,
@@ -313,6 +329,7 @@ export function useCardImage(card, options) {
     onError,
     onLoad,
     identityKey,
+    renderKey,
   };
 }
 
@@ -334,7 +351,7 @@ export function CardImage(props) {
   if (img.state === "ready") {
     return (
       <img
-        key={img.identityKey}
+        key={img.renderKey}
         src={img.src}
         alt={alt !== undefined ? alt : (card ? card.name : "")}
         loading={loadingAttr}
