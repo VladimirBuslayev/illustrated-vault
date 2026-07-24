@@ -43,51 +43,6 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { imgSmall, imgLarge } from "../utils/imageUrl.js";
 import { fetchFallbackImage, fingerprintCard } from "../services/imageService.js";
 
-// ── Preview-only instrumentation guards ──────────────────────────────────────
-// TWO independent guards. Both must pass before ANY audit or fixture behavior
-// runs. The hostname guard makes instrumentation inert on the production host
-// even if this module is accidentally shipped with IV_IMAGE_AUDIT still true.
-// Removed entirely by the pre-merge instrumentation-removal commit.
-const IV_IMAGE_AUDIT = true;
-const IV_AUDIT_HOST_OK =
-  typeof window !== "undefined" &&
-  !!window.location &&
-  !/(^|\.)illustratedvault\.com$/i.test(window.location.hostname || "");
-const IV_AUDIT_ON = IV_IMAGE_AUDIT && IV_AUDIT_HOST_OK;
-
-if (IV_AUDIT_ON) {
-  if (!Array.isArray(window.__ivImageAudit)) window.__ivImageAudit = [];
-  window.__ivImageAuditCsv = function () {
-    const cols = ["card_id","surface","requested_size","primary_url","fallback_url","tier","verified",
-      "fingerprint","id_match","number_match","name_match","set_match","observed_id","observed_name",
-      "observed_number","observed_set_id","final_state","retry_count_total","retry_count_current","reason"];
-    const esc = v => {
-      if (v === null || v === undefined) return "";
-      const s = String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const rows = (window.__ivImageAudit || []).map(r => cols.map(c => esc(r[c])).join(","));
-    return [cols.join(","), ...rows].join("\n");
-  };
-}
-
-function auditRow(row) {
-  if (!IV_AUDIT_ON) return;
-  try { window.__ivImageAudit.push(row); } catch { /* never break rendering */ }
-}
-
-// Deterministic fixtures, read ONLY when the guard passes. On the production
-// host this is never consulted, so a stray console assignment cannot alter
-// image selection.
-function readFixture(cardId) {
-  if (!IV_AUDIT_ON) return null;
-  try {
-    const all = window.__ivImageFixtures;
-    if (!all || typeof all !== "object") return null;
-    return all[cardId] || null;
-  } catch { return null; }
-}
-
 // ── Retry URL construction ───────────────────────────────────────────────────
 // The retry targets the SAME URL. A cache-busting suffix is required, otherwise
 // the browser's negative cache makes the retry a no-op and the bounded retry is
@@ -124,34 +79,29 @@ function initialState(identity, hasPrimary) {
  * @returns {{src:string|null, state:'loading'|'ready'|'unavailable',
  *            tier:'primary'|'ptcgio-verified'|'none', verified:boolean,
  *            retryCountCurrent:number, retryCountTotal:number,
- *            onError:Function, onLoad:Function, identityKey:string,
- *            renderKey:string}}
+ *            onError:Function, identityKey:string, renderKey:string}}
  *
  * identityKey is the VERIFICATION identity (reset/cache/supersession).
  * renderKey is the RENDER-ATTEMPT identity and must be used as the React key on
  * the rendered <img>. They are deliberately different: a permitted retry can
- * reuse the exact same URL string (fixture primary:[bad,bad], or a real
- * cache-busted retry that resolves to the same resource), and if the element
- * key did not change React would reuse the same DOM node with the same src, the
- * browser would never re-attempt the load, and no second onError would fire —
- * so the chain could never advance past the retry. renderKey forces a remount
- * per attempt.
+ * resolve to the same URL string, and if the element key did not change React
+ * would reuse the same DOM node with the same src, the browser would never
+ * re-attempt the load, and no second onError would fire — so the chain could
+ * never advance past the retry. renderKey forces a remount per attempt.
+ *
+ * `surface` is an inert label retained for future diagnostics; it does not
+ * affect resolution, ownership, or rendering.
  */
 export function useCardImage(card, options) {
   const size = (options && options.size) || "small";
-  const surface = (options && options.surface) || "unknown";
   const enabled = !(options && options.enabled === false);
 
   const cardId = card ? card.id : null;
-  const fixture = readFixture(cardId);
-  const fixturePrimary = fixture && Array.isArray(fixture.primary) ? fixture.primary : null;
 
   const basePrimary = useMemo(() => {
     if (!card) return null;
-    if (fixturePrimary) return fixturePrimary[0] || null;
     return size === "large" ? imgLarge(card) : imgSmall(card);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, size, fixturePrimary && fixturePrimary[0]]);
+  }, [card, size]);
 
   // Verification fingerprint — the SAME function imageService uses for cache
   // validation, in-flight dedupe and mismatch logging. Never reimplemented here.
@@ -177,10 +127,9 @@ export function useCardImage(card, options) {
   // Supersession guard (async): request id bumped per identity in an effect.
   const reqIdRef = useRef(0);
   // Latch key includes identity AND phase, so a permitted retry whose URL string
-  // is identical to the previous attempt (fixture primary:[bad,bad]) is still
-  // processed, while duplicate onError events within one phase are ignored.
+  // is identical to the previous attempt is still processed, while duplicate
+  // onError events within one phase are ignored.
   const failedRef = useRef(new Set());
-  const auditedRef = useRef(new Set());
 
   useEffect(() => { reqIdRef.current += 1; }, [identityKey]);
 
@@ -192,11 +141,7 @@ export function useCardImage(card, options) {
     const myIdentity = identityKey;
     const myReq = reqIdRef.current;
 
-    const fx = fixture && fixture.fallback
-      ? Promise.resolve(fixture.fallback)
-      : fetchFallbackImage(card);
-
-    fx.then(v => {
+    fetchFallbackImage(card).then(v => {
       if (cancelled) return;                  // guard: unmounted
       if (myReq !== reqIdRef.current) return; // guard: superseded request
       setS(prev => {
@@ -225,7 +170,7 @@ export function useCardImage(card, options) {
   let src = null;
   let tier = "none";
   if (cur.phase === PHASE.PRIMARY)             { src = basePrimary; tier = "primary"; }
-  else if (cur.phase === PHASE.PRIMARY_RETRY)  { src = fixturePrimary ? (fixturePrimary[1] || null) : retryUrl(basePrimary); tier = "primary"; }
+  else if (cur.phase === PHASE.PRIMARY_RETRY)  { src = retryUrl(basePrimary); tier = "primary"; }
   else if (cur.phase === PHASE.FALLBACK)       { src = fallbackBase; tier = "ptcgio-verified"; }
   else if (cur.phase === PHASE.FALLBACK_RETRY) { src = retryUrl(fallbackBase); tier = "ptcgio-verified"; }
 
@@ -234,49 +179,6 @@ export function useCardImage(card, options) {
     : cur.phase === PHASE.FALLBACK_PENDING
       ? "loading"
       : (src ? "ready" : "unavailable");
-
-  const emit = useCallback((finalState, reasonToken, tierNow, srcNow, rCur, rTot) => {
-    if (!IV_AUDIT_ON) return;
-    const key = `${identityKey}|${finalState}|${reasonToken}`;
-    if (auditedRef.current.has(key)) return;
-    auditedRef.current.add(key);
-    const rec = record || {};
-    const checks = rec.checks || {};
-    const obs = rec.observed || {};
-    auditRow({
-      card_id: cardId,
-      surface,
-      requested_size: size,
-      primary_url: basePrimary,
-      fallback_url: tierNow === "ptcgio-verified" ? srcNow : (rec.status === "verified" ? fallbackBase : null),
-      tier: tierNow,
-      verified: tierNow !== "none",
-      fingerprint: rec.fp || fp,
-      id_match: checks.id_match,
-      number_match: checks.number_match,
-      name_match: checks.name_match,
-      set_match: checks.set_match,
-      observed_id: obs.id,
-      observed_name: obs.name,
-      observed_number: obs.number,
-      observed_set_id: obs.setId,
-      final_state: finalState,
-      retry_count_total: rTot,
-      retry_count_current: rCur,
-      reason: reasonToken,
-    });
-  }, [identityKey, cardId, surface, size, basePrimary, record, fallbackBase, fp]);
-
-  // Terminal audit for the unavailable state.
-  useEffect(() => {
-    if (cur.phase !== PHASE.UNAVAILABLE) return;
-    const rec = cur.record || {};
-    let reason;
-    if (rec.reason) reason = rec.reason;
-    else if (!basePrimary) reason = "no_primary_no_fallback";
-    else reason = "primary_dead_no_fallback";
-    emit("unavailable", reason, "none", null, cur.retryCurrent, cur.retryTotal);
-  }, [cur.phase, cur.record, cur.retryCurrent, cur.retryTotal, basePrimary, emit]);
 
   const onError = useCallback(() => {
     if (!src) return;
@@ -304,16 +206,6 @@ export function useCardImage(card, options) {
     });
   }, [identityKey, cur.phase, src]);
 
-  const onLoad = useCallback(() => {
-    let reason;
-    if (cur.phase === PHASE.PRIMARY) reason = "primary_ok";
-    else if (cur.phase === PHASE.PRIMARY_RETRY) reason = "primary_retry_ok";
-    else if (cur.phase === PHASE.FALLBACK) reason = "fallback_verified_ok";
-    else if (cur.phase === PHASE.FALLBACK_RETRY) reason = "fallback_retry_ok";
-    else return;
-    emit("ready", reason, tier, src, cur.retryCurrent, cur.retryTotal);
-  }, [cur.phase, cur.retryCurrent, cur.retryTotal, tier, src, emit]);
-
   // Render-attempt identity. Derived from the verification identity plus the
   // current phase and src, so every distinct attempt remounts the <img>.
   // Does NOT affect reset, cache fingerprinting, supersession, counters or latches.
@@ -327,7 +219,6 @@ export function useCardImage(card, options) {
     retryCountCurrent: cur.retryCurrent,
     retryCountTotal: cur.retryTotal,
     onError,
-    onLoad,
     identityKey,
     renderKey,
   };
@@ -360,7 +251,6 @@ export function CardImage(props) {
         style={style}
         onClick={onClick}
         onError={img.onError}
-        onLoad={img.onLoad}
       />
     );
   }
