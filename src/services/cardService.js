@@ -18,6 +18,25 @@
 //   Key suffix uses entry.artistId when available (stable DB slug),
 //   falling back to toSlug(entry.name) for entries without an artistId.
 //
+// CAT-1B / C3: the leading release_date ordering key was removed from the
+//   artist path. It was NULL on 23,780/23,780 rows, so it discriminated nothing and
+//   `nullsFirst` was inert; the produced sequence already equalled
+//   `set_id → local_id`, which CAT-0 established as a deterministic total order
+//   ((set_id, local_id) has zero duplicate groups). Removing it is behavior
+//   PRESERVATION, shipped ahead of the temporal data restoration so no window
+//   exists in which a live release_date can influence ordering.
+//
+//   ARTIST_SELECT is unchanged — `release_date` stays in the projection, since
+//   removing it would drop a key from the row reaching supaRowToCard, which is
+//   a shape change and wider than removing an ordering clause. PostgREST does
+//   not require ordering columns to be selected.
+//
+//   Cache key pb9_supa_ is unchanged: cached and freshly-fetched arrays agree,
+//   so there is nothing to invalidate.
+//
+//   All intentional ordering work (sortCards "name", true A–Z, real
+//   release-date chronology, SET_ORDER coverage) is deferred to SORT-1.
+//
 // Do not add retries, logging, validation, normalization, or new data sources.
 // Do not change sort behavior or return shape (beyond the additive artist_id field).
 
@@ -111,7 +130,6 @@ async function fetchArtistCards(entry) {
   }
 
   const { data, error } = await query
-    .order("release_date", { ascending: true, nullsFirst: false })
     .order("set_id")
     .order("local_id");
 
