@@ -13,6 +13,12 @@ on:
         options:
           - incremental
           - full
+          - temporal
+      set_id:
+        description: 'Optional single-set scope for temporal validation, e.g. swsh3. Leave blank for all sets. Temporal mode only.'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   sync:
@@ -31,3 +37,4 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SYNC_MODE: ${{ github.event.inputs.sync_mode || 'incremental' }}
+          SYNC_SET_ID: ${{ github.event.inputs.set_id || '' }}
