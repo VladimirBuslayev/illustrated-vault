@@ -1,0 +1,100 @@
+{
+  "audit": "CAT-0 — Catalog Source & Coverage Audit",
+  "status": "closed",
+  "audit_type": "diagnostic_read_only",
+  "package_generated": "2026-07-27",
+  "introspection_captured_at": "2026-07-27T13:55:39.684177+00:00",
+  "production_changes": "none",
+
+  "baseline": {
+    "cards": 23780,
+    "cards_effective": 23780,
+    "cards_effective_distinct_ids": 23780,
+    "cards_effective_null_ids": 0,
+    "card_extras": 5,
+    "artists": 22,
+    "owned_distinct_cards_active_snapshot": 4776,
+    "supersedes_baselines": [23314, 23604],
+    "supersedes_artist_count": 20
+  },
+
+  "gates": {
+    "G-1_identity": "PASS",
+    "G-1b_invariants": "PASS",
+    "G-2_wrong_printing": "no condition found",
+    "G-3_probe_safety": "not exercised — no probes run",
+    "G-4_era_suspension": "ACTIVE — era_token must remain empty until CAT-1 lands"
+  },
+
+  "evidence_of_record": {
+    "primary": "Read-only query outputs recorded in docs/CAT-0_FINDINGS_AND_DECISION.md and the audit thread.",
+    "note": "No finding in CAT-0 depends on a CSV artifact. The CSVs below are a convenience serialization of outputs already recorded in prose."
+  },
+
+  "artifacts_materialized": [
+    {
+      "file": "catalog_coverage_summary.csv",
+      "rows": 55,
+      "derivation": "Transcribed directly from supplied production query outputs. No estimates, no interpolation, no derived values beyond percentages computed from the supplied count and denominator.",
+      "scopes": ["global", "owned_active_snapshot", "backfill_target_population", "set:<set_id>", "sync_day:<date>", "artist:<artist_id>"],
+      "completeness": "Complete for every metric it contains. It is NOT a complete per-set enumeration — see artifacts_not_materialized."
+    },
+    {
+      "file": "catalog_coverage_by_set.csv",
+      "rows": 214,
+      "derivation": "Transcribed verbatim from the complete Q2.1 per-set production output. Every supplied set row preserved; no rows inferred or added. The only field change is the rename artist_id_unresolved -> illustrator_present_artist_id_null. pct_image_missing is carried as supplied and was not recomputed.",
+      "columns": ["set_id","set_name","cards_total","image_url_missing","illustrator_missing","illustrator_present_artist_id_null","local_id_missing","set_name_missing","name_empty","matcher_unreachable","pct_image_missing"],
+      "era_token": "absent by design — era remains suspended under G-4",
+      "completeness": "Complete per-set enumeration: 214 rows, 214 distinct set_id values.",
+      "validation": {
+        "cards_total": "23780 = expected 23780",
+        "image_url_missing": "1640 = expected 1640",
+        "illustrator_missing": "2009 = expected 2009",
+        "sets_at_100pct_image_missing": "51 = expected 51",
+        "image_missing_in_those_51_sets": "1370 = expected 1370",
+        "local_id_missing / set_name_missing / name_empty / matcher_unreachable": "all 0, consistent with the global summary",
+        "illustrator_present_artist_id_null": "18183, reconciles to the global summary",
+        "backfill_target_sets": "9 of 9 present; 1320 cards; illustrator_missing 1315 — the 5-row difference from the 1320 base-table figure is exactly the 5 card_extras illustrator overrides, since Q2.1 reads post-COALESCE cards_effective"
+      }
+    },
+    {
+      "file": "identity_conflicts.csv",
+      "rows": 0,
+      "derivation": "Header only. Zero rows is the result, not an omission.",
+      "classes_evaluated": ["C-A1", "C-A2", "C-A4", "C-A5", "C-A6"],
+      "completeness": "Complete. All evaluated conflict classes returned zero."
+    }
+  ],
+
+  "artifacts_not_materialized": [
+    {
+      "file": "illustrator_gaps.csv",
+      "planned_in": "CAT-0 v2 plan §11",
+      "status": "not materialized",
+      "reason": "Genuinely requires per-card rows. Only aggregates and a small number of named illustrator strings were supplied.",
+      "regeneration_query": "CAT-0 v2 plan §6, Q3.1 / Q3.2 / Q3.3 / Q3.6"
+    },
+    {
+      "file": "image_gaps.csv",
+      "planned_in": "CAT-0 v2 plan §11",
+      "status": "not materialized",
+      "reason": "Genuinely requires per-card rows plus probe results. Probe A is blocked pending src/utils/imageUrl.js; Probe B is deferred because it cannot change the next-slice decision.",
+      "regeneration_query": "CAT-0 v2 plan §6, Q4.1–Q4.4 plus Probe B"
+    }
+  ],
+
+  "metric_naming_note": "The label 'artist_id_unresolved' was rejected during CAT-0 and does not appear in any materialized artifact. The evidence metric is 'illustrator_present_artist_id_null' (18,183 / 23,780), informational only — with just 22 artist identities against thousands of illustrator strings, a null artist_id is the expected state and is not a defect. The confirmed stale-FK defect is separate and narrower: 499 cards matching known artist identities with a missing FK, and 0 with a wrong FK. The token 'artist_id_unresolved' remains in the v2 plan (M-08) as the historical planning record and was deliberately not retro-edited.",
+
+  "outstanding_obligations": "none — CAT-0 conclusions are fully supported by the recorded query outputs. The two non-materialized artifacts are not deferred deliverables.",
+
+  "next_gate": {
+    "slice": "CAT-1 — Temporal Metadata Restoration",
+    "status": "recommended, not started",
+    "binding_guardrail": "The current sync path performs full-row card upserts. CAT-1 must explicitly preserve unrelated catalog fields (illustrator, artist_id, pricing, rarity, image_url, set_name) unless broader refresh behavior is separately inspected and approved.",
+    "inspection_prerequisites": [
+      "src/constants/setOrder.js — real chronology or display order only",
+      "src/utils/sort.js and the render path — does the UI re-sort",
+      "field-preservation approach under full-row upsert"
+    ]
+  }
+}

@@ -1,0 +1,215 @@
+set_id,set_name,cards_total,image_url_missing,illustrator_missing,illustrator_present_artist_id_null,local_id_missing,set_name_missing,name_empty,matcher_unreachable,pct_image_missing
+2011bw,McDonald's Collection 2011,12,12,0,11,0,0,0,0,100.00
+2012bw,McDonald's Collection 2012,12,12,0,3,0,0,0,0,100.00
+2014xy,McDonald's Collection 2014,12,12,0,12,0,0,0,0,100.00
+2015xy,McDonald's Collection 2015,12,12,0,9,0,0,0,0,100.00
+2016xy,McDonald's Collection 2016,12,12,0,9,0,0,0,0,100.00
+2017sm,McDonald's Collection 2017,12,12,0,11,0,0,0,0,100.00
+2018sm,McDonald's Collection 2018,12,12,0,6,0,0,0,0,100.00
+2019sm,McDonald's Collection 2019,12,12,0,9,0,0,0,0,100.00
+2021swsh,McDonald's Collection 2021,25,25,0,18,0,0,0,0,100.00
+2022swsh,McDonald's Collection 2022,15,15,0,8,0,0,0,0,100.00
+2023sv,McDonald's Collection 2023,15,15,0,10,0,0,0,0,100.00
+2024sv,McDonald's Collection 2024,15,15,0,11,0,0,0,0,100.00
+A1,Genetic Apex,286,0,0,235,0,0,0,0,0.00
+A1a,Mythical Island,86,0,0,70,0,0,0,0,0.00
+A2,Space-Time Smackdown,207,0,0,164,0,0,0,0,0.00
+A2a,Triumphant Light,96,0,0,80,0,0,0,0,0.00
+A2b,Shining Revelry,111,0,0,98,0,0,0,0,0.00
+A3,Celestial Guardians,239,0,0,201,0,0,0,0,0.00
+A3a,Extradimensional Crisis,103,0,0,85,0,0,0,0,0.00
+A3b,Eevee Grove,107,0,0,86,0,0,0,0,0.00
+A4,Wisdom of Sea and Sky,241,0,0,202,0,0,0,0,0.00
+A4a,Secluded Springs,105,0,0,85,0,0,0,0,0.00
+B1,Mega Rising,331,0,0,288,0,0,0,0,0.00
+B1a,Crimson Blaze,103,1,0,91,0,0,0,0,0.97
+B2,Fantastical Parade,234,0,0,197,0,0,0,0,0.00
+B2a,Paldean Wonders,131,131,0,105,0,0,0,0,100.00
+base1,Base Set,102,0,0,102,0,0,0,0,0.00
+base2,Jungle,64,0,0,64,0,0,0,0,0.00
+base3,Fossil,62,0,0,62,0,0,0,0,0.00
+base4,Base Set 2,130,0,0,130,0,0,0,0,0.00
+base5,Team Rocket,83,0,0,78,0,0,0,0,0.00
+basep,Wizards Black Star Promos,53,0,0,45,0,0,0,0,0.00
+bog,Best of game,9,9,0,9,0,0,0,0,100.00
+bw1,Black & White,115,0,8,66,0,0,0,0,0.00
+bw10,Plasma Blast,105,0,0,88,0,0,0,0,0.00
+bw11,Legendary Treasures,140,0,0,106,0,0,0,0,0.00
+bw2,Emerging Powers,98,0,0,67,0,0,0,0,0.00
+bw3,Noble Victories,102,0,0,72,0,0,0,0,0.00
+bw4,Next Destinies,103,0,0,83,0,0,0,0,0.00
+bw5,Dark Explorers,111,0,0,82,0,0,0,0,0.00
+bw6,Dragons Exalted,128,0,0,98,0,0,0,0,0.00
+bw7,Boundaries Crossed,153,0,0,125,0,0,0,0,0.00
+bw8,Plasma Storm,138,0,0,117,0,0,0,0,0.00
+bw9,Plasma Freeze,122,0,0,105,0,0,0,0,0.00
+bwp,BW Black Star Promos,101,3,2,88,0,0,0,0,2.97
+cel25,Celebrations,50,26,0,45,0,0,0,0,52.00
+cel25cc,Celebrations Classic Collection,25,25,0,23,0,0,0,0,100.00
+col1,Call of Legends,106,0,8,84,0,0,0,0,0.00
+dc1,Double Crisis,34,0,0,30,0,0,0,0,0.00
+det1,Detective Pikachu,18,0,0,18,0,0,0,0,0.00
+dp1,Diamond & Pearl,130,0,8,95,0,0,0,0,0.00
+dp2,Mysterious Treasures,124,0,0,92,0,0,0,0,0.00
+dp3,Secret Wonders,132,0,0,100,0,0,0,0,0.00
+dp4,Great Encounters,106,0,0,87,0,0,0,0,0.00
+dp5,Majestic Dawn,100,0,0,77,0,0,0,0,0.00
+dp6,Legends Awakened,146,0,0,108,0,0,0,0,0.00
+dp7,Stormfront,106,0,0,77,0,0,0,0,0.00
+dpp,DP Black Star Promos,56,0,1,49,0,0,0,0,0.00
+dv1,Dragon Vault,21,0,0,18,0,0,0,0,0.00
+ecard1,Expedition Base Set,165,0,2,127,0,0,0,0,0.00
+ecard2,Aquapolis,185,40,6,140,0,0,0,0,21.62
+ecard3,Skyridge,182,32,0,137,0,0,0,0,17.58
+ex1,Ruby & Sapphire,109,0,6,88,0,0,0,0,0.00
+ex10,Unseen Forces,117,0,1,85,0,0,0,0,0.00
+ex11,Delta Species,114,0,0,77,0,0,0,0,0.00
+ex12,Legend Maker,93,0,0,69,0,0,0,0,0.00
+ex13,Holon Phantoms,111,0,6,72,0,0,0,0,0.00
+ex14,Crystal Guardians,100,0,0,73,0,0,0,0,0.00
+ex15,Dragon Frontiers,101,0,0,71,0,0,0,0,0.00
+ex16,Power Keepers,108,0,6,90,0,0,0,0,0.00
+ex2,Sandstorm,100,0,0,77,0,0,0,0,0.00
+ex3,Dragon,100,0,0,80,0,0,0,0,0.00
+ex4,Team Magma vs Team Aqua,97,0,0,97,0,0,0,0,0.00
+ex5,Hidden Legends,102,0,0,81,0,0,0,0,0.00
+ex5.5,Poké Card Creator Pack,5,5,0,5,0,0,0,0,100.00
+ex6,FireRed & LeafGreen,116,0,0,88,0,0,0,0,0.00
+ex7,Team Rocket Returns,111,0,0,80,0,0,0,0,0.00
+ex8,Deoxys,108,0,0,83,0,0,0,0,0.00
+ex9,Emerald,107,0,7,64,0,0,0,0,0.00
+exu,Unseen Forces Unown Collection,27,27,0,27,0,0,0,0,100.00
+fut2020,Pokémon Futsal 2020,5,0,0,5,0,0,0,0,0.00
+g1,Generations,117,0,10,89,0,0,0,0,0.00
+gym1,Gym Heroes,132,0,0,113,0,0,0,0,0.00
+gym2,Gym Challenge,132,0,0,120,0,0,0,0,0.00
+hgss1,HeartGold SoulSilver,124,0,8,88,0,0,0,0,0.00
+hgss2,Unleashed,96,0,0,69,0,0,0,0,0.00
+hgss3,Undaunted,91,0,0,72,0,0,0,0,0.00
+hgss4,Triumphant,103,0,0,81,0,0,0,0,0.00
+hgssp,HGSS Black Star Promos,25,9,0,17,0,0,0,0,36.00
+lc,Legendary Collection,110,0,0,110,0,0,0,0,0.00
+me01,Mega Evolution,188,0,0,173,0,0,0,0,0.00
+me02,Phantasmal Flames,130,0,1,118,0,0,0,0,0.00
+me02.5,Ascended Heroes,295,0,2,279,0,0,0,0,0.00
+me03,Perfect Order,124,0,3,113,0,0,0,0,0.00
+me04,Chaos Rising,122,0,3,112,0,0,0,0,0.00
+me05,Pitch Black,120,0,2,109,0,0,0,0,0.00
+mee,Mega Evolution Energy,8,8,8,0,0,0,0,0,100.00
+mep,MEP Black Star Promos,60,60,0,58,0,0,0,0,100.00
+mfb,My First Battle,34,34,4,23,0,0,0,0,100.00
+miscp,Miscellaneous Promos,1,1,1,0,0,0,0,0,100.00
+neo1,Neo Genesis,111,0,9,91,0,0,0,0,0.00
+neo2,Neo Discovery,75,0,6,53,0,0,0,0,0.00
+neo3,Neo Revelation,66,0,2,49,0,0,0,0,0.00
+neo4,Neo Destiny,113,0,8,77,0,0,0,0,0.00
+np,Nintendo Black Star Promos,40,0,2,23,0,0,0,0,0.00
+P-A,Promos-A,100,27,0,82,0,0,0,0,27.00
+pl1,Platinum,133,0,0,95,0,0,0,0,0.00
+pl2,Rising Rivals,120,1,0,92,0,0,0,0,0.83
+pl3,Supreme Victors,153,0,0,104,0,0,0,0,0.00
+pl4,Arceus,111,0,0,83,0,0,0,0,0.00
+pop1,POP Series 1,17,0,0,17,0,0,0,0,0.00
+pop2,POP Series 2,17,0,0,10,0,0,0,0,0.00
+pop3,POP Series 3,17,0,0,12,0,0,0,0,0.00
+pop4,POP Series 4,17,0,0,10,0,0,0,0,0.00
+pop5,POP Series 5,17,0,0,13,0,0,0,0,0.00
+pop6,POP Series 6,17,2,0,7,0,0,0,0,11.76
+pop7,POP Series 7,17,0,0,10,0,0,0,0,0.00
+pop8,POP Series 8,17,0,0,10,0,0,0,0,0.00
+pop9,POP Series 9,17,0,0,15,0,0,0,0,0.00
+ru1,Pokémon Rumble,16,0,16,0,0,0,0,0,0.00
+si1,Southern Islands,18,0,0,18,0,0,0,0,0.00
+sm1,Sun & Moon,172,0,11,138,0,0,0,0,0.00
+sm10,Unbroken Bonds,234,0,0,187,0,0,0,0,0.00
+sm11,Unified Minds,258,0,0,213,0,0,0,0,0.00
+sm115,Hidden Fates,69,0,0,57,0,0,0,0,0.00
+sm12,Cosmic Eclipse,271,0,2,221,0,0,0,0,0.00
+sm2,Guardians Rising,169,1,3,140,0,0,0,0,0.59
+sm3,Burning Shadows,169,0,3,141,0,0,0,0,0.00
+sm3.5,Shining Legends,78,78,2,67,0,0,0,0,100.00
+sm4,Crimson Invasion,125,0,4,96,0,0,0,0,0.00
+sm5,Ultra Prism,173,0,5,148,0,0,0,0,0.00
+sm6,Forbidden Light,146,6,3,124,0,0,0,0,4.11
+sm7,Celestial Storm,183,0,2,151,0,0,0,0,0.00
+sm7.5,Dragon Majesty,78,78,0,64,0,0,0,0,100.00
+sm8,Lost Thunder,236,0,1,202,0,0,0,0,0.00
+sm9,Team Up,196,0,0,162,0,0,0,0,0.00
+sma,Hidden Fates Shiny Vault,94,0,0,77,0,0,0,0,0.00
+smp,SM Black Star Promos,248,67,49,178,0,0,0,0,27.02
+sv01,Scarlet & Violet,258,0,2,209,0,0,0,0,0.00
+sv02,Paldea Evolved,279,0,6,228,0,0,0,0,0.00
+sv03,Obsidian Flames,230,0,1,185,0,0,0,0,0.00
+sv03.5,151,207,0,1,183,0,0,0,0,0.00
+sv04,Paradox Rift,266,0,2,218,0,0,0,0,0.00
+sv04.5,Paldean Fates,245,0,0,198,0,0,0,0,0.00
+sv05,Temporal Forces,218,0,2,190,0,0,0,0,0.00
+sv06,Twilight Masquerade,226,0,3,193,0,0,0,0,0.00
+sv06.5,Shrouded Fable,99,0,2,88,0,0,0,0,0.00
+sv07,Stellar Crown,175,0,0,161,0,0,0,0,0.00
+sv08,Surging Sparks,252,0,2,230,0,0,0,0,0.00
+sv08.5,Prismatic Evolutions,180,0,0,168,0,0,0,0,0.00
+sv09,Journey Together,190,0,2,167,0,0,0,0,0.00
+sv10,Destined Rivals,244,0,1,229,0,0,0,0,0.00
+sv10.5b,Black Bolt,172,0,1,155,0,0,0,0,0.00
+sv10.5w,White Flare,173,0,1,156,0,0,0,0,0.00
+sve,Scarlet & Violet Energy,24,24,24,0,0,0,0,0,100.00
+svp,SVP Black Star Promos,226,34,0,206,0,0,0,0,15.04
+swsh1,Sword & Shield,216,0,1,182,0,0,0,0,0.00
+swsh10,Astral Radiance,246,0,246,0,0,0,0,0,0.00
+swsh10.5,Pokémon GO,88,0,88,0,0,0,0,0,0.00
+swsh10.5tg,Astral Radiance Trainer Gallery,30,30,0,26,0,0,0,0,100.00
+swsh11,Lost Origin,247,0,245,1,0,0,0,0,0.00
+swsh11.5tg,Lost Origin Trainer Gallery,30,30,0,27,0,0,0,0,100.00
+swsh12,Silver Tempest,245,0,244,1,0,0,0,0,0.00
+swsh12.5,Crown Zenith,230,0,228,0,0,0,0,0,0.00
+swsh12.5gg,Crown Zenith Galarian Gallery,70,70,0,48,0,0,0,0,100.00
+swsh12.5tg,Silver Tempest Trainer Gallery,30,30,0,28,0,0,0,0,100.00
+swsh2,Rebel Clash,209,0,5,173,0,0,0,0,0.00
+swsh3,Darkness Ablaze,201,0,4,162,0,0,0,0,0.00
+swsh3.5,Champion's Path,80,0,0,69,0,0,0,0,0.00
+swsh4,Vivid Voltage,203,0,4,163,0,0,0,0,0.00
+swsh4.5,Shining Fates,195,0,0,162,0,0,0,0,0.00
+swsh4.5sv,Shining Fates Shiny Vault,122,122,0,100,0,0,0,0,100.00
+swsh5,Battle Styles,183,0,4,150,0,0,0,0,0.00
+swsh6,Chilling Reign,233,0,6,202,0,0,0,0,0.00
+swsh7,Evolving Skies,237,0,4,200,0,0,0,0,0.00
+swsh8,Fusion Strike,284,0,3,224,0,0,0,0,0.00
+swsh9,Brilliant Stars,216,0,216,0,0,0,0,0,0.00
+swsh9.5tg,Brilliant Stars Trainer Gallery,30,30,0,27,0,0,0,0,100.00
+swshp,SWSH Black Star Promos,302,17,133,151,0,0,0,0,5.63
+tk-bw-e,BW trainer Kit (Excadrill),30,30,15,13,0,0,0,0,100.00
+tk-bw-z,BW trainer Kit (Zoroark),30,30,12,11,0,0,0,0,100.00
+tk-dp-l,DP trainer Kit (Lucario),11,11,0,9,0,0,0,0,100.00
+tk-dp-m,DP trainer Kit (Manaphy),12,12,0,9,0,0,0,0,100.00
+tk-ex-latia,EX trainer Kit (Latias),10,10,0,7,0,0,0,0,100.00
+tk-ex-latio,EX trainer Kit (Latios),10,10,0,8,0,0,0,0,100.00
+tk-ex-m,EX trainer Kit 2 (Minun),12,12,0,11,0,0,0,0,100.00
+tk-ex-p,EX trainer Kit 2 (Plusle),12,12,0,10,0,0,0,0,100.00
+tk-hs-g,HS trainer Kit (Gyarados),1,1,0,1,0,0,0,0,100.00
+tk-hs-r,HS trainer Kit (Raichu),1,1,0,1,0,0,0,0,100.00
+tk-sm-l,SM trainer Kit (Lycanroc),18,18,16,2,0,0,0,0,100.00
+tk-sm-r,SM trainer Kit (Alolan Raichu),19,19,15,4,0,0,0,0,100.00
+tk-xy-b,XY trainer Kit (Bisharp),30,30,30,0,0,0,0,0,100.00
+tk-xy-latia,XY trainer Kit (Latias),30,30,27,1,0,0,0,0,100.00
+tk-xy-latio,XY trainer Kit (Latios),30,30,28,0,0,0,0,0,100.00
+tk-xy-n,XY trainer Kit (Noivern),30,30,28,2,0,0,0,0,100.00
+tk-xy-p,XY trainer Kit (Pikachu Libre),30,30,22,7,0,0,0,0,100.00
+tk-xy-su,XY trainer Kit (Suicune),30,30,27,2,0,0,0,0,100.00
+tk-xy-sy,XY trainer Kit (Sylveon),30,30,28,2,0,0,0,0,100.00
+tk-xy-w,XY trainer Kit (Wigglytuff),30,30,30,0,0,0,0,0,100.00
+xy0,Kalos Starter Set,39,0,0,34,0,0,0,0,0.00
+xy1,XY,146,0,9,118,0,0,0,0,0.00
+xy10,Fates Collide,129,0,0,110,0,0,0,0,0.00
+xy11,Steam Siege,116,0,0,98,0,0,0,0,0.00
+xy12,Evolutions,113,0,9,104,0,0,0,0,0.00
+xy2,Flashfire,110,0,0,95,0,0,0,0,0.00
+xy3,Furious Fists,114,0,0,102,0,0,0,0,0.00
+xy4,Phantom Forces,124,0,0,108,0,0,0,0,0.00
+xy5,Primal Clash,164,0,0,139,0,0,0,0,0.00
+xy6,Roaring Skies,112,0,0,98,0,0,0,0,0.00
+xy7,Ancient Origins,101,0,0,87,0,0,0,0,0.00
+xy8,BREAKthrough,165,1,1,129,0,0,0,0,0.61
+xy9,BREAKpoint,126,0,0,107,0,0,0,0,0.00
+xya,Yellow A Alternate,6,6,0,6,0,0,0,0,100.00
+xyp,XY Black Star Promos,216,3,0,197,0,0,0,0,1.39
