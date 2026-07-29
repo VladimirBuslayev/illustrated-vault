@@ -962,6 +962,10 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
             <div className="ap3-sec-head">
               <h2 id="ap3-notable-h" className="ap3-sec-title font-display">Notable works</h2>
               <p className="ap3-sec-sub">A curated entry point — not a ranking, and not driven by price.</p>
+              {/* AP-3.0B.1: mobile-only swipe affordance. Hidden on desktop by CSS and
+                  aria-hidden because "swipe" is touch-specific — assistive tech reaches
+                  every notable card through the list semantics regardless of scroll. */}
+              <p className="ap3-notable-hint" aria-hidden="true">Swipe to explore →</p>
             </div>
             <ul className="ap3-notable-grid">
               {notable.map(n=>{
