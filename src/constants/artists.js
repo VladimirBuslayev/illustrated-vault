@@ -34,14 +34,14 @@ const ARTISTS=[
 
 const ARTIST_FACTS={
   "Yuka Morii":{
-    since:"Active since 2000 — Neo Discovery",
-    fact:"She doesn't draw her Pokémon — she sculpts them in clay, builds a tiny diorama, then photographs it. Every card is a photo of a real object.",
-    story:"Every Yuka Morii card begins as a physical object. She sculpts the Pokémon in clay — sometimes just a few centimetres tall — arranges props and a tiny landscape around it, then photographs the scene under natural light. The warmth in her cards isn't a digital effect; it falls on real clay. She has been doing this since the year 2000, making her one of the longest-tenured illustrators in the game, and her style is immediately recognisable: no painted or digital card has ever replicated that tactile softness. When you feel like you could reach into a Morii card and touch the Pokémon, that's because somewhere, you actually could.",
+    since:"Working with the Pokémon TCG since 2000",
+    fact:"She works in physical media: the Pokémon are modelled by hand in resin clay, hardened with heat, then staged and photographed for the card.",
+    story:"Yuka Morii is one of the Pokémon TCG's defining physical-media artists, specialising in hand-built resin-clay models. Her card work began around 2000 with the Neo Discovery expansion and has continued since. The material is resin clay hardened by baking, with colour-mixing, sculpting and heating repeated by hand until the model is complete; the finished figure is then staged and photographed, sometimes against a built miniature set and sometimes against a real location. She studied at the Kuwasawa Design School and went on to graduate study at Tokyo Zokei University. At the time of a 2023 Kuwasawa exhibition of twenty of her Pokémon models, she was also teaching there part-time. Beyond the cards she works on character design, product design and books.",
   },
   "Asako Ito":{
-    since:"Active since 2017 — Sun & Moon base set",
-    fact:"Every Pokémon in her cards is crocheted yarn. She trained in oil painting, but taught herself to knit after seeing the teddy bear from Mr. Bean.",
-    story:"Asako Ito's route into card illustration is one of the most unexpected in the game. Trained as an oil painter, she encountered knitting through an unlikely source — Mr. Bean's beloved stuffed bear — and taught herself to crochet from scratch. By the time she joined the TCG in 2017, she had mastered the art of tiny yarn Pokémon, hand-stitching each one before setting it under careful lighting and photographing it. Like Morii's clay, Ito's cards are photographs of physical objects. Where Morii's clay has sculptural weight, Ito's yarn has warmth — the slight imperfections in the stitching, the softness of the focus, give her cards an irreplaceable handmade quality that no digital tool has come close to matching.",
+    since:"Working with the Pokémon TCG since 2017",
+    fact:"Her Pokémon are crocheted amigurumi, and she builds the background sets by hand too. She majored in oil painting and taught herself to crochet after seeing the teddy bear from Mr. Bean.",
+    story:"Asako Ito majored in oil painting at university and taught herself amigurumi alongside it, after seeing the teddy bear from Mr. Bean and wanting to make one for herself. She joined the Pokémon TCG in 2017, her first released card being Poliwag in the Sun & Moon expansion. She works without a written crochet pattern, holding the construction in her head and repeating a cycle of knitting and unravelling until the form is right. The figure is only half the card: she studies each Pokémon's shape, character and habitat, then builds the background set herself from yarn, felt and paper, so that the creature reads as living inside the world of the card.",
   },
   "Tomokazu Komiya":{
     since:"Working with the Pokémon TCG since 1996",
@@ -81,9 +81,9 @@ const ARTIST_FACTS={
 };
 
 const ARTIST_META={
-  "yuka-morii":    {accent:"#C8876A",grad:"rgba(200,135,106,0.14)",quote:"I sculpt each Pokémon by hand — so every card is a photograph of something real.",tags:"Clay Sculpture · Handcrafted · Tactile",
+  "yuka-morii":    {accent:"#C8876A",grad:"rgba(200,135,106,0.14)",tags:"Clay Sculpture · Miniature Worlds · Photographic",
     topCardNames:["Slowpoke","Eevee","Marill","Togepi","Clefairy","Azumarill","Swinub","Pichu","Smoochum"]},
-  "asako-ito":     {accent:"#9A78D8",grad:"rgba(154,120,216,0.14)",quote:"I pick up the needles, and the Pokémon starts to take shape.",tags:"Yarn & Textile Art · Warm · Handcrafted",
+  "asako-ito":     {accent:"#9A78D8",grad:"rgba(154,120,216,0.14)",tags:"Amigurumi · Hand-built Sets · Textile Warmth",
     topCardNames:["Jigglypuff","Clefairy","Chansey","Snubbull","Wigglytuff","Clefable","Blissey","Cleffa"]},
   "tomokazu-komiya":{accent:"#E8A030",grad:"rgba(232,160,48,0.14)",tags:"Acrylic Gouache · Loose Line · Distorted Form",
     topCardNames:["Sunflora","Rapidash","Arcanine","Ho-Oh","Typhlosion","Charizard","Growlithe","Entei"]},
