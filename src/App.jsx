@@ -10,6 +10,7 @@ const logoSrc = '/illustrated-logo-gradient.svg';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 import { ARTISTS, ARTIST_FACTS, ARTIST_META } from './constants/artists.js';
+import { ARTIST_EDITORIAL }                    from './constants/artistEditorial.js';
 import { SET_ORDER }                           from './constants/setOrder.js';
 import { CACHE_TTL, PRICE_VARIANT_ORDER }       from './constants/config.js';
 
@@ -773,34 +774,71 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
 // ── ARTIST PAGE ─────────────────────────────────────────────────────────────────
 // Dedicated full-screen page for a single illustrator.
 // Each artist gets a unique accent colour, quote, and hero layout.
+// ── ARTIST PAGE 3.0 ────────────────────────────────────────────────────────────
+// Composition + curation milestone. One continuous surface:
+//   Artist Hero → Notable Works → From the Archive → The Collection
+// No second artist-profile route; ARTIST_EDITORIAL[slug] progressively enriches
+// the same page. Ownership, intent, sorting, search and CardModal behaviour are
+// untouched — every count below is derived from the existing checkOwned /
+// intentMap authorities.
+
+// Notable-card name guard. Exact-id resolution only; this normalises for
+// case/whitespace/punctuation drift so a legitimate match is not rejected,
+// while a genuinely different card still fails.
+const apNormName = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
 function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,intentMap,showAllColor,toggleShowAllColor,onBack}){
   const meta=ARTIST_META[slug]||{};
+  const editorial=ARTIST_EDITORIAL[slug]||null;
   const accent=meta.accent||"#8b6cd8";
   const grad=meta.grad||"rgba(139,108,216,0.12)";
   const fact=entry?ARTIST_FACTS[entry.name]:null;
   const[search,setSearch]=useState("");
   const[sortBy,setSortBy]=useState("date-asc");
   const[viewMode,setViewMode]=useState(null);
-  const[bandOpen,setBandOpen]=useState(true); // Slice C: archive band collapse, local only
+  const[notesOpen,setNotesOpen]=useState(false); // local only, not persisted
   const owned=useMemo(()=>cards.filter(checkOwned).length,[cards,checkOwned]);
   const total=cards.length;
+  const missing=total-owned;
   const pct=total?Math.round((owned/total)*100):0;
   const intentCounts=useMemo(()=>{
     const c={want:0,hunting:0,maybe:0,ignore:0};
     if(intentMap&&intentMap.size)cards.forEach(card=>{if(checkOwned(card))return;const st=intentMap.get(card.id);if(st!==undefined&&c[st]!==undefined)c[st]++;});
     return c;
   },[cards,intentMap,checkOwned]);
-  // Slice C: planning chips only. Owned/Missing chips duplicated the
-  // progress line and had no job; Hunting / On the list are now tappable
-  // shortcuts into the Hunting segment (same viewMode state as the sticky
-  // controls — no new state). Intent semantics untouched: read-only counts.
   const planChips=[
     ...(intentCounts.hunting>0?[{label:"Hunting",value:intentCounts.hunting,clr:accent}]:[]),
     ...(intentCounts.want>0?[{label:"On the list",value:intentCounts.want,clr:"#9b7fe8"}]:[]),
   ];
 
-  // One pick per named Pokémon in topCardNames — prefer cards with images
+  // ── Notable Works resolution ────────────────────────────────────────────────
+  // EXACT canonical id only, scoped to this artist's own loaded cards. No prefix
+  // match, no "first matching card", no substitution. An id that is absent — or
+  // that resolves to a card whose name does not match the declared expectName —
+  // is omitted, and the reason is logged to the console only.
+  const notable=useMemo(()=>{
+    if(!editorial||!editorial.notableCards||!editorial.notableCards.length)return[];
+    const byId=new Map();
+    cards.forEach(c=>{if(c&&c.id!==undefined&&c.id!==null)byId.set(String(c.id),c);});
+    const out=[];
+    editorial.notableCards.forEach(n=>{
+      const hit=byId.get(String(n.id));
+      if(!hit){
+        console.warn(`[ArtistPage 3.0] Notable card omitted — no exact id match in ${slug} card set:`,n.id);
+        return;
+      }
+      if(apNormName(hit.name)!==apNormName(n.expectName)){
+        console.warn(`[ArtistPage 3.0] Notable card omitted — id ${n.id} resolved to "${hit.name}", expected "${n.expectName}". No substitution performed.`);
+        return;
+      }
+      out.push({...n,card:hit});
+    });
+    return out;
+  },[cards,editorial,slug]);
+
+  // topCardNames stays available ONLY as a fallback for non-editorial artists.
   const topCards=useMemo(()=>{
+    if(editorial)return[];
     if(!meta.topCardNames||!meta.topCardNames.length)return[];
     const result=[];const seen=new Set();
     meta.topCardNames.forEach(name=>{
@@ -814,148 +852,242 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
       }
     });
     return result;
-  },[cards,meta.topCardNames]);
+  },[cards,meta.topCardNames,editorial]);
 
-  // Hero uses top cards for the scattered backdrop if we have enough, else first few
-  const heroCards=useMemo(()=>(topCards.length>=2?topCards:cards.filter(c=>imgSmall(c))).filter(c=>imgSmall(c)).slice(0,3),[cards,topCards]);
+  // Hero artwork: notable works first when curated, then the non-editorial
+  // top-card fallback, then simply the first cards that have images. The last
+  // step is deliberately neutral — never a name-prefix guess for an editorial
+  // artist whose ids failed to resolve.
+  const heroCards=useMemo(()=>{
+    const pool=notable.length?notable.map(n=>n.card):(topCards.length?topCards:cards);
+    return pool.filter(c=>imgSmall(c)).slice(0,3);
+  },[notable,topCards,cards]);
 
-  const POSES=[
-    {r:"5%", t:"8%",  rot:"-7deg",w:132,op:1   },
-    {r:"36%",t:"30%", rot:"5deg", w:108,op:0.87},
-    {r:"10%",t:"54%", rot:"-3deg",w:90, op:0.72},
-  ];
   const displayName=entry?.name||slug;
-  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:7,color:"#e8e8f4",padding:".35rem .55rem",fontSize:".74rem"};
+  const tagLine=(editorial&&editorial.tags)||meta.tags;
+  const identityLine=(editorial&&editorial.identityLine)||fact?.since;
+  const introParas=editorial?editorial.introduction:((fact?.story||fact?.fact)?[fact.story||fact.fact]:[]);
+  const hasArchive=introParas.length>0||(editorial&&editorial.notes&&editorial.notes.length>0);
+  const sourceById=useMemo(()=>{
+    const m=new Map();
+    if(editorial&&editorial.sources)editorial.sources.forEach(s=>m.set(s.id,s));
+    return m;
+  },[editorial]);
+  const quoteSource=editorial&&editorial.pullQuote?sourceById.get(editorial.pullQuote.sourceId):null;
+
+  const selSt={background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:7,color:"#e8e8f4",padding:".4rem .55rem",fontSize:".76rem"};
+
+  const renderHeroCard=(card,cls)=>(
+    <button key={card.id} type="button" className={cls} onClick={()=>onCardClick(card)} aria-label={`View ${card.name}`}>
+      <CardImage card={card} size="small" surface="artist-hero" variant="inline" missing={<IcoNoImage size={18}/>} className="iv-frame-57 iv-img" style={{display:"block",width:"100%",height:"auto",borderRadius:9}}/>
+    </button>
+  );
 
   return(
-    <div className={showAllColor?"color-mode":""} style={{minHeight:"100dvh",background:"#07070f"}}>
+    <div className={`artist-page-v3${showAllColor?" color-mode":""}`} style={{minHeight:"100dvh",background:"#07070f"}}>
 
       {/* ── sticky mini-header ── */}
-      <div style={{position:"sticky",top:0,zIndex:100,background:"rgba(7,7,15,0.96)",backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderBottom:"1px solid #1e1e35",display:"flex",alignItems:"center",gap:".6rem",padding:".6rem 1rem"}}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:"#6b6b90",cursor:"pointer",display:"flex",alignItems:"center",gap:".25rem",fontSize:".76rem",padding:"3px 5px",borderRadius:5,transition:"color .12s"}} onMouseEnter={e=>e.currentTarget.style.color="#e8e8f4"} onMouseLeave={e=>e.currentTarget.style.color="#6b6b90"}>
-          ← Dashboard
-        </button>
-        <div style={{width:1,height:14,background:"#1e1e35",flexShrink:0}}/>
-        <span style={{fontSize:".78rem",fontWeight:700,color:accent,letterSpacing:".02em",flex:1,minWidth:0,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{displayName}</span>
-        <span style={{fontSize:".68rem",color:"#3a3a5a",whiteSpace:"nowrap"}}>{owned}/{total}</span>
-      </div>
-
-      {/* ── hero ── */}
-      <div style={{position:"relative",overflow:"hidden",minHeight:268,background:`radial-gradient(ellipse at 18% 65%, ${grad.replace(/[\d.]+\)$/,"0.22)")} 0%, transparent 68%)`,padding:"2rem 1.25rem 1.75rem"}}>
-        <div style={{position:"absolute",inset:0,zIndex:1,background:"linear-gradient(to right, #07070f 36%, rgba(7,7,15,0.75) 56%, transparent 100%)"}}/>
-        {heroCards.map((card,i)=>{
-          const p=POSES[i];
-          return(<CardImage key={card.id} card={card} size="small" surface="artist-collage" variant="decorative" alt="" aria-hidden="true" style={{position:"absolute",zIndex:0,right:p.r,top:p.t,width:p.w,height:"auto",borderRadius:9,transform:`rotate(${p.rot})`,opacity:p.op,boxShadow:`0 14px 44px rgba(0,0,0,0.72), 0 0 28px ${accent}28`,filter:"brightness(0.88)"}}/>);
-        })}
-        <div style={{position:"relative",zIndex:2,maxWidth:"63%",minWidth:170}}>
-          {meta.tags&&<div style={{fontSize:".58rem",letterSpacing:".16em",color:accent,fontWeight:800,marginBottom:".55rem",opacity:.85,lineHeight:1.6}}>{meta.tags}</div>}
-          <h1 className="font-display" style={{fontSize:"clamp(1.55rem,6.5vw,2.7rem)",fontWeight:900,color:"#f0f0ff",letterSpacing:"-.03em",lineHeight:1.05,marginBottom:".5rem"}}>{displayName}</h1>
-          {fact?.since&&<div style={{fontSize:".62rem",color:"rgba(190,190,210,0.38)",marginBottom:".75rem",letterSpacing:".04em"}}>{fact.since}</div>}
-          {meta.quote&&(
-            <div style={{fontStyle:"italic",fontSize:".87rem",color:"rgba(228,224,248,0.62)",lineHeight:1.58,maxWidth:258,marginBottom:"1.2rem",borderLeft:`2px solid ${accent}`,paddingLeft:".65rem"}}>
-              "{meta.quote}"
-            </div>
-          )}
-          <div style={{display:"flex",alignItems:"center",gap:".7rem"}}>
-            <div style={{flex:1,maxWidth:156}}>
-              <div style={{height:3,background:"rgba(255,255,255,0.07)",borderRadius:2,overflow:"hidden"}}>
-                <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:pct===100?"#22c55e":accent,transition:"width 1.2s cubic-bezier(.16,1,.3,1)"}}/>
-              </div>
-            </div>
-            <span style={{fontSize:".75rem",fontWeight:700,color:pct===100?"#22c55e":accent}}>{pct===100?"Complete ✓":`${pct}%`}</span>
-            <span style={{fontSize:".66rem",color:"rgba(190,190,210,0.32)"}}>{owned}/{total}</span>
-          </div>
-          {planChips.length>0&&(
-            <div style={{display:"flex",flexWrap:"wrap",gap:".4rem",marginTop:".85rem"}}>
-              {planChips.map(ch=>(
-                <button key={ch.label} onClick={()=>setViewMode("hunting")} className="btn-tap" title="View hunt targets for this artist" style={{display:"inline-flex",alignItems:"center",gap:".35rem",padding:"3px 9px",borderRadius:20,background:"rgba(255,255,255,0.03)",border:"1px solid #1e1e35",fontSize:".62rem",letterSpacing:".05em",color:"#8888a8",whiteSpace:"nowrap",cursor:"pointer"}}>
-                  <span style={{fontWeight:800,fontVariantNumeric:"tabular-nums",color:ch.clr}}>{ch.value}</span>{ch.label}
-                </button>
-              ))}
-            </div>
-          )}
+      <div className="ap3-topbar">
+        <div className="ap3-frame ap3-topbar-inner">
+          <button onClick={onBack} className="ap3-back">← Dashboard</button>
+          <div style={{width:1,height:14,background:"#1e1e35",flexShrink:0}}/>
+          <span className="ap3-topbar-name" style={{color:accent}}>{displayName}</span>
+          <span style={{fontSize:".68rem",color:"#3a3a5a",whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}}>{owned}/{total}</span>
         </div>
       </div>
 
-      {/* ── archive band: story + notable cards (Slice C merged) ──
-          One collapsible band (default open, local state, not persisted)
-          replaces the separate About and Notable Cards bands. When an artist
-          has neither story nor notable cards (all dynamic artists today), a
-          quiet fallback line keeps the page skeleton identical instead of
-          silently dropping the band. No curation/reordering system. */}
-      {(fact?.story||fact?.fact||topCards.length>0)?(
-        <div style={{borderBottom:"1px solid #1e1e35",background:`linear-gradient(135deg,${grad.replace(/[\d.]+\)$/,"0.06)")} 0%,transparent 60%)`}}>
-          <div onClick={()=>setBandOpen(v=>!v)} style={{display:"flex",alignItems:"baseline",gap:".55rem",padding:".85rem 1.25rem",cursor:"pointer",userSelect:"none"}}>
-            <span style={{fontSize:".55rem",color:"#4a4a70"}}>{bandOpen?"▼":"▶"}</span>
-            <span style={{fontSize:".6rem",letterSpacing:".14em",fontWeight:800,color:accent}}>FROM THE ARCHIVE</span>
-            {!bandOpen&&topCards.length>0&&<span style={{fontSize:".6rem",color:"#3a3a5a",fontWeight:600}}>· {topCards.length} notable card{topCards.length===1?"":"s"}</span>}
+      {/* ── hero ── */}
+      <header className="ap3-hero" style={{background:`radial-gradient(ellipse at 12% 40%, ${grad.replace(/[\d.]+\)$/,"0.20)")} 0%, transparent 62%)`}}>
+        <div className="ap3-frame ap3-hero-inner">
+          <div className="ap3-hero-text">
+            {tagLine&&<div className="ap3-hero-tags" style={{color:accent}}>{tagLine}</div>}
+            <h1 className="ap3-hero-name font-display">{displayName}</h1>
+            {identityLine&&<div className="ap3-hero-identity">{identityLine}</div>}
+
+            {editorial?(
+              <>
+                {editorial.thesis&&<p className="ap3-hero-thesis">{editorial.thesis}</p>}
+                {editorial.pullQuote&&(
+                  <figure className="ap3-pullquote" style={{borderColor:accent}}>
+                    <blockquote>“{editorial.pullQuote.text}”</blockquote>
+                    <figcaption>
+                      {editorial.pullQuote.attribution}
+                      {quoteSource&&(<> · <a className="ap3-link" href={quoteSource.url} target="_blank" rel="noopener noreferrer" aria-label={`Source: ${quoteSource.label} on ${quoteSource.publisher} (opens in a new tab)`}>source ↗</a></>)}
+                    </figcaption>
+                  </figure>
+                )}
+              </>
+            ):meta.quote?(
+              <figure className="ap3-pullquote" style={{borderColor:accent}}>
+                <blockquote>“{meta.quote}”</blockquote>
+              </figure>
+            ):null}
+
+            <div className="ap3-progress">
+              <div className="ap3-progress-track">
+                <div className="ap3-progress-fill" style={{width:`${pct}%`,background:pct===100?"#22c55e":accent}}/>
+              </div>
+              <span className="ap3-progress-pct" style={{color:pct===100?"#22c55e":accent}}>{pct===100?"Complete ✓":`${pct}%`}</span>
+              <span className="ap3-progress-count">{owned}/{total}</span>
+            </div>
+
+            {planChips.length>0&&(
+              <div className="ap3-chips">
+                {planChips.map(ch=>(
+                  <button key={ch.label} type="button" onClick={()=>setViewMode("hunting")} className="ap3-chip btn-tap" title="View hunt targets for this artist">
+                    <span style={{fontWeight:800,fontVariantNumeric:"tabular-nums",color:ch.clr}}>{ch.value}</span>{ch.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          {bandOpen&&(
-            <div style={{paddingBottom:".9rem"}}>
-              {(fact?.story||fact?.fact)&&(
-                <p style={{margin:0,padding:`0 1.25rem ${topCards.length>0?"1rem":".1rem"}`,fontSize:".82rem",lineHeight:1.72,color:"rgba(200,192,218,0.85)"}}>{fact.story||fact.fact}</p>
-              )}
-              {topCards.length>0&&(
-                <div style={{display:"flex",gap:"10px",overflowX:"auto",padding:"0 1.25rem",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
-                  {topCards.map(card=>{
-                    const isOwned=checkOwned(card);
-                    const sm=imgSmall(card);
-                    return(
-                      <div key={card.id} onClick={()=>onCardClick(card)} style={{flexShrink:0,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:5,width:90,paddingBottom:4}}>
-                        <div style={{borderRadius:9,overflow:"hidden",boxShadow:isOwned?`0 0 0 2px ${accent}, 0 6px 22px rgba(0,0,0,0.55)`:"0 4px 14px rgba(0,0,0,0.45)",transition:"transform .15s,box-shadow .15s"}} onMouseEnter={e=>{e.currentTarget.style.transform="scale(1.05)";e.currentTarget.style.boxShadow=isOwned?`0 0 0 2px ${accent}, 0 10px 30px rgba(0,0,0,0.7)`:"0 8px 24px rgba(0,0,0,0.65)";}} onMouseLeave={e=>{e.currentTarget.style.transform="scale(1)";e.currentTarget.style.boxShadow=isOwned?`0 0 0 2px ${accent}, 0 6px 22px rgba(0,0,0,0.55)`:"0 4px 14px rgba(0,0,0,0.45)";}}>
-                          <CardImage card={card} size="small" surface="artist-notable" variant="inline" missing={<IcoNoImage size={18}/>} className="iv-frame-57 iv-img" style={{display:"block",width:90,height:"auto",filter:isOwned?"brightness(1.05)":"grayscale(0.2) brightness(0.85)"}}/>
-                        </div>
-                        <span style={{fontSize:".58rem",color:"#6b6b90",fontWeight:isOwned?600:500,textAlign:"center",lineHeight:1.2,width:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isOwned?"✓ ":""}{card.name}</span>
-                      </div>
-                    );
-                  })}
+
+          {heroCards.length>0&&(
+            <div className="ap3-hero-art">
+              {renderHeroCard(heroCards[0],"ap3-hero-art-main")}
+              {heroCards.length>1&&(
+                <div className="ap3-hero-art-side">
+                  {heroCards.slice(1,3).map(c=>renderHeroCard(c,"ap3-hero-art-mini"))}
                 </div>
               )}
             </div>
           )}
         </div>
-      ):total>0?(
-        <div style={{borderBottom:"1px solid #1e1e35",padding:".85rem 1.25rem"}}>
-          <p style={{margin:0,fontSize:".76rem",color:"#6b6b90",letterSpacing:".01em"}}>
-            {entry?.isDynamic?`One of your additions · ${total} card${total===1?"":"s"} in the archive.`:`${total} card${total===1?"":"s"} in the archive.`}
-          </p>
-        </div>
-      ):null}
+      </header>
 
-      {/* ── controls ── */}
-      <div style={{position:"sticky",top:49,zIndex:90,background:"rgba(7,7,15,0.96)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",borderBottom:"1px solid #1e1e35",display:"flex",gap:".35rem",alignItems:"center",padding:".45rem .75rem",flexWrap:"wrap"}}>
-        <div style={{flex:"1 1 110px",position:"relative",minWidth:0}}>
-          <span style={{position:"absolute",left:".55rem",top:"50%",transform:"translateY(-50%)",color:"#6b6b90",fontSize:".7rem",pointerEvents:"none"}}>⌕</span>
-          <input type="search" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...selSt,width:"100%",paddingLeft:"1.6rem"}}/>
-        </div>
-        <div style={{display:"flex",gap:2,background:"#0f0f1c",border:"1px solid #1e1e35",borderRadius:8,padding:2}}>
-          {[{key:null,label:"All",on:"#e8e8f4",bg:"rgba(255,255,255,0.08)",bd:"#3a3a5a"},{key:"owned",label:"Owned",on:"#6ee7b7",bg:"rgba(34,197,94,0.12)",bd:"#22c55e"},{key:"missing",label:"Missing",on:"#c0a0f8",bg:"rgba(139,108,216,0.18)",bd:"#8b6cd8"},{key:"hunting",label:"Hunting",on:"#b9a3f2",bg:"rgba(155,127,232,0.16)",bd:"#9b7fe8"}].map(seg=>{const active=viewMode===seg.key;return(<button key={seg.label} onClick={()=>setViewMode(seg.key)} style={{background:active?seg.bg:"transparent",color:active?seg.on:"#6b6b90",border:`1px solid ${active?seg.bd:"transparent"}`,borderRadius:6,padding:".3rem .55rem",cursor:"pointer",fontSize:".72rem",fontWeight:active?700:500,whiteSpace:"nowrap",transition:"all .12s"}}>{seg.label}</button>);})}
-        </div>
-        <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{...selSt,maxWidth:72}}>
-          <option value="name">A–Z</option>
-          <option value="price-desc">$↓</option>
-          <option value="price-asc">$↑</option>
-          <option value="date-desc">New</option>
-          <option value="date-asc">Old</option>
-        </select>
-        {toggleShowAllColor&&<button onClick={toggleShowAllColor} className="btn-ghost" title={showAllColor?"Showing missing cards in color":"Showing missing cards grayed out"} style={{color:showAllColor?"#c0589e":"#6b6b90",borderRadius:8,padding:".38rem",display:"flex",background:showAllColor?"rgba(192,88,158,0.12)":undefined,border:showAllColor?"1px solid rgba(192,88,158,0.3)":undefined}}><IcoContrast/></button>}
-      </div>
-
-      {/* ── hunting summary (Slice C) — artist-level planning framing.
-          Hidden while searching so counts never disagree with the filtered
-          grid below. Read-only over intentCounts. ── */}
-      {viewMode==="hunting"&&!search&&(intentCounts.hunting+intentCounts.want>0)&&(
-        <div style={{maxWidth:860,margin:"0 auto",padding:"1rem 1rem 0"}}>
-          <p style={{margin:0,fontSize:".74rem",color:"#6b6b90",letterSpacing:".01em"}}>
-            <span style={{color:"#b9a3f2",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{intentCounts.hunting}</span> active target{intentCounts.hunting===1?"":"s"} · <span style={{color:"#8888b8",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{intentCounts.want}</span> on the list
-          </p>
-        </div>
+      {/* ── notable works (editorial artists only; no empty chrome otherwise) ── */}
+      {notable.length>0&&(
+        <section className="ap3-notable" aria-labelledby="ap3-notable-h">
+          <div className="ap3-frame">
+            <div className="ap3-sec-head">
+              <h2 id="ap3-notable-h" className="ap3-sec-title font-display">Notable works</h2>
+              <p className="ap3-sec-sub">A curated entry point — not a ranking, and not driven by price.</p>
+            </div>
+            <ul className="ap3-notable-grid">
+              {notable.map(n=>{
+                const c=n.card;
+                const isOwned=checkOwned(c);
+                return(
+                  <li key={c.id} className="ap3-notable-card">
+                    <button type="button" className="ap3-notable-art" onClick={()=>onCardClick(c)} aria-label={`View ${c.name}, ${(c.set&&c.set.name)||"unknown set"} — ${isOwned?"owned":"missing"}`}>
+                      <CardImage card={c} size="small" surface="artist-notable" variant="inline" missing={<IcoNoImage size={18}/>} className="iv-frame-57 iv-img" style={{display:"block",width:"100%",height:"auto",borderRadius:8}}/>
+                      <span className={`ap3-notable-state ${isOwned?"is-owned":"is-missing"}`}>{isOwned?"Owned":"Missing"}</span>
+                    </button>
+                    <div className="ap3-notable-meta">
+                      <span className={`ap3-notable-label ${n.basis==="documented"?"is-doc":"is-ed"}`} style={n.basis==="documented"?{color:accent,borderColor:`${accent}55`}:undefined} title={n.basis==="documented"?"Attributable, sourced significance":"Illustrated Vault editorial selection"}>{n.label}</span>
+                      <span className="ap3-notable-name">{c.name}</span>
+                      <span className="ap3-notable-set">{(c.set&&c.set.name)||"—"}</span>
+                      <p className="ap3-notable-note">{n.note}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </section>
       )}
 
-      {/* ── full card grid ── */}
-      <div style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
-        <ArtistSection entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode} intentMap={intentMap} soloSections noHeader/>
-      </div>
+      {/* ── from the archive ── */}
+      {hasArchive?(
+        <section className="ap3-archive" aria-labelledby="ap3-archive-h" style={{background:`linear-gradient(135deg,${grad.replace(/[\d.]+\)$/,"0.05)")} 0%,transparent 58%)`}}>
+          <div className="ap3-frame">
+            <h2 id="ap3-archive-h" className="ap3-eyebrow" style={{color:accent}}>From the archive</h2>
+            <div className="ap3-archive-body">
+              {introParas.map((p,i)=><p key={i}>{p}</p>)}
+            </div>
+
+            {editorial&&editorial.notes&&editorial.notes.length>0&&(
+              <>
+                <button type="button" className="ap3-disclose" aria-expanded={notesOpen} aria-controls="ap3-artist-notes" onClick={()=>setNotesOpen(v=>!v)}>
+                  <IcoChev open={notesOpen}/>
+                  <span>{notesOpen?"Hide the artist notes":"Read the artist notes"}</span>
+                </button>
+                <div id="ap3-artist-notes" hidden={!notesOpen} className="ap3-notes">
+                  {editorial.notes.map(note=>(
+                    <article key={note.id} className="ap3-note">
+                      <h3 className="ap3-note-title">{note.title}</h3>
+                      <p>{note.body}</p>
+                    </article>
+                  ))}
+                  {editorial.sources&&editorial.sources.length>0&&(
+                    <article className="ap3-note ap3-sources">
+                      <h3 className="ap3-note-title">Sources &amp; further reading</h3>
+                      <ul>
+                        {editorial.sources.map(s=>(
+                          <li key={s.id}>
+                            <a className="ap3-link" href={s.url} target="_blank" rel="noopener noreferrer" aria-label={`${s.label} — ${s.publisher} (opens in a new tab)`}>{s.label} ↗</a>
+                            <span className="ap3-source-pub">{s.publisher}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      ):total>0?(
+        <section className="ap3-archive ap3-archive-quiet">
+          <div className="ap3-frame">
+            <p className="ap3-quiet-line">{entry?.isDynamic?`One of your additions · ${total} card${total===1?"":"s"} in the archive.`:`${total} card${total===1?"":"s"} in the archive.`}</p>
+          </div>
+        </section>
+      ):null}
+
+      {/* ── the collection ── */}
+      <section className="ap3-collection" aria-labelledby="ap3-collection-h">
+        <div className="ap3-frame">
+          <div className="ap3-collection-head">
+            <h2 id="ap3-collection-h" className="ap3-eyebrow">The collection</h2>
+            <p className="ap3-collection-counts">
+              <span className="ap3-num" style={{color:"#6ee7b7"}}>{owned}</span> owned
+              <span className="ap3-dot">·</span>
+              <span className="ap3-num" style={{color:"#c0a0f8"}}>{missing}</span> missing
+              {intentCounts.hunting>0&&(<><span className="ap3-dot">·</span><span className="ap3-num" style={{color:"#b9a3f2"}}>{intentCounts.hunting}</span> actively hunting</>)}
+            </p>
+          </div>
+        </div>
+
+        <div className="ap3-controls-wrap">
+          <div className="ap3-frame ap3-controls">
+            <div className="ap3-modes" role="group" aria-label="Collection view">
+              {[{key:null,label:"All",on:"#e8e8f4",bg:"rgba(255,255,255,0.08)",bd:"#3a3a5a"},{key:"owned",label:"Owned",on:"#6ee7b7",bg:"rgba(34,197,94,0.12)",bd:"#22c55e"},{key:"missing",label:"Missing",on:"#c0a0f8",bg:"rgba(139,108,216,0.18)",bd:"#8b6cd8"},{key:"hunting",label:"Hunting",on:"#b9a3f2",bg:"rgba(155,127,232,0.16)",bd:"#9b7fe8"}].map(seg=>{const active=viewMode===seg.key;return(<button key={seg.label} type="button" aria-pressed={active} onClick={()=>setViewMode(seg.key)} className="ap3-mode" style={{background:active?seg.bg:"transparent",color:active?seg.on:"#6b6b90",border:`1px solid ${active?seg.bd:"transparent"}`,fontWeight:active?700:500}}>{seg.label}</button>);})}
+            </div>
+            <div className="ap3-utils">
+              <div className="ap3-search">
+                <span aria-hidden="true" className="ap3-search-ico">⌕</span>
+                <input type="search" aria-label="Search cards by name" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)} style={{...selSt,width:"100%",paddingLeft:"1.7rem"}}/>
+              </div>
+              <label className="ap3-sort">
+                <span className="ap3-sr">Sort cards</span>
+                <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={selSt} aria-label="Sort cards">
+                  <option value="date-asc">Archive order</option>
+                  <option value="date-desc">Newest first</option>
+                  <option value="name">A–Z</option>
+                  <option value="price-desc">Price high to low</option>
+                  <option value="price-asc">Price low to high</option>
+                </select>
+              </label>
+              {toggleShowAllColor&&<button type="button" onClick={toggleShowAllColor} className="btn-ghost ap3-colortoggle" aria-pressed={!!showAllColor} aria-label={showAllColor?"Show missing cards dimmed":"Show missing cards in full colour"} title={showAllColor?"Showing missing cards in colour":"Showing missing cards dimmed"} style={{color:showAllColor?"#c0589e":"#6b6b90",background:showAllColor?"rgba(192,88,158,0.12)":undefined,border:showAllColor?"1px solid rgba(192,88,158,0.3)":undefined}}><IcoContrast/></button>}
+            </div>
+          </div>
+        </div>
+
+        {/* hunting summary — read-only over intentCounts, hidden while searching
+            so the line can never disagree with the filtered grid below. */}
+        {viewMode==="hunting"&&!search&&(intentCounts.hunting+intentCounts.want>0)&&(
+          <div className="ap3-frame" style={{paddingTop:"1rem"}}>
+            <p style={{margin:0,fontSize:".76rem",color:"#6b6b90",letterSpacing:".01em"}}>
+              <span style={{color:"#b9a3f2",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{intentCounts.hunting}</span> active target{intentCounts.hunting===1?"":"s"} · <span style={{color:"#8888b8",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{intentCounts.want}</span> on the list
+            </p>
+          </div>
+        )}
+
+        <div className="ap3-frame" style={{paddingTop:"1rem",paddingBottom:"2rem"}}>
+          <ArtistSection entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} searchQuery={search} sortBy={sortBy} viewMode={viewMode} intentMap={intentMap} soloSections noHeader gridClassName="ap3-card-grid"/>
+        </div>
+      </section>
 
     </div>
   );
@@ -963,8 +1095,12 @@ function ArtistPage({slug,entry,cards,checkOwned,manualOwned,manualMissing,favor
 
 
 // ── ARTIST SECTION ─────────────────────────────────────────────────────────────
-function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader,intentMap,soloSections,startCollapsed,auditSurface}){
+function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorites,onCardClick,onToggleFavorite,searchQuery,sortBy,viewMode,readOnly,noHeader,intentMap,soloSections,startCollapsed,auditSurface,gridClassName}){
   const isSecondary=entry.tier==="secondary";
+  // AP3.0: opt-in tile-grid override. When gridClassName is omitted (Binder,
+  // SharedBinder — every pre-existing call site) the grid keeps its exact
+  // previous inline geometry, so no other surface changes tile size.
+  const gridProps=gridClassName?{className:gridClassName}:{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}};
   // B-1: startCollapsed is opt-in (default false) so only the Binder's own
   // ArtistSection calls it — ArtistPage (noHeader=true, always shows its one
   // section) and SharedBinder (prop omitted) are unaffected and keep the
@@ -1001,9 +1137,9 @@ function ArtistSection({entry,cards,checkOwned,manualOwned,manualMissing,favorit
       )}
       {(open||noHeader)&&(
         groupedBySet?(
-          <>{viewMode==="hunting"&&(groupedBySet.huntingCount+groupedBySet.wantCount===0)&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>No hunt targets for this artist yet — mark a missing card as Hunting and it will gather here.</div>)}{soloSections&&viewMode==="missing"&&groupedBySet.missingCount===0&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>Complete — no missing cards for this artist.</div>)}{soloSections&&viewMode==="owned"&&groupedBySet.ownedCount===0&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>No owned cards yet for this artist.</div>)}{(viewMode==="hunting"?[{key:"hunt",label:"HUNTING",count:groupedBySet.huntingCount,groups:groupedBySet.hunting,ownedFlag:false,hdr:"#b9a3f2",hdrLine:"rgba(155,127,232,0.25)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"want",label:"ON THE LIST",count:groupedBySet.wantCount,groups:groupedBySet.want,ownedFlag:false,hdr:"#8888b8",hdrLine:"rgba(136,136,184,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]:viewMode==="missing"?(soloSections?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]:[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]):(soloSections?[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}])).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>{group.cards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly} auditSurface={auditSurface}/>)}</div></div>))}</div>))}</>
+          <>{viewMode==="hunting"&&(groupedBySet.huntingCount+groupedBySet.wantCount===0)&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>No hunt targets for this artist yet — mark a missing card as Hunting and it will gather here.</div>)}{soloSections&&viewMode==="missing"&&groupedBySet.missingCount===0&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>Complete — no missing cards for this artist.</div>)}{soloSections&&viewMode==="owned"&&groupedBySet.ownedCount===0&&(<div style={{padding:"2rem 1rem",textAlign:"center",fontSize:".78rem",color:"#4a4a70",border:"1px dashed #1e1e35",borderRadius:10}}>No owned cards yet for this artist.</div>)}{(viewMode==="hunting"?[{key:"hunt",label:"HUNTING",count:groupedBySet.huntingCount,groups:groupedBySet.hunting,ownedFlag:false,hdr:"#b9a3f2",hdrLine:"rgba(155,127,232,0.25)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"want",label:"ON THE LIST",count:groupedBySet.wantCount,groups:groupedBySet.want,ownedFlag:false,hdr:"#8888b8",hdrLine:"rgba(136,136,184,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]:viewMode==="missing"?(soloSections?[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}]:[{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"},{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]):(soloSections?[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"}]:[{key:"own",label:"OWNED",count:groupedBySet.ownedCount,groups:groupedBySet.owned,ownedFlag:true,hdr:"#3a7a4a",hdrLine:"rgba(34,197,94,0.12)",grpClr:"#2a3a2a",divBg:"#09120a"},{key:"miss",label:"MISSING",count:groupedBySet.missingCount,groups:groupedBySet.missing,ownedFlag:false,hdr:"#9b7ce8",hdrLine:"rgba(139,108,216,0.18)",grpClr:"#4a4a70",divBg:"#0d0d1a"}])).filter(s=>s.count>0).map((s,si)=>(<div key={s.key} style={{marginBottom:si===0?"1.5rem":0}}><div style={{display:"flex",alignItems:"center",gap:".6rem",marginBottom:".75rem"}}><span style={{fontSize:".58rem",letterSpacing:".12em",fontWeight:800,color:s.hdr,whiteSpace:"nowrap"}}>{s.label} · {s.count}</span><div style={{flex:1,height:"1px",background:s.hdrLine}}/></div>{s.groups.map((group,gi)=>(<div key={group.name+gi} style={{marginBottom:".7rem"}}><div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}><span style={{fontSize:".58rem",color:s.grpClr,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>{group.name}</span><div style={{flex:1,height:"1px",background:s.divBg}}/><span style={{fontSize:".55rem",color:s.grpClr,whiteSpace:"nowrap",flexShrink:0}}>{group.cards.length}</span></div><div {...gridProps}>{group.cards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={s.ownedFlag} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly} auditSurface={auditSurface}/>)}</div></div>))}</div>))}</>
         ):(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(76px,1fr))",gap:"6px"}}>
+          <div {...gridProps}>
             {displayCards.map(card=><CardTile key={card.id} card={card} intentStatus={intentMap?.get(card.id)} owned={checkOwned(card)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(card.id)} onCardClick={onCardClick} onToggleFavorite={onToggleFavorite} readOnly={readOnly} auditSurface={auditSurface}/>)}
           </div>
         )
