@@ -199,3 +199,175 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
 @media(prefers-reduced-motion:reduce){
   .iv-load::after{animation:none;}
 }
+
+/* ══ Artist Page 3.0 ═══════════════════════════════════════════════════════════
+   Scoped entirely to .artist-page-v3 / .ap3-*. Nothing here alters Binder,
+   SharedBinder, Hunt Board, Owned Library, Dashboard or Planned Binders.
+   Brand target: warm archive, editorial, premium — ember not bonfire.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Unified page frame ───────────────────────────────────────────────────── */
+.ap3-frame{--ap3-pad:1.25rem;width:100%;max-width:1120px;margin:0 auto;padding-left:var(--ap3-pad);padding-right:var(--ap3-pad);box-sizing:border-box;}
+@media(max-width:520px){.ap3-frame{--ap3-pad:1rem;}}
+/* No overflow-x on the page root: it would create a scroll container and break
+   position:sticky for the header and the collection controls. Overflow is
+   prevented structurally instead (min-width:0 / max-width:100% below). */
+.artist-page-v3{max-width:100%;}
+.artist-page-v3 img{max-width:100%;}
+.ap3-hero-inner>*,.ap3-controls>*,.ap3-notable-grid>*{min-width:0;}
+.ap3-hero-name,.ap3-hero-thesis,.ap3-archive-body p,.ap3-note p,.ap3-notable-name{overflow-wrap:break-word;}
+
+/* ── Sticky mini-header ───────────────────────────────────────────────────── */
+.ap3-topbar{position:sticky;top:0;z-index:100;background:rgba(7,7,15,0.96);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-bottom:1px solid #1e1e35;}
+.ap3-topbar-inner{display:flex;align-items:center;gap:.6rem;padding-top:.6rem;padding-bottom:.6rem;}
+.ap3-back{background:none;border:none;color:#6b6b90;cursor:pointer;display:flex;align-items:center;gap:.25rem;font:inherit;font-size:.78rem;padding:4px 6px;border-radius:5px;transition:color .12s;}
+.ap3-back:hover{color:#e8e8f4;}
+.ap3-topbar-name{font-size:.8rem;font-weight:700;letter-spacing:.02em;flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+.ap3-hero{position:relative;border-bottom:1px solid #14142a;}
+.ap3-hero-inner{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:2.5rem;align-items:center;padding-top:2.6rem;padding-bottom:2.6rem;}
+.ap3-hero-text{min-width:0;}
+.ap3-hero-tags{font-size:.6rem;letter-spacing:.16em;font-weight:800;opacity:.88;line-height:1.6;margin-bottom:.6rem;text-transform:uppercase;}
+.ap3-hero-name{font-size:clamp(1.9rem,4.6vw,3.1rem);font-weight:900;color:#f0f0ff;letter-spacing:-.03em;line-height:1.04;margin:0 0 .45rem;}
+.ap3-hero-identity{font-size:.7rem;color:rgba(190,190,210,0.46);letter-spacing:.03em;line-height:1.5;margin-bottom:1rem;}
+.ap3-hero-thesis{margin:0 0 1.05rem;font-size:.95rem;line-height:1.6;color:rgba(226,222,244,0.9);max-width:46ch;}
+.ap3-pullquote{margin:0 0 1.15rem;padding-left:.8rem;border-left:2px solid #8b6cd8;max-width:44ch;}
+.ap3-pullquote blockquote{margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-size:1.02rem;line-height:1.5;color:rgba(232,228,250,0.82);}
+.ap3-pullquote figcaption{margin-top:.4rem;font-size:.65rem;line-height:1.5;color:rgba(190,190,210,0.42);}
+.ap3-link{color:#9f8fd8;text-decoration:underline;text-underline-offset:2px;}
+.ap3-link:hover{color:#c4b6f0;}
+.ap3-progress{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;}
+.ap3-progress-track{flex:1 1 130px;max-width:190px;height:3px;background:rgba(255,255,255,0.07);border-radius:2px;overflow:hidden;}
+.ap3-progress-fill{height:100%;border-radius:2px;transition:width 1.2s cubic-bezier(.16,1,.3,1);}
+.ap3-progress-pct{font-size:.78rem;font-weight:700;white-space:nowrap;}
+.ap3-progress-count{font-size:.68rem;color:rgba(190,190,210,0.32);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.ap3-chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.9rem;}
+.ap3-chip{display:inline-flex;align-items:center;gap:.35rem;padding:5px 11px;border-radius:20px;background:rgba(255,255,255,0.03);border:1px solid #1e1e35;font:inherit;font-size:.66rem;letter-spacing:.05em;color:#8888a8;white-space:nowrap;cursor:pointer;}
+.ap3-chip:hover{border-color:#2e2550;}
+
+/* Hero artwork — one dominant card, one or two quieter supports. */
+.ap3-hero-art{display:flex;align-items:center;justify-content:flex-end;gap:1rem;min-width:0;}
+.ap3-hero-art button{background:none;border:none;padding:0;margin:0;cursor:pointer;display:block;border-radius:9px;transition:transform .18s ease,box-shadow .18s ease;}
+.ap3-hero-art-main{width:min(232px,46%);flex:0 0 auto;box-shadow:0 16px 44px rgba(0,0,0,0.7),0 0 24px rgba(255,255,255,0.03);}
+.ap3-hero-art-side{display:flex;flex-direction:column;gap:.85rem;width:min(124px,26%);flex:0 0 auto;}
+.ap3-hero-art-mini{width:100%;opacity:.82;box-shadow:0 10px 28px rgba(0,0,0,0.6);}
+.ap3-hero-art button:hover{transform:translateY(-3px);}
+.ap3-hero-art-mini:hover{opacity:1;}
+.ap3-hero-art button:focus-visible{outline:2px solid #8b6cd8;outline-offset:3px;}
+
+@media(max-width:900px){
+  .ap3-hero-inner{grid-template-columns:minmax(0,1fr);gap:1.4rem;padding-top:1.5rem;padding-bottom:1.5rem;}
+  .ap3-hero-art{justify-content:flex-start;align-items:flex-start;gap:.7rem;}
+  .ap3-hero-art-main{width:132px;}
+  .ap3-hero-art-side{flex-direction:row;width:auto;gap:.7rem;}
+  .ap3-hero-art-mini{width:96px;}
+  .ap3-hero-thesis{font-size:.88rem;max-width:none;}
+  .ap3-pullquote{max-width:none;}
+  .ap3-pullquote blockquote{font-size:.95rem;}
+}
+@media(max-width:380px){
+  .ap3-hero-art-main{width:112px;}
+  .ap3-hero-art-mini{width:82px;}
+}
+@media(max-width:340px){
+  .ap3-hero-art{gap:.55rem;}
+  .ap3-hero-art-main{width:104px;}
+  .ap3-hero-art-side{gap:.55rem;}
+  .ap3-hero-art-mini{width:74px;}
+}
+
+/* ── Notable Works ────────────────────────────────────────────────────────── */
+.ap3-notable{padding-top:2rem;padding-bottom:2rem;border-bottom:1px solid #14142a;}
+.ap3-sec-head{margin-bottom:1.1rem;}
+.ap3-sec-title{font-size:1.28rem;font-weight:800;color:#eceaf8;letter-spacing:-.015em;margin:0 0 .3rem;}
+.ap3-sec-sub{margin:0;font-size:.74rem;color:#6b6b90;line-height:1.5;}
+.ap3-notable-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1.1rem;}
+.ap3-notable-card{min-width:0;display:flex;flex-direction:column;gap:.55rem;}
+.ap3-notable-art{position:relative;display:block;width:100%;background:none;border:none;padding:0;margin:0;cursor:pointer;border-radius:8px;transition:transform .16s ease;}
+.ap3-notable-art:hover{transform:translateY(-3px);}
+.ap3-notable-art:focus-visible{outline:2px solid #8b6cd8;outline-offset:3px;}
+.ap3-notable-state{position:absolute;left:6px;bottom:6px;font-size:.56rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:5px;pointer-events:none;}
+.ap3-notable-state.is-owned{background:rgba(10,32,18,0.88);color:#6ee7b7;}
+.ap3-notable-state.is-missing{background:rgba(12,10,22,0.88);color:#9a93b8;}
+.ap3-notable-meta{display:flex;flex-direction:column;gap:.15rem;min-width:0;}
+.ap3-notable-label{align-self:flex-start;font-size:.55rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:4px;border:1px solid #24243d;margin-bottom:.2rem;}
+.ap3-notable-label.is-ed{color:#6f6f93;}
+.ap3-notable-name{font-size:.84rem;font-weight:600;color:#e8e6f4;line-height:1.3;}
+.ap3-notable-set{font-size:.66rem;color:#6b6b90;line-height:1.35;}
+.ap3-notable-note{margin:.25rem 0 0;font-size:.7rem;line-height:1.5;color:#82829f;}
+
+@media(max-width:760px){
+  .ap3-notable-grid{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:.85rem;padding-bottom:.5rem;
+    margin-left:calc(var(--ap3-pad) * -1);margin-right:calc(var(--ap3-pad) * -1);
+    padding-left:var(--ap3-pad);padding-right:calc(var(--ap3-pad) + 1.6rem);
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+  .ap3-notable-grid::-webkit-scrollbar{display:none;}
+  .ap3-notable-card{flex:0 0 152px;width:152px;scroll-snap-align:start;}
+}
+
+/* ── From the Archive ─────────────────────────────────────────────────────── */
+.ap3-archive{padding-top:1.9rem;padding-bottom:1.9rem;border-bottom:1px solid #14142a;}
+.ap3-archive-quiet{padding-top:1.1rem;padding-bottom:1.1rem;}
+.ap3-quiet-line{margin:0;font-size:.78rem;color:#6b6b90;letter-spacing:.01em;}
+.ap3-eyebrow{font-size:.62rem;letter-spacing:.16em;font-weight:800;text-transform:uppercase;margin:0 0 .8rem;color:#8b6cd8;}
+.ap3-archive-body{max-width:72ch;}
+.ap3-archive-body p{margin:0 0 .8rem;font-size:.86rem;line-height:1.75;color:rgba(200,192,218,0.86);}
+.ap3-archive-body p:last-child{margin-bottom:0;}
+.ap3-disclose{margin-top:1.05rem;display:inline-flex;align-items:center;gap:.45rem;background:#141425;border:1px solid #1e1e35;border-radius:8px;color:#c0b8d8;font:inherit;font-size:.76rem;font-weight:600;padding:.5rem .8rem;min-height:40px;cursor:pointer;transition:background .15s,border-color .15s;}
+.ap3-disclose:hover{background:#1a1a30;border-color:#2e2550;}
+.ap3-disclose:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+.ap3-notes[hidden]{display:none;}
+.ap3-notes{margin-top:1.1rem;max-width:72ch;display:flex;flex-direction:column;gap:1.15rem;}
+.ap3-note-title{font-size:.68rem;letter-spacing:.11em;font-weight:800;text-transform:uppercase;color:#8f88ad;margin:0 0 .4rem;}
+.ap3-note p{margin:0;font-size:.84rem;line-height:1.75;color:rgba(200,192,218,0.86);}
+.ap3-sources ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.45rem;}
+.ap3-sources li{font-size:.78rem;line-height:1.5;}
+.ap3-source-pub{display:block;font-size:.66rem;color:#5f5f80;}
+
+/* ── The Collection ───────────────────────────────────────────────────────── */
+.ap3-collection{padding-top:1.9rem;}
+.ap3-collection-head{margin-bottom:1rem;}
+.ap3-collection-counts{margin:0;font-size:.82rem;color:#7a7a9c;line-height:1.5;}
+.ap3-num{font-weight:800;font-variant-numeric:tabular-nums;}
+.ap3-dot{margin:0 .4rem;color:#3a3a5a;}
+.ap3-controls-wrap{position:sticky;top:44px;z-index:90;background:rgba(7,7,15,0.96);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid #1e1e35;border-bottom:1px solid #1e1e35;}
+.ap3-controls{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;padding-top:.5rem;padding-bottom:.5rem;}
+.ap3-modes{display:flex;gap:2px;background:#0f0f1c;border:1px solid #1e1e35;border-radius:8px;padding:2px;flex:0 0 auto;}
+.ap3-mode{border-radius:6px;padding:.4rem .68rem;cursor:pointer;font:inherit;font-size:.75rem;white-space:nowrap;transition:background .12s,color .12s,border-color .12s;min-height:34px;}
+.ap3-utils{display:flex;align-items:center;gap:.5rem;flex:1 1 260px;min-width:0;}
+.ap3-search{position:relative;flex:1 1 140px;min-width:0;}
+.ap3-search-ico{position:absolute;left:.6rem;top:50%;transform:translateY(-50%);color:#6b6b90;font-size:.75rem;pointer-events:none;}
+.ap3-sort{display:block;flex:0 0 auto;min-width:0;}
+.ap3-sort select{max-width:150px;min-height:34px;}
+.ap3-colortoggle{border-radius:8px;padding:.42rem;display:flex;align-items:center;justify-content:center;min-height:34px;min-width:34px;flex:0 0 auto;}
+.ap3-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+@media(max-width:640px){
+  .ap3-controls{gap:.5rem;}
+  .ap3-modes{flex:1 1 100%;justify-content:space-between;}
+  .ap3-mode{flex:1 1 0;text-align:center;padding:.4rem .3rem;min-height:38px;}
+  .ap3-utils{flex:1 1 100%;}
+  .ap3-sort select{max-width:132px;min-height:38px;}
+  .ap3-colortoggle{min-height:38px;min-width:38px;}
+}
+
+/* Collection tile grid — Artist Page only. Applied via the opt-in
+   gridClassName prop, so Binder / SharedBinder geometry is untouched. */
+.ap3-card-grid{display:grid;gap:9px;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));}
+@media(min-width:768px){.ap3-card-grid{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:12px;}}
+@media(min-width:1200px){.ap3-card-grid{grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:14px;}}
+
+/* Missing-card treatment — Artist Page 3.0 scoped override.
+   The global rule (grayscale(1) brightness(0.3)) is unchanged; these are more
+   specific and sit later in the file, so no !important is needed. Artwork stays
+   identifiable while remaining clearly unowned; colour mode still restores it. */
+.artist-page-v3 .card-tile.missing img{filter:grayscale(0.78) brightness(0.58);}
+.artist-page-v3 .card-tile.missing:hover img{filter:grayscale(0.6) brightness(0.72);}
+.artist-page-v3.color-mode .card-tile.missing img{filter:none;}
+.artist-page-v3.color-mode .card-tile.missing:hover img{filter:none;}
+
+@media(prefers-reduced-motion:reduce){
+  .ap3-progress-fill{transition:none;}
+  .ap3-hero-art button,.ap3-notable-art{transition:none;}
+  .ap3-hero-art button:hover,.ap3-notable-art:hover{transform:none;}
+}
