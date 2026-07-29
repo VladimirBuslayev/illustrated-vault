@@ -44,9 +44,9 @@ const ARTIST_FACTS={
     story:"Asako Ito's route into card illustration is one of the most unexpected in the game. Trained as an oil painter, she encountered knitting through an unlikely source — Mr. Bean's beloved stuffed bear — and taught herself to crochet from scratch. By the time she joined the TCG in 2017, she had mastered the art of tiny yarn Pokémon, hand-stitching each one before setting it under careful lighting and photographing it. Like Morii's clay, Ito's cards are photographs of physical objects. Where Morii's clay has sculptural weight, Ito's yarn has warmth — the slight imperfections in the stitching, the softness of the focus, give her cards an irreplaceable handmade quality that no digital tool has come close to matching.",
   },
   "Tomokazu Komiya":{
-    since:"Active since 1998 — Neo Genesis",
-    fact:"His flat, lopsided style is a deliberate art historical choice — Primitivism. In 2023 he reimagined Sunflora as a tribute to Van Gogh's Sunflowers.",
-    story:"Tomokazu Komiya has been illustrating Pokémon cards since 1998 — one of the game's original artists and still going more than 25 years later. His bold, flat, slightly off-kilter style is a deliberate reference to Primitivism, the early 20th-century art movement that looked to prehistoric cave paintings and tribal art as a counterpoint to European realism. The style has never gone out of fashion because it was never trying to be fashionable. It was always making an argument. In 2023, Komiya painted Sunflora in direct homage to Van Gogh's Sunflowers, placing a Pokémon inside the lineage of Post-Impressionism with complete naturalness. After 25 years, he's still thinking carefully about what painting means and why.",
+    since:"Working with the Pokémon TCG since 1996",
+    fact:"He mainly works in acrylic gouache, adding pencils, coloured pencils, ballpoint pens and markers to create the loose line, strong blacks and distorted forms that make his cards instantly recognisable.",
+    story:"Tomokazu Komiya trained at the Toyo Institute of Art and Design and began working with the Pokémon TCG in 1996. One of his earliest released card illustrations was a Weedle issued only in Japan in 1998, and he has remained a freelance illustrator throughout. His loosely coloured, deliberately distorted work is often described in relation to Primitivism, but the materials are concrete and physical: acrylic gouache supported by pencils, coloured pencils, ballpoint pens and markers. Komiya has identified Ledyba from Neo Destiny as his own favourite card illustration, while fellow illustrator Kouki Saitou has singled out Delibird from Neo Revelation.",
   },
   "Shinji Kanda":{
     since:"Active since 2022 — Brilliant Stars",
@@ -85,7 +85,7 @@ const ARTIST_META={
     topCardNames:["Slowpoke","Eevee","Marill","Togepi","Clefairy","Azumarill","Swinub","Pichu","Smoochum"]},
   "asako-ito":     {accent:"#9A78D8",grad:"rgba(154,120,216,0.14)",quote:"I pick up the needles, and the Pokémon starts to take shape.",tags:"Yarn & Textile Art · Warm · Handcrafted",
     topCardNames:["Jigglypuff","Clefairy","Chansey","Snubbull","Wigglytuff","Clefable","Blissey","Cleffa"]},
-  "tomokazu-komiya":{accent:"#E8A030",grad:"rgba(232,160,48,0.14)",quote:"Primitivism taught me that feeling matters more than precision.",tags:"Primitivism · Bold Colour · Dramatic",
+  "tomokazu-komiya":{accent:"#E8A030",grad:"rgba(232,160,48,0.14)",tags:"Acrylic Gouache · Loose Line · Distorted Form",
     topCardNames:["Sunflora","Rapidash","Arcanine","Ho-Oh","Typhlosion","Charizard","Growlithe","Entei"]},
   "shinji-kanda":   {accent:"#5A9ED4",grad:"rgba(90,158,212,0.14)",quote:"I think about woodblock printing every time I plan a composition.",tags:"Ukiyo-e Influence · Clean Lines · Dynamic",
     topCardNames:["Magmar","Blastoise","Hitmonchan","Typhlosion","Scizor","Machamp","Hitmonlee","Kabutops"]},
