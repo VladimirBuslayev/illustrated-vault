@@ -16,6 +16,7 @@
 
 import { supabase } from './supabaseClient.js';
 import { supaRowToCard } from './cardAdapter.js'; // BP-0A4: catalog helpers below
+import { isTcgPocketCard } from '../utils/cardUtils.js'; // BP-1G: the ONE production Pocket predicate
 
 const BINDER_COLS = 'id, name, description, created_at, updated_at';
 
@@ -108,14 +109,28 @@ export async function deleteBinder(userId, binderId) {
 // ═══ BP-0A3: binder membership ═══════════════════════════════════════════════
 // No user_id on child rows — RLS verifies ownership through the parent binder.
 
-/** Ordered card_id list for a binder (created_at asc). Soft-fails to null. */
+/** Ordered card_id list for a binder. Soft-fails to null.
+ *
+ *  BP-1B: read order is now the collector-authored sequence —
+ *  position ASC, created_at ASC, id ASC. The three keys together are a
+ *  guaranteed TOTAL order, which the previous single created_at key was not:
+ *  two rows sharing a timestamp had no defined sequence. position carries the
+ *  intent; created_at and id only break ties deterministically.
+ *
+ *  REQUIRES the BP-1A migration. Without the position column this select
+ *  errors and the function soft-fails to null, which the UI renders as a
+ *  retryable load failure — so the migration MUST deploy before this file.
+ *
+ *  Public return contract is unchanged: string[] of card_ids, or null. */
 export async function fetchBinderCardIds(binderId) {
   try {
     const { data, error } = await supabase
       .from('user_binder_cards')
-      .select('card_id, created_at')
+      .select('card_id, position, created_at, id')
       .eq('binder_id', binderId)
-      .order('created_at', { ascending: true });
+      .order('position',   { ascending: true })
+      .order('created_at', { ascending: true })
+      .order('id',         { ascending: true });
     if (error) throw error;
     return (data || []).map(r => r.card_id);
   } catch (e) {
@@ -128,7 +143,32 @@ export async function fetchBinderCardIds(binderId) {
  *  already a member (unique constraint 23505 — treated as a soft no-op, not
  *  an error). Throws on any other failure. Touches nothing but
  *  user_binder_cards — never hunt intent, favorites, or ownership. */
-export async function addCardToBinder(binderId, cardId) {
+export async function addCardToBinder(binderId, cardId, card = null) {
+  // BP-1G: TCG Pocket cards are excluded from NEW membership on every path
+  // through this service, not only from search results. The test is the single
+  // production predicate isTcgPocketCard — no second heuristic is introduced
+  // here. When the caller already holds the adapted card (the plan search
+  // surface always does) no extra round trip is made; otherwise the row is
+  // resolved once so a direct service call cannot bypass the rule.
+  //
+  // A cardId that resolves to NOTHING is deliberately still insertable:
+  // membership must survive catalog absence, and refusing here would make an
+  // unavailable catalog row silently unaddable.
+  let subject = card;
+  if (!subject) {
+    const { data, error: lookupError } = await supabase
+      .from('cards_effective')
+      .select(CARD_COLS)
+      .eq('id', cardId)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    subject = data ? supaRowToCard(data) : null;
+  }
+  if (subject && isTcgPocketCard(subject)) {
+    throw new Error('TCG Pocket cards cannot be added to a planned binder.');
+  }
+  // position is intentionally omitted: the BP-1A BEFORE INSERT trigger assigns
+  // it under a parent-binder lock, so an unpositioned row is unrepresentable.
   const { error } = await supabase
     .from('user_binder_cards')
     .insert({ binder_id: binderId, card_id: cardId });
@@ -149,6 +189,27 @@ export async function removeCardFromBinder(binderId, cardId) {
   if (error) throw error;
 }
 
+/** BP-1B: persist a whole-binder manual order through the reorder_binder_cards
+ *  RPC. orderedCardIds must be an EXACT permutation of the binder's current
+ *  membership — the RPC verifies this under a parent-row lock and raises rather
+ *  than partially applying, so there is no half-reordered state to reconcile.
+ *
+ *  No user id is sent: the RPC derives the caller from auth.uid().
+ *  Write convention — throws on failure; the caller restores its previous
+ *  order. Returns the number of rows repositioned. */
+export async function reorderBinderCards(binderId, orderedCardIds) {
+  if (!binderId) throw new Error('reorderBinderCards: binderId is required.');
+  if (!Array.isArray(orderedCardIds)) {
+    throw new Error('reorderBinderCards: orderedCardIds must be an array.');
+  }
+  const { data, error } = await supabase.rpc('reorder_binder_cards', {
+    p_binder_id: binderId,
+    p_card_ids: orderedCardIds,
+  });
+  if (error) throw error;
+  return data;
+}
+
 // ═══ BP-0A4: global catalog helpers ══════════════════════════════════════════
 // NOTE: these live here as Binder Planning catalog helpers for this slice —
 // not necessarily their permanent architectural home. A later hygiene pass
@@ -167,15 +228,22 @@ export async function searchCatalogCards(query, limit = 24) {
   if (q.length < 2) return [];
   try {
     const esc = q.replace(/[%_]/g, m => '\\' + m); // literal % / _ in user input
+    // BP-1G: each tier is over-fetched, then adapted, then filtered through the
+    // production isTcgPocketCard predicate. Filtering AFTER adaptation is what
+    // lets us reuse that one predicate instead of inventing an image_url SQL
+    // heuristic that would have to stay in sync with it. The over-fetch is a
+    // fetch-size detail only: the returned contract is still at most `limit`
+    // cards, in the same tier order as before.
+    const over = Math.min(limit * 3, 100);
     const { data: prefixRows, error: e1 } = await supabase
       .from('cards_effective')
       .select(CARD_COLS)
       .ilike('name', `${esc}%`)
       .order('name', { ascending: true })
       .order('release_date', { ascending: true, nullsFirst: false })
-      .limit(limit);
+      .limit(over);
     if (e1) throw e1;
-    let rows = prefixRows || [];
+    let rows = (prefixRows || []).map(supaRowToCard).filter(c => !isTcgPocketCard(c));
     if (rows.length < limit) {
       const { data: subRows, error: e2 } = await supabase
         .from('cards_effective')
@@ -184,15 +252,15 @@ export async function searchCatalogCards(query, limit = 24) {
         .not('name', 'ilike', `${esc}%`)
         .order('name', { ascending: true })
         .order('release_date', { ascending: true, nullsFirst: false })
-        .limit(limit - rows.length);
+        .limit(over);
       if (e2) throw e2;
-      rows = rows.concat(subRows || []);
+      rows = rows.concat((subRows || []).map(supaRowToCard).filter(c => !isTcgPocketCard(c)));
     }
     const ql = q.toLowerCase();
-    const rank = r => ((r.name || '').toLowerCase() === ql ? 0 : 1);
+    const rank = c => ((c.name || '').toLowerCase() === ql ? 0 : 1);
     // Stable partition: exact-name matches first, original tier order kept.
-    rows = rows.filter(r => rank(r) === 0).concat(rows.filter(r => rank(r) === 1));
-    return rows.map(supaRowToCard);
+    rows = rows.filter(c => rank(c) === 0).concat(rows.filter(c => rank(c) === 1));
+    return rows.slice(0, limit);
   } catch (e) {
     console.error('searchCatalogCards failed:', e);
     return null;
@@ -201,7 +269,19 @@ export async function searchCatalogCards(query, limit = 24) {
 
 /** Resolve arbitrary card ids against the catalog (chunked .in()). Returns
  *  whatever resolves — callers compare against the requested ids to detect
- *  orphans. Soft-fails to null. */
+ *  orphans. Soft-fails to null.
+ *
+ *  BP-1A — the two non-happy outcomes are DIFFERENT and callers must treat
+ *  them differently:
+ *    null            the read FAILED. Nothing is known about any id. This is
+ *                    NOT evidence that any card is missing from the catalog.
+ *    shorter array   the read SUCCEEDED and the absent ids are genuine
+ *                    orphans.
+ *  Conflating the two is what made a transient network error render as
+ *  "no longer in the catalog". Do not reintroduce it.
+ *
+ *  Order is NOT preserved: chunks are unordered and concatenated. Callers that
+ *  need membership order re-project through the requested id array. */
 export async function fetchCardsByIds(ids) {
   if (!ids || !ids.length) return [];
   try {
