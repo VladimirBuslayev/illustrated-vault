@@ -41,7 +41,7 @@ import { fetchTrackedArtistTiers, fetchArtistIdentities,
 import { fetchArtistCards }                               from './services/cardService.js';
 import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
          fetchBinderCardIds, addCardToBinder, removeCardFromBinder,
-         searchCatalogCards, fetchCardsByIds } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B
+         reorderBinderCards, searchCatalogCards, fetchCardsByIds } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B + BP-1B
 import { classifyCollectrRows, MATCHER_VERSION } from './services/snapshotMatcher.js';    // OL-0C
 import { loadCatalogIndex }                      from './services/catalogIndexLoader.js';  // OL-0C
 import { createImportSnapshot }                  from './services/importSnapshotService.js';// OL-0C
@@ -1865,7 +1865,21 @@ function BinderPlansIndex({user,onOpenPlan,onBack}){
   );
 }
 
-function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
+// BP-1C: pure list move used by both the drag and the Move earlier / Move later
+// paths. Removes the item at `from` and reinserts it at `to` in the resulting
+// array. Always returns a NEW array (never mutates the input) so React state
+// identity changes. Exported for validation only — no React, no I/O.
+export function reorderIds(ids,from,to){
+  if(!Array.isArray(ids))return ids;
+  if(from<0||from>=ids.length||to<0||to>=ids.length)return ids.slice();
+  if(from===to)return ids.slice();
+  const next=ids.slice();
+  const[moved]=next.splice(from,1);
+  next.splice(to,0,moved);
+  return next;
+}
+
+function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
   const[binder,setBinder]=useState(undefined); // undefined=loading, null=not found/unauthorized/error
   // BP-0B: inline edit of name/description. Session-only form state; Save
   // writes through updateBinder and applies the returned row locally —
@@ -1875,37 +1889,106 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
   const[editDesc,setEditDesc]=useState("");
   const[editBusy,setEditBusy]=useState(false);
   const[editError,setEditError]=useState("");
-  // BP-0A3: membership. memberIds are the source of truth for the total;
-  // memberCards are whatever resolves against cards_effective. Their
-  // difference is the orphan count (rows retained, surfaced, never
-  // silently deleted).
+  // BP-0A3 / BP-1A: membership. memberIds are the source of truth for the
+  // total; memberCards are whatever resolves against cards_effective.
+  //
+  // BP-1A — the three outcomes below are now DISTINCT and must never be
+  // conflated again:
+  //   memberIds === null        membership read failed. Nothing is known.
+  //   catalogState "failed"     membership IS known; card details are not.
+  //                             Not an orphan condition. Retry, do not
+  //                             recompute completion, do not say "no longer
+  //                             in the catalog".
+  //   catalogState "ready"      membership AND details are known. Any id that
+  //                             did not resolve is a GENUINE orphan and keeps
+  //                             the existing neutral treatment.
   const[memberIds,setMemberIds]=useState(undefined);   // undefined=loading, null=load failed, string[]
   const[memberCards,setMemberCards]=useState([]);
   const[membersReady,setMembersReady]=useState(false);
+  const[catalogState,setCatalogState]=useState("loading"); // "loading" | "ready" | "failed"
+  const[membersNonce,setMembersNonce]=useState(0);         // bump = retry the membership + catalog read
   // BP-0A4: catalog search. results: undefined=idle, null=failed, array.
   const[query,setQuery]=useState("");
   const[results,setResults]=useState(undefined);
   const[searching,setSearching]=useState(false);
   const[busyIds,setBusyIds]=useState(()=>new Set());
+  // BP-1C: manual ordering. reorderMode is a deliberate, temporary mode — the
+  // default surface stays a calm card grid. lastGoodRef holds the last order
+  // the server is KNOWN to hold, so a failed reorder restores truth rather
+  // than a guess.
+  //
+  // BP-1.1 — TWO independent mechanisms, and both are required:
+  //
+  //   reorderBusyRef  SERIALIZATION. A synchronous ref, set BEFORE the
+  //                   optimistic state update, so a second gesture in the same
+  //                   tick cannot start a second RPC. React state alone is
+  //                   insufficient here: setReorderBusy(true) does not take
+  //                   effect until the next render, and two taps 30ms apart
+  //                   both read the stale `false`. Exactly one
+  //                   reorder_binder_cards call can be in flight at a time,
+  //                   which is what makes the server's final stored order
+  //                   necessarily equal the UI's final order.
+  //
+  //   reorderReqRef   SUPERSESSION / INVALIDATION. Bumped per request AND on
+  //                   every planId change, so a response that arrives after
+  //                   the collector has opened a different plan cannot mutate
+  //                   the new plan's order, busy flag, or error message.
+  //
+  //   Supersession alone was NOT enough: it lets overlapping writes reach the
+  //   database, and the database applies them in arrival order, which is not
+  //   necessarily gesture order. The UI would then show the newest order while
+  //   the database held an older one. Serialization is the fix; supersession
+  //   remains for cross-plan safety.
+  const[reorderMode,setReorderMode]=useState(false);
+  const[reorderBusy,setReorderBusy]=useState(false);
+  const[reorderError,setReorderError]=useState("");
+  const[dragId,setDragId]=useState(null);
+  const[dragOverId,setDragOverId]=useState(null);
+  const reorderReqRef=useRef(0);
+  const reorderBusyRef=useRef(false);
+  const lastGoodRef=useRef(null);
+  // BP-1A: binder metadata is keyed on planId ALONE, so retrying the catalog
+  // read can never cancel an in-progress rename.
   useEffect(()=>{
     let cancelled=false;
-    setBinder(undefined);setMemberIds(undefined);setMemberCards([]);setMembersReady(false);
+    setBinder(undefined);
     setEditing(false);setEditError(""); // BP-0B: never carry edit mode across binders
+    // BP-1.1 — invalidate every in-flight reorder BEFORE the new membership
+    // read starts. Bumping the generation makes any outstanding response fail
+    // its identity check, so it can neither reorder the new plan, nor clear the
+    // new plan's busy flag, nor surface an error belonging to the old one.
+    // lastGoodRef is cleared rather than carried: the previous plan's order is
+    // not a valid recovery target for this one, and a stale value here would
+    // be restored on the first failed reorder.
+    reorderReqRef.current+=1;
+    reorderBusyRef.current=false;
+    lastGoodRef.current=null;
+    setReorderBusy(false);
+    setReorderMode(false);setReorderError("");
+    setDragId(null);setDragOverId(null);
     fetchBinder(planId).then(row=>{if(!cancelled)setBinder(row);});
+    return()=>{cancelled=true;};
+  },[planId]);
+  // BP-1A: membership + catalog resolution.
+  useEffect(()=>{
+    let cancelled=false;
+    setMemberIds(undefined);setMemberCards([]);setMembersReady(false);setCatalogState("loading");
     fetchBinderCardIds(planId).then(async ids=>{
       if(cancelled)return;
       setMemberIds(ids);
-      if(!ids){setMembersReady(true);return;}
+      if(!ids){setMembersReady(true);return;}   // membership read failed — distinct state, handled below
+      lastGoodRef.current=ids;
       const cards=await fetchCardsByIds(ids);
       if(cancelled)return;
-      if(cards){
-        const byId=new Map(cards.map(c=>[c.id,c]));
-        setMemberCards(ids.map(id=>byId.get(id)).filter(Boolean)); // keep membership order
+      if(cards===null){                          // catalog READ failed — membership is still intact
+        setCatalogState("failed");setMembersReady(true);return;
       }
-      setMembersReady(true);
+      const byId=new Map(cards.map(c=>[c.id,c]));
+      setMemberCards(ids.map(id=>byId.get(id)).filter(Boolean)); // keep membership order
+      setCatalogState("ready");setMembersReady(true);
     });
     return()=>{cancelled=true;};
-  },[planId]);
+  },[planId,membersNonce]);
   // Debounced catalog search (300ms, min 2 chars). Session-only.
   useEffect(()=>{
     const q=query.trim();
@@ -1920,18 +2003,36 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
     return()=>{cancelled=true;clearTimeout(t);};
   },[query]);
   const memberIdSet=useMemo(()=>new Set(memberIds||[]),[memberIds]);
+  const catalogReady=membersReady&&catalogState==="ready";
   const ownedCount=useMemo(()=>memberCards.filter(checkOwned).length,[memberCards,checkOwned]);
   const plannedCount=memberCards.length-ownedCount;     // resolved-only, per approved semantics
   const totalCount=(memberIds||[]).length;               // every membership row, orphans included
-  const orphanCount=totalCount-memberCards.length;
+  // BP-1A: orphans are only meaningful AFTER a successful catalog fetch.
+  const orphanCount=catalogReady?totalCount-memberCards.length:0;
+  // BP-1C: reordering is offered only when the visible grid is the complete
+  // membership. With unresolved orphans the on-screen order is a subset of the
+  // real one, and moving within a subset cannot express the whole sequence.
+  const canReorder=catalogReady&&orphanCount===0&&memberCards.length>1;
   const setBusy=(id,on)=>setBusyIds(prev=>{const n=new Set(prev);on?n.add(id):n.delete(id);return n;});
+  // BP-1.1: membership must not change while an order is being authored or
+  // saved. Derived once and used for both the notice and every Add button.
+  const addBlocked=reorderMode||reorderBusy;
   const handleAdd=async card=>{
+    // BP-1.1 — an insert during reorder would change membership underneath an
+    // in-flight (or about-to-be-sent) reorder array, breaking the RPC's
+    // exact-permutation contract. Refusing here is the authority; the disabled
+    // button is only the affordance.
+    if(reorderMode||reorderBusyRef.current)return;
     if(busyIds.has(card.id)||memberIdSet.has(card.id))return;
     setBusy(card.id,true);
     try{
-      await addCardToBinder(planId,card.id); // true=inserted, false=already there — both converge below
+      // BP-1G: the card object is passed so the service can apply its TCG
+      // Pocket guard without a second catalog round trip.
+      await addCardToBinder(planId,card.id,card); // true=inserted, false=already there — both converge below
       setMemberIds(ids=>(ids&&!ids.includes(card.id))?[...ids,card.id]:ids);
       setMemberCards(cs=>cs.some(c=>c.id===card.id)?cs:[...cs,card]);
+      const lg=lastGoodRef.current;
+      if(lg&&!lg.includes(card.id))lastGoodRef.current=[...lg,card.id];
     }catch(err){console.error(err);alert("Could not add the card. Please try again.");}
     finally{setBusy(card.id,false);}
   };
@@ -1943,9 +2044,68 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
       await removeCardFromBinder(planId,cardId);
       setMemberIds(ids=>ids?ids.filter(id=>id!==cardId):ids);
       setMemberCards(cs=>cs.filter(c=>c.id!==cardId));
+      const lg=lastGoodRef.current;
+      if(lg)lastGoodRef.current=lg.filter(id=>id!==cardId);
     }catch(err){console.error(err);alert("Could not remove the card. Please try again.");}
     finally{setBusy(cardId,false);}
   };
+  // BP-1C: one commit path for every reorder gesture. Applies optimistically,
+  // supersedes stale responses, and restores the last server-known order on
+  // failure. Ownership and Hunt intent are never touched here.
+  const commitOrder=useCallback(async nextIds=>{
+    // Serialization gate. Synchronous, so two gestures in one tick cannot both
+    // pass. Returns false so callers can tell a refusal from a dispatch.
+    if(reorderBusyRef.current)return false;
+    const prevIds=lastGoodRef.current;
+    // Claim the slot BEFORE any setState. Doing this after the optimistic
+    // update would leave a window in which a second gesture reads a stale ref.
+    reorderBusyRef.current=true;
+    const reqId=++reorderReqRef.current;
+    setReorderBusy(true);
+    setReorderError("");
+    setMemberIds(nextIds);
+    setMemberCards(cs=>{const byId=new Map(cs.map(c=>[c.id,c]));return nextIds.map(id=>byId.get(id)).filter(Boolean);});
+    try{
+      await reorderBinderCards(planId,nextIds);
+      if(reqId!==reorderReqRef.current)return false; // plan changed — this response belongs to a closed plan
+      lastGoodRef.current=nextIds;
+      reorderBusyRef.current=false;
+      setReorderBusy(false);
+      return true;
+    }catch(err){
+      console.error(err); // backend diagnostics stay console-only
+      if(reqId!==reorderReqRef.current)return false; // never surface an old plan's failure on a new plan
+      // Restore the EXACT last server-confirmed order, not a locally derived
+      // inverse: with one write in flight at a time, prevIds is what the
+      // database still holds.
+      if(prevIds){
+        setMemberIds(prevIds);
+        setMemberCards(cs=>{const byId=new Map(cs.map(c=>[c.id,c]));return prevIds.map(id=>byId.get(id)).filter(Boolean);});
+      }
+      setReorderError("Couldn't save the new order. Your previous order was restored.");
+      reorderBusyRef.current=false;
+      setReorderBusy(false);
+      return false;
+    }
+  },[planId]);
+  const moveCard=useCallback((cardId,delta)=>{
+    if(reorderBusyRef.current)return;
+    const ids=memberIds;
+    if(!ids)return;
+    const from=ids.indexOf(cardId);
+    if(from<0)return;
+    const to=from+delta;
+    if(to<0||to>=ids.length)return;
+    commitOrder(reorderIds(ids,from,to));
+  },[memberIds,commitOrder]);
+  const dropOnCard=useCallback(targetId=>{
+    if(reorderBusyRef.current)return;
+    const ids=memberIds;
+    if(!ids||!dragId||dragId===targetId)return;
+    const from=ids.indexOf(dragId),to=ids.indexOf(targetId);
+    if(from<0||to<0)return;
+    commitOrder(reorderIds(ids,from,to));
+  },[memberIds,dragId,commitOrder]);
   const startEdit=()=>{
     setEditName(binder.name);
     setEditDesc(binder.description||"");
@@ -1963,8 +2123,12 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
     }catch(e){setEditError(e.message||"Could not save changes.");}
     finally{setEditBusy(false);}
   };
+  // BP-1A: when the catalog read failed, membership is still known — report the
+  // count and nothing else. Never "0 owned · 0 planned".
   const summary=membersReady&&memberIds
-    ?`${ownedCount} owned · ${plannedCount} planned · ${totalCount} ${totalCount===1?"card":"cards"}`
+    ?(catalogState==="ready"
+        ?`${ownedCount} owned · ${plannedCount} planned · ${totalCount} ${totalCount===1?"card":"cards"}`
+        :`${totalCount} ${totalCount===1?"card":"cards"}`)
     :null;
   return(
     <div style={{minHeight:"100dvh",background:"#07070f"}}>
@@ -2008,7 +2172,7 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
                 {/* BP-0B: summary · legend · Edit — one quiet row, wraps on mobile. */}
                 <div style={{display:"flex",alignItems:"baseline",gap:".45rem .8rem",flexWrap:"wrap",marginBottom:"1.2rem"}}>
                   {summary&&<span style={{fontSize:".72rem",color:"#6b6b90",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{summary}</span>}
-                  {membersReady&&totalCount>0&&<span style={{fontSize:".66rem",color:"#4a4a70"}}>Owned cards appear in full color · planned cards stay dimmed</span>}
+                  {catalogReady&&totalCount>0&&<span style={{fontSize:".66rem",color:"#4a4a70"}}>Owned cards appear in full color · planned cards stay dimmed</span>}
                   <button onClick={startEdit} style={{background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".7rem",fontWeight:600,padding:0,marginLeft:"auto",whiteSpace:"nowrap"}}>Edit</button>
                 </div>
               </>
@@ -2016,6 +2180,9 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
 
             {/* ── BP-0A4: search / add region ── */}
             <div style={{marginBottom:"1.6rem"}}>
+              {addBlocked&&query.trim().length>=2&&(
+                <div className="bp-add-blocked">Finish reordering to add cards.</div>
+              )}
               <div style={{position:"relative",maxWidth:420}}>
                 <div style={{position:"absolute",left:".65rem",top:"50%",transform:"translateY(-50%)",color:"#52527a",display:"flex"}}><IcoSearch/></div>
                 <input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search any card in the catalog…"
@@ -2039,7 +2206,6 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
                     const owned=checkOwned(card);
                     const inBinder=memberIdSet.has(card.id);
                     const busy=busyIds.has(card.id);
-                    const sm=imgSmall(card);
                     return(
                       <div key={card.id} className="wanted-row" onClick={()=>onCardClick(card)} style={{display:"flex",alignItems:"center",gap:".65rem",padding:".45rem .55rem",cursor:"pointer"}}>
                         <CardImage card={card} size="small" surface="planned-binder-search" variant="inline" loadingAttr="lazy" missing={<IcoNoImage size={12}/>} className="iv-frame-57 iv-img" style={{width:34,height:"auto",borderRadius:4,flexShrink:0}}/>
@@ -2048,9 +2214,14 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
                           <div style={{fontSize:".62rem",color:"#6b6b90",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(card.set&&card.set.name)||"—"}{card.localId?` · #${card.localId}`:""}{card.illustrator?` · ${card.illustrator}`:""}</div>
                         </div>
                         {owned&&<span style={{fontSize:".6rem",fontWeight:700,color:"#22c55e",letterSpacing:".06em",flexShrink:0}}>OWNED</span>}
-                        <button onClick={e=>{e.stopPropagation();handleAdd(card);}} disabled={inBinder||busy}
+                        {/* BP-1.1: adding is blocked while ordering, because an
+                            insert would invalidate the reorder RPC's exact-
+                            permutation contract. Search stays visible and
+                            browsable; only the Add action is withheld. */}
+                        <button onClick={e=>{e.stopPropagation();handleAdd(card);}} disabled={inBinder||busy||addBlocked}
+                          title={addBlocked&&!inBinder?"Finish reordering to add cards":undefined}
                           className={inBinder?undefined:"btn-ghost"}
-                          style={{borderRadius:8,padding:".32rem .6rem",fontSize:".68rem",fontWeight:600,flexShrink:0,cursor:inBinder?"default":"pointer",...(inBinder?{background:"none",border:"1px solid transparent",color:"rgba(34,197,94,0.75)"}:{color:"#8b6cd8"}),opacity:busy?0.55:1}}>
+                          style={{borderRadius:8,padding:".32rem .6rem",fontSize:".68rem",fontWeight:600,flexShrink:0,cursor:(inBinder||addBlocked)?"default":"pointer",...(inBinder?{background:"none",border:"1px solid transparent",color:"rgba(34,197,94,0.75)"}:{color:"#8b6cd8"}),opacity:busy?0.55:(addBlocked&&!inBinder?0.4:1)}}>
                           {inBinder?"Added ✓":busy?"Adding…":"+ Add"}
                         </button>
                       </div>
@@ -2060,46 +2231,112 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick}){
               )}
             </div>
 
+            {/* ── BP-1C: reorder bar. Only offered when the visible grid is the
+                   complete membership, so an order change always means what it
+                   looks like. ── */}
+            {canReorder&&(
+              <div className="bp-reorder-bar">
+                <button onClick={()=>{if(reorderBusyRef.current)return;setReorderMode(m=>!m);setReorderError("");setDragId(null);setDragOverId(null);}}
+                  disabled={reorderBusy}
+                  className="btn-ghost" style={{borderRadius:8,padding:".38rem .8rem",fontSize:".72rem",fontWeight:600,color:reorderMode?"#c0a0f8":"#8b6cd8",opacity:reorderBusy?0.5:1,cursor:reorderBusy?"default":"pointer"}}>
+                  {reorderMode?"Done reordering":"Reorder"}
+                </button>
+                {/* BP-1.1: restrained saving feedback — one quiet line, no spinner
+                    over the card art and no layout shift. aria-live so the state
+                    is announced without stealing focus. */}
+                {reorderBusy
+                  ?<span className="bp-reorder-saving" role="status" aria-live="polite"><IcoSpin size={11}/> Saving order…</span>
+                  :reorderMode&&<span className="bp-reorder-hint">Use ← → to move a card. <span className="hide-on-narrow">Or drag by the handle.</span></span>}
+              </div>
+            )}
+            {reorderError&&(
+              <div style={{marginBottom:".9rem",fontSize:".72rem",color:"#f87171"}}>{reorderError}</div>
+            )}
+
             {/* ── BP-0A3: binder collection grid ── */}
             {memberIds===undefined&&(
               <div style={{display:"flex",alignItems:"center",gap:".5rem",padding:"1.5rem 0",color:"#6b6b90",fontSize:".8rem"}}><IcoSpin/> Loading cards…</div>
             )}
             {memberIds===null&&(
               <div style={{padding:"2rem 1.2rem",textAlign:"center",fontSize:".78rem",lineHeight:1.6,color:"#f87171",border:"1px solid rgba(248,113,113,0.25)",borderRadius:12}}>
-                Couldn't load this binder's cards. Refresh to try again.
+                Couldn't load this binder's cards.
+                <div style={{marginTop:".7rem"}}>
+                  <button onClick={()=>setMembersNonce(n=>n+1)} style={{background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".78rem",fontWeight:600,padding:0}}>Try again</button>
+                </div>
               </div>
             )}
-            {membersReady&&memberIds&&totalCount===0&&query.trim().length<2&&(
+            {/* BP-1A: catalog read failed. Membership is intact — say so, and
+                offer a retry. This is NOT the orphan state. */}
+            {membersReady&&memberIds&&catalogState==="failed"&&(
+              <div style={{padding:"2rem 1.2rem",textAlign:"center",fontSize:".78rem",lineHeight:1.6,color:"#8888a8",border:"1px solid #1e1e35",borderRadius:12}}>
+                Couldn't load the card details right now. Your {totalCount} {totalCount===1?"card is":"cards are"} still in this binder.
+                <div style={{marginTop:".7rem"}}>
+                  <button onClick={()=>setMembersNonce(n=>n+1)} style={{background:"none",border:"none",cursor:"pointer",color:"#8b6cd8",fontSize:".78rem",fontWeight:600,padding:0}}>Try again</button>
+                </div>
+              </div>
+            )}
+            {catalogReady&&totalCount===0&&query.trim().length<2&&(
               <div style={{padding:"2.6rem 1.2rem",textAlign:"center",border:"1px dashed #1e1e35",borderRadius:12}}>
                 <div style={{fontSize:".84rem",color:"#8888a8",lineHeight:1.6,maxWidth:420,margin:"0 auto .35rem"}}>This binder is where a theme takes shape — cards you own and cards you're still after, side by side.</div>
                 <div style={{fontSize:".76rem",color:"#4a4a70",lineHeight:1.6}}>Search the catalog above to place the first card.</div>
               </div>
             )}
-            {membersReady&&memberCards.length>0&&(
+            {catalogReady&&memberCards.length>0&&(
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:".85rem"}}>
-                {memberCards.map(card=>{
+                {memberCards.map((card,idx)=>{
                   const busy=busyIds.has(card.id);
+                  const owned=checkOwned(card);
+                  const intent=intentMap?intentMap.get(card.id):undefined;
+                  // BP-1E: read-only visibility of the existing GLOBAL hunt
+                  // intent. "ignore" is deliberately not dotted, and owned
+                  // cards suppress the dot exactly as every other surface does.
+                  const showDot=!owned&&(intent==="hunting"||intent==="want"||intent==="maybe");
+                  const isDragging=reorderMode&&dragId===card.id;
+                  const isOver=reorderMode&&dragOverId===card.id&&dragId&&dragId!==card.id;
                   return(
-                    <div key={card.id} style={{opacity:busy?0.45:1,transition:"opacity .15s"}}>
+                    <div key={card.id}
+                      className={`bp-tile${isDragging?" bp-tile-dragging":""}${isOver?" bp-tile-dragover":""}`}
+                      style={{opacity:busy?0.45:1,transition:"opacity .15s"}}
+                      onDragOver={(reorderMode&&!reorderBusy)?(e=>{e.preventDefault();setDragOverId(card.id);}):undefined}
+                      onDragLeave={(reorderMode&&!reorderBusy)?(()=>setDragOverId(prev=>prev===card.id?null:prev)):undefined}
+                      onDrop={(reorderMode&&!reorderBusy)?(e=>{e.preventDefault();dropOnCard(card.id);setDragId(null);setDragOverId(null);}):undefined}>
                       <div style={{position:"relative"}}>
-                        <CardTile card={card} owned={checkOwned(card)} onCardClick={onCardClick} readOnly/>
-                        <button onClick={e=>handleRemove(e,card.id)} disabled={busy} title="Remove from binder" aria-label={`Remove ${card.name} from binder`}
-                          style={{position:"absolute",bottom:0,right:0,width:28,height:28,background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}
-                          onMouseEnter={e=>{const g=e.currentTarget.firstElementChild;g.style.background="rgba(190,40,40,0.85)";g.style.color="#fff";}}
-                          onMouseLeave={e=>{const g=e.currentTarget.firstElementChild;g.style.background="rgba(0,0,0,0.55)";g.style.color="rgba(255,255,255,0.5)";}}>
-                          <span style={{width:17,height:17,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,lineHeight:1,background:"rgba(0,0,0,0.55)",color:"rgba(255,255,255,0.5)",transition:"background .12s,color .12s",pointerEvents:"none"}}>✕</span>
-                        </button>
+                        <CardTile card={card} owned={owned} onCardClick={onCardClick} readOnly/>
+                        {showDot&&<span className="bp-intent-dot" title={`Hunt status: ${intent}`}><HuntStatusDot status={intent}/></span>}
+                        {reorderMode?(
+                          /* BP-1.1: draggable is switched OFF while a save is in
+                             flight, so the browser will not begin a drag at all
+                             — stronger than intercepting the drop. */
+                          <span className={`bp-drag-handle hide-on-narrow${reorderBusy?" bp-drag-handle-busy":""}`} draggable={!reorderBusy}
+                            onDragStart={e=>{if(reorderBusy){e.preventDefault();return;}setDragId(card.id);try{e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",card.id);}catch(_e){}}}
+                            onDragEnd={()=>{setDragId(null);setDragOverId(null);}}
+                            title={reorderBusy?"Saving…":"Drag to reorder"} aria-hidden="true">⠿</span>
+                        ):(
+                          <button onClick={e=>handleRemove(e,card.id)} disabled={busy} title="Remove from binder" aria-label={`Remove ${card.name} from binder`}
+                            style={{position:"absolute",bottom:0,right:0,width:28,height:28,background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}
+                            onMouseEnter={e=>{const g=e.currentTarget.firstElementChild;g.style.background="rgba(190,40,40,0.85)";g.style.color="#fff";}}
+                            onMouseLeave={e=>{const g=e.currentTarget.firstElementChild;g.style.background="rgba(0,0,0,0.55)";g.style.color="rgba(255,255,255,0.5)";}}>
+                            <span style={{width:17,height:17,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,lineHeight:1,background:"rgba(0,0,0,0.55)",color:"rgba(255,255,255,0.5)",transition:"background .12s,color .12s",pointerEvents:"none"}}>✕</span>
+                          </button>
+                        )}
                       </div>
                       <div style={{fontSize:".68rem",color:"#c8c8de",fontWeight:600,marginTop:".3rem",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{card.name}</div>
                       <div style={{fontSize:".58rem",color:"#5a5a80",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(card.set&&card.set.name)||"—"}</div>
+                      {reorderMode&&(
+                        <div className="bp-move-row">
+                          <button className="bp-move-btn" onClick={()=>moveCard(card.id,-1)} disabled={idx===0||reorderBusy} aria-label={`Move ${card.name} earlier`} title={reorderBusy?"Saving…":"Move earlier"}>←</button>
+                          <span className="bp-move-pos">{idx+1}</span>
+                          <button className="bp-move-btn" onClick={()=>moveCard(card.id,1)} disabled={idx===memberCards.length-1||reorderBusy} aria-label={`Move ${card.name} later`} title={reorderBusy?"Saving…":"Move later"}>→</button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
               </div>
             )}
-            {membersReady&&orphanCount>0&&(
+            {catalogReady&&orphanCount>0&&(
               <div style={{marginTop:"1rem",fontSize:".66rem",color:"#4a4a70",lineHeight:1.5}}>
-                {orphanCount} {orphanCount===1?"card in this binder is":"cards in this binder are"} no longer in the catalog. {orphanCount===1?"It's":"They're"} still counted in the total and will reappear if the catalog restores {orphanCount===1?"it":"them"}.
+                {orphanCount} {orphanCount===1?"card in this binder is":"cards in this binder are"} no longer in the catalog. {orphanCount===1?"It's":"They're"} still counted in the total and will reappear if the catalog restores {orphanCount===1?"it":"them"}. Reordering is paused until then.
               </div>
             )}
           </>
@@ -3361,13 +3598,54 @@ function App(){
 
   const checkOwned=useCallback(card=>effectiveOwned(card,snapshotOwnedIds,manualOwned,manualMissing),[snapshotOwnedIds,manualOwned,manualMissing]);
 
+  // BP-1.1 — in-page "← Planned Binders".
+  //
+  // Opening a plan pushes a duplicate ?v=plans entry (see goTo below) purely so
+  // browser Back reaches the plans index instead of skipping past it. If the
+  // in-page Back button called setView("plans") directly, that pushed entry
+  // would survive: the surface would change but the history stack would keep a
+  // marker whose URL is already the current URL, so the NEXT browser Back would
+  // pop onto ?v=plans again and read as a no-op. Open/close a few plans and the
+  // no-ops accumulate one per cycle.
+  //
+  // So: when the current history entry is OUR marker for the plan currently
+  // open, consume it with history.back(). The existing popstate handler then
+  // maps ?v=plans back to the plans index, and the stack is left exactly as it
+  // was before the plan opened. Otherwise — no marker, a foreign state object,
+  // a stale marker for a different plan, or pushState unavailable — fall back
+  // to setView("plans"), which is always correct if slightly less tidy.
+  //
+  // No router, no addressable plan ids. NAV-1B still owns that.
+  const handlePlanBack=useCallback(()=>{
+    try{
+      const st=window.history.state;
+      if(!navHasShare()&&st&&st.plan&&st.plan===planId){
+        window.history.back(); // popstate → navReadSurface() → "plans"
+        return;
+      }
+    }catch(e){}
+    setView("plans");
+  },[planId]);
+
   const goTo=useCallback((target)=>{
     if(target==="landing"){setView("landing");return;}
     if(target==="dashboard"){setView("dashboard");return;}
     if(target==="binder"){setView("binder");return;}
     if(target==="artists"){setView("artists");return;}
     if(target==="plans"){setView("plans");return;} // BP-0A2
-    if(target.startsWith("plan:")){const id=target.replace("plan:","");setPlanId(id);setView("plan");return;} // BP-0A2
+    if(target.startsWith("plan:")){
+      const id=target.replace("plan:","");
+      // BP-1H: "plan" stays identifier-free in the URL (NAV-1A deliberately
+      // excludes identifier-bearing surfaces, and NAV-1B owns that work). But
+      // opening a plan pushed NO history entry, so browser Back popped the
+      // entry BEFORE the plans index and skipped it entirely. Pushing a
+      // duplicate of the CURRENT url — same ?v=plans, no new addressable
+      // surface, no router — makes Back pop back onto ?v=plans, which the
+      // existing popstate handler already maps to the plans index. No other
+      // surface's history behaviour changes.
+      try{ if(!navHasShare()) window.history.pushState({[NAV_PARAM]:"plans",plan:id},"",window.location.href); }catch(e){}
+      setPlanId(id);setView("plan");return;
+    } // BP-0A2 + BP-1H
     if(target.startsWith("artist:")){const slug=target.replace("artist:","");setArtistSlug(slug);setView("artist");return;}
     if(effectiveRoster.some(a=>toSlug(a.name)===target)){setFilterSlug(target);setView("binder");return;}
     setView(target);
@@ -3390,7 +3668,15 @@ function App(){
   // prior Set is never shown while loading. Exempt: owned-library (own read model)
   // and the plans index (no ownership). view / artistSlug / planId are left untouched
   // so the surface restores automatically once ready.
-  if(user&&snapshotAuthority!=="ready"&&view!=="owned-library"&&view!=="plans"){
+  // BP-1F: a plan is a list of intentions, not a claim of ownership, so
+  // "no collection imported yet" must not lock the collector out of it. On
+  // no_active_batch the plan opens with snapshotOwnedIds empty, which means
+  // effectiveOwned still honours force-owned / force-missing overrides exactly
+  // and every other canonical card reads unowned — the truthful state, not a
+  // guess. "error" and "multiple_active_batches" stay gated: those are unknown
+  // ownership, and unknown must never be rendered as definitive.
+  const planOpenOnNoBatch=view==="plan"&&snapshotAuthority==="no_active_batch";
+  if(user&&snapshotAuthority!=="ready"&&view!=="owned-library"&&view!=="plans"&&!planOpenOnNoBatch){
     return(<>
       <OwnershipAuthorityScreen authority={snapshotAuthority} onImport={()=>fileRef.current&&fileRef.current.click()} onRetry={readOwnershipAuthority} onSignOut={handleSignOut}/>
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
@@ -3434,7 +3720,7 @@ function App(){
   );
 
   if(view==="plan"&&planId)return(<>
-    <BinderPlanPage planId={planId} user={user} onBack={()=>setView("plans")} checkOwned={checkOwned} onCardClick={setSelectedCard}/>
+    <BinderPlanPage planId={planId} user={user} onBack={handlePlanBack} checkOwned={checkOwned} onCardClick={setSelectedCard} intentMap={intentMap}/>
     {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
   </>);
 
@@ -3535,3 +3821,4 @@ function App(){
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 export { App, SharedBinder, ErrorBoundary };
+
