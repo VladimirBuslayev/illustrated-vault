@@ -431,3 +431,69 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
   .bp-tile,.bp-move-btn{transition:none;}
   .bp-tile-dragover{transform:none;}
 }
+
+/* ── BP-2 CardModal → Binder Plan picker ─────────────────────────────────────
+   Scoped entirely to .bp-picker-* classes rendered only inside CardModal's
+   writable variant. No existing selector is modified, so Binder, Artist Page,
+   Planned Binders, SharedBinder and Owned Library geometry are untouched.
+   Deliberately quiet: this is a planning affordance sitting under the card
+   art, not a call to action competing with it. */
+.bp-picker-trigger{width:100%;display:flex;align-items:center;justify-content:space-between;
+  gap:.5rem;background:#0f0f1c;border:1px solid #1e1e35;border-radius:10px;color:#c0b8d8;
+  font:inherit;font-size:.74rem;font-weight:600;padding:.5rem .7rem;min-height:40px;
+  cursor:pointer;transition:background .15s ease,border-color .15s ease;}
+.bp-picker-trigger:hover{background:#161628;border-color:#2e2550;}
+.bp-picker-trigger:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+
+.bp-picker-body{margin-top:.45rem;background:#0f0f1c;border:1px solid #1e1e35;
+  border-radius:10px;padding:.45rem;}
+
+.bp-picker-state{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;
+  padding:.55rem .4rem;font-size:.72rem;color:#6b6b90;line-height:1.5;}
+.bp-picker-error{color:#f87171;}
+.bp-picker-link{background:none;border:none;padding:0;font:inherit;font-size:.72rem;
+  font-weight:700;color:#8b6cd8;cursor:pointer;}
+.bp-picker-link:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+
+.bp-picker-empty{padding:.6rem .5rem .5rem;}
+.bp-picker-empty-copy{margin:0 0 .6rem;font-size:.74rem;line-height:1.6;color:#82829f;}
+.bp-picker-go{border-radius:8px;padding:.45rem .8rem;font-size:.74rem;font-weight:600;
+  color:#8b6cd8;min-height:40px;}
+
+/* The list scrolls INSIDE the modal so a collector with many plans can never
+   push the modal's own controls out of reach. -webkit-overflow-scrolling keeps
+   iOS momentum inside the nested scroller. */
+.bp-picker-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;
+  gap:2px;max-height:min(34dvh,232px);overflow-y:auto;-webkit-overflow-scrolling:touch;}
+
+.bp-picker-row{display:flex;align-items:center;gap:.6rem;padding:.4rem .45rem;
+  border-radius:8px;transition:background .12s ease;}
+.bp-picker-row:hover{background:rgba(255,255,255,0.025);}
+.bp-picker-meta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px;}
+.bp-picker-name{font-size:.78rem;font-weight:600;color:#e8e8f4;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Description is shown only when the plan has one, and only on one line — it
+   never becomes the reason a row wraps. */
+.bp-picker-desc{font-size:.66rem;color:#6b6b90;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;}
+.bp-picker-rowerr{font-size:.65rem;color:#f87171;line-height:1.4;margin-top:1px;}
+
+.bp-picker-add{flex:0 0 auto;min-height:34px;padding:.35rem .8rem;border-radius:7px;
+  background:#141425;border:1px solid #2e2255;color:#9b7fe8;font:inherit;font-size:.72rem;
+  font-weight:700;cursor:pointer;transition:background .12s ease,border-color .12s ease;}
+.bp-picker-add:hover:not(:disabled){background:rgba(139,108,216,0.14);border-color:#3a3a5a;}
+.bp-picker-add:disabled{color:#4a4a70;border-color:#1e1e35;cursor:default;}
+.bp-picker-add:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+
+.bp-picker-added{flex:0 0 auto;font-size:.7rem;font-weight:700;color:#6ee7b7;
+  padding:.35rem .5rem;white-space:nowrap;}
+.bp-picker-row.is-added .bp-picker-name{color:#c8c2dc;}
+
+@media(max-width:640px){
+  .bp-picker-add{min-height:40px;padding:.45rem .9rem;}
+  .bp-picker-list{max-height:min(40dvh,260px);}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .bp-picker-trigger,.bp-picker-row,.bp-picker-add{transition:none;}
+}
