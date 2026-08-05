@@ -139,6 +139,42 @@ export async function fetchBinderCardIds(binderId) {
   }
 }
 
+/** BP-2: which of the caller's binders already contain this EXACT card id.
+ *
+ *  One indexed read against the child table, filtered by card_id alone. No
+ *  user id is sent and none is needed: user_binder_cards has no user_id column
+ *  and its RLS policies resolve ownership through the parent binder, so a
+ *  caller can only ever see rows belonging to their own binders. This is the
+ *  same boundary fetchBinderCardIds already relies on.
+ *
+ *  Deliberately NOT "fetch every plan's membership and intersect": that is one
+ *  round trip per plan and grows with the collection. This is one round trip
+ *  whose result size is bounded by the number of plans containing the card.
+ *
+ *  Return contract mirrors fetchBinderCardIds and fetchCardsByIds — the two
+ *  non-happy outcomes are DIFFERENT:
+ *    null   the read FAILED. Nothing is known. This is NOT evidence that the
+ *           card is absent from every plan, and must never render as "not
+ *           added anywhere".
+ *    []     the read SUCCEEDED and the card is genuinely in no plan.
+ *
+ *  Order is not meaningful; duplicates are impossible (unique constraint) but
+ *  are collapsed anyway so the caller can build a Set directly. */
+export async function fetchBinderIdsContainingCard(cardId) {
+  if (!cardId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('user_binder_cards')
+      .select('binder_id')
+      .eq('card_id', cardId);
+    if (error) throw error;
+    return Array.from(new Set((data || []).map(r => r.binder_id)));
+  } catch (e) {
+    console.error('fetchBinderIdsContainingCard failed:', e);
+    return null; // null = read failed (distinct from a genuinely empty [])
+  }
+}
+
 /** Add a card to a binder. Returns true on insert, false when the card was
  *  already a member (unique constraint 23505 — treated as a soft no-op, not
  *  an error). Throws on any other failure. Touches nothing but
