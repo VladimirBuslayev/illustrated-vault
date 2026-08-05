@@ -41,7 +41,8 @@ import { fetchTrackedArtistTiers, fetchArtistIdentities,
 import { fetchArtistCards }                               from './services/cardService.js';
 import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
          fetchBinderCardIds, addCardToBinder, removeCardFromBinder,
-         reorderBinderCards, searchCatalogCards, fetchCardsByIds } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B + BP-1B
+         reorderBinderCards, searchCatalogCards, fetchCardsByIds,
+         fetchBinderIdsContainingCard } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B + BP-1B + BP-2
 import { classifyCollectrRows, MATCHER_VERSION } from './services/snapshotMatcher.js';    // OL-0C
 import { loadCatalogIndex }                      from './services/catalogIndexLoader.js';  // OL-0C
 import { createImportSnapshot }                  from './services/importSnapshotService.js';// OL-0C
@@ -642,8 +643,134 @@ function PriceChart({history}){
   );
 }
 
+// ── BP-2: CardModal → Binder Plan ──────────────────────────────────────────────
+// A narrow connector between inspection and planning. Nothing here reads or
+// writes ownership, hunt intent, favorites, price history or plan ORDER —
+// membership rows only, through the existing addCardToBinder path, whose
+// position is assigned by the BP-1A append trigger.
+//
+// Eligibility uses the production authorities and invents no new heuristic:
+//   • canonical identity  → card.ownershipNamespace === "canonical", the same
+//                           marker effectiveOwned() consults. External-set and
+//                           unknown-namespace cards have no stable exact
+//                           printing identity to plan around.
+//   • physical eligibility → isTcgPocketCard, the ONE production Pocket
+//                           predicate (also enforced server-side inside
+//                           addCardToBinder, so this is the calm-UI half of a
+//                           rule that holds either way).
+//   • writability          → an authenticated user AND a non-read-only modal.
+//                           SharedBinder and Owned Library pass neither `user`
+//                           nor `onGoToPlans`, so the control is structurally
+//                           unreachable there, not merely hidden.
+// Exported for validation only — pure, no React, no I/O.
+export function canAddCardToBinderPlan(card,{user,readOnly}={}){
+  if(readOnly)return false;
+  if(!user)return false;
+  if(!card||!card.id)return false;
+  if(card.ownershipNamespace!=="canonical")return false;
+  if(isTcgPocketCard(card))return false;
+  return true;
+}
+
+// Inline plan picker. Mounted ONLY while open, which is what makes "plans are
+// not fetched before the picker opens" a structural property rather than a
+// conditional. Mounted with key={card.id} by CardModal, so a card change gives
+// a brand-new instance with no carried plans, memberships, errors or successes.
+//
+// reqRef is the second, independent guard: an add that resolves after the
+// picker has been re-fetched (retry) fails its identity check and mutates
+// nothing.
+function BinderPlanPicker({user,card,onGoToPlans}){
+  const[plans,setPlans]      =useState(undefined);      // undefined=loading, array=loaded
+  const[memberIds,setMemberIds]=useState(null);         // Set<binderId> once ready
+  const[loadState,setLoadState]=useState("loading");    // "loading" | "ready" | "failed"
+  const[rows,setRows]        =useState({});             // planId → {busy,error,justAdded}
+  const[nonce,setNonce]      =useState(0);              // bump = retry the load
+  const reqRef=useRef(0);
+  const cardId=card.id;
+  useEffect(()=>{
+    const req=++reqRef.current;
+    let cancelled=false;
+    setLoadState("loading");setPlans(undefined);setMemberIds(null);setRows({});
+    // Parallel, not sequential: the two reads are independent and the picker is
+    // useless until both land. Either read failing is a failed load — a null
+    // membership read must NEVER be shown as "in no plan".
+    Promise.all([fetchBinders(user.id),fetchBinderIdsContainingCard(cardId)]).then(([binderRows,memberRows])=>{
+      if(cancelled||req!==reqRef.current)return;
+      if(binderRows===null||memberRows===null){setLoadState("failed");return;}
+      setPlans(binderRows);
+      setMemberIds(new Set(memberRows));
+      setLoadState("ready");
+    });
+    return()=>{cancelled=true;};
+  },[user.id,cardId,nonce]);
+
+  const handleAdd=useCallback(async(plan)=>{
+    const req=reqRef.current;
+    setRows(r=>({...r,[plan.id]:{busy:true,error:"",justAdded:false}}));
+    try{
+      // Exact inspected id only. `card` is passed so addCardToBinder reuses the
+      // adapted row it already has instead of re-reading the catalog.
+      await addCardToBinder(plan.id,cardId,card); // false = already a member; both converge to Added
+      if(req!==reqRef.current)return;             // a later load superseded this add
+      setMemberIds(s=>{const n=new Set(s||[]);n.add(plan.id);return n;});
+      setRows(r=>({...r,[plan.id]:{busy:false,error:"",justAdded:true}}));
+    }catch(e){
+      console.error("BP-2 add to binder plan failed:",e); // diagnostics stay console-only
+      if(req!==reqRef.current)return;
+      setRows(r=>({...r,[plan.id]:{busy:false,error:"Couldn't add to this binder. Try again.",justAdded:false}}));
+    }
+  },[cardId,card]);
+
+  if(loadState==="loading"){
+    return <div className="bp-picker-state"><IcoSpin/> Loading your binder plans…</div>;
+  }
+  if(loadState==="failed"){
+    return(
+      <div className="bp-picker-state bp-picker-error" role="status">
+        Couldn't load your binder plans.
+        <button type="button" className="bp-picker-link" onClick={()=>setNonce(n=>n+1)}>Retry</button>
+      </div>
+    );
+  }
+  if(!plans||plans.length===0){
+    return(
+      <div className="bp-picker-empty">
+        <p className="bp-picker-empty-copy">Create a Binder Plan to start building an intentional collection around this card.</p>
+        <button type="button" className="btn-ghost bp-picker-go" onClick={onGoToPlans}>Go to Planned Binders →</button>
+      </div>
+    );
+  }
+  return(
+    <ul className="bp-picker-list">
+      {plans.map(plan=>{
+        const state=rows[plan.id]||{};
+        const added=memberIds?memberIds.has(plan.id):false;
+        return(
+          <li key={plan.id} className={`bp-picker-row${added?" is-added":""}`}>
+            <div className="bp-picker-meta">
+              <span className="bp-picker-name">{plan.name}</span>
+              {plan.description&&<span className="bp-picker-desc">{plan.description}</span>}
+              {state.error&&<span className="bp-picker-rowerr">{state.error}</span>}
+            </div>
+            {added
+              ? <span className="bp-picker-added">{state.justAdded?"✓ Added":"Added"}</span>
+              : <button
+                  type="button"
+                  className="bp-picker-add"
+                  onClick={()=>handleAdd(plan)}
+                  disabled={!!state.busy}
+                  aria-label={`Add ${card.name} to ${plan.name}`}
+                >{state.busy?"Adding…":state.error?"Retry":"Add"}</button>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 // ── CARD MODAL ─────────────────────────────────────────────────────────────────
-function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory,onToggleManual,onToggleFavorite,onRecordPrice,onClose,readOnly,intentStatus,onSetIntent,onClearIntent}){
+function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory,onToggleManual,onToggleFavorite,onRecordPrice,onClose,readOnly,intentStatus,onSetIntent,onClearIntent,user,onGoToPlans}){
   const price=getBestPrice(card);
   const allVariants=card&&card.pricing&&card.pricing.tcgplayer?card.pricing.tcgplayer:{};
   const cmPrices=card&&card.pricing&&card.pricing.cardmarket&&card.pricing.cardmarket.prices?card.pricing.cardmarket.prices:null;
@@ -657,6 +784,15 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
   const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Complete=1&LH_Sold=1`;
   const tcgplayerUrl=`https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q=${encodeURIComponent(card.name+" "+(card.set?.name||""))}`;
   const[zoomed,setZoomed]=useState(false);
+  // BP-2: the picker tracks WHICH card it was opened for, not a boolean.
+  // CardModal is mounted without a key at every render site, so React reuses
+  // one instance when the collector opens a different card. A boolean would
+  // survive that swap; comparing against card.id makes the picker closed in
+  // the very render where the card changes — no stale frame, no effect needed,
+  // and any in-flight response belongs to an unmounted picker instance.
+  const[pickerCardId,setPickerCardId]=useState(null);
+  const pickerOpen=!!card&&pickerCardId===card.id;
+  const canPlan=canAddCardToBinderPlan(card,{user,readOnly})&&typeof onGoToPlans==="function";
   // OL-2C.1: single resilience seam. Limitless is not used at runtime.
   const modalImg=useCardImage(card,{size:"large",surface:"card-modal"});
   const displayLg=modalImg.src;
@@ -751,6 +887,27 @@ function CardModal({card,owned,manualOwned,manualMissing,isFavorite,priceHistory
                 <button key={s} onClick={()=>intentStatus===s?onClearIntent(card.id):onSetIntent(card,s)} style={{flex:1,background:intentStatus===s?"rgba(139,108,216,0.18)":"#141425",color:intentStatus===s?"#9b7fe8":"#4a4a70",border:`1px solid ${intentStatus===s?"#5a3d9e":"#1e1e35"}`,borderRadius:7,padding:".35rem .3rem",cursor:"pointer",fontSize:".68rem",fontWeight:intentStatus===s?700:500,textTransform:"capitalize"}}>{s}</button>
               ))}
             </div>
+          </div>
+        )}
+
+        {canPlan&&(
+          <div className="bp-picker" style={{marginBottom:".75rem"}}>
+            <button
+              type="button"
+              className="bp-picker-trigger"
+              onClick={()=>setPickerCardId(pickerOpen?null:card.id)}
+              aria-expanded={pickerOpen}
+            >
+              <span>Add to Binder Plan…</span>
+              <IcoChev open={pickerOpen}/>
+            </button>
+            {pickerOpen&&(
+              <div className="bp-picker-body">
+                {/* key={card.id}: belt-and-braces alongside pickerCardId — a new
+                    card can never inherit the previous card's memberships. */}
+                <BinderPlanPicker key={card.id} user={user} card={card} onGoToPlans={onGoToPlans}/>
+              </div>
+            )}
           </div>
         )}
 
@@ -3651,6 +3808,15 @@ function App(){
     setView(target);
   },[effectiveRoster]);
 
+  // BP-2: empty-state escape hatch from CardModal. Closes the modal first so
+  // the collector does not land on the plans index with a modal still mounted
+  // over it, then uses the EXISTING goTo("plans") target — no new route, no
+  // router, no inline plan creation.
+  const handleGoToPlans=useCallback(()=>{
+    setSelectedCard(null);
+    goTo("plans");
+  },[goTo]);
+
   if(view==="checking-auth")return<div style={{position:"fixed",inset:0,background:"#030100",display:"flex",alignItems:"center",justifyContent:"center"}}><IcoSpin/></div>;
 
   if(view==="loading-data")return(
@@ -3686,7 +3852,7 @@ function App(){
   if(view==="dashboard")return(
     <>
       <Dashboard cardData={visibleCardData} checkOwned={checkOwned} favorites={favorites} user={user} intentMap={intentMap} csvStatus={csvStatus} syncStatus={syncStatus} onGoBinder={goTo} onUploadCSV={()=>fileRef.current&&fileRef.current.click()} loadingSet={loadingSet} errors={errors} onCardClick={setSelectedCard} roster={effectiveRoster} heroPick={heroPick} setHeroPick={setHeroPick} queuePage={queuePage} setQueuePage={setQueuePage}/>
-      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent} user={user} onGoToPlans={handleGoToPlans}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>
   );
@@ -3696,19 +3862,19 @@ function App(){
     const cards=visibleCardData[artistSlug]||[];
     return(<>
       <ArtistPage slug={artistSlug} entry={entry} cards={cards} checkOwned={checkOwned} manualOwned={manualOwned} manualMissing={manualMissing} favorites={favorites} onCardClick={setSelectedCard} onToggleFavorite={handleToggleFavorite} intentMap={intentMap} showAllColor={showAllColor} toggleShowAllColor={toggleShowAllColor} onBack={()=>setView("dashboard")}/>
-      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent} user={user} onGoToPlans={handleGoToPlans}/>}
       <input ref={fileRef} type="file" accept=".csv" onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)handleCSV(f);e.target.value="";}} style={{display:"none"}}/>
     </>);
   }
 
   if(view==="hunt")return(<>
     <HuntBoard visibleCardData={visibleCardData} intentMap={intentMap} checkOwned={checkOwned} onCardClick={setSelectedCard} onBack={()=>setView("dashboard")} roster={effectiveRoster}/>
-    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent} user={user} onGoToPlans={handleGoToPlans}/>}
   </>);
 
   if(view==="hunt-show")return(<>
     <HuntShow visibleCardData={visibleCardData} intentMap={intentMap} checkOwned={checkOwned} onCardClick={setSelectedCard} onBack={()=>setView("dashboard")} roster={effectiveRoster}/>
-    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent} user={user} onGoToPlans={handleGoToPlans}/>}
   </>);
 
   if(view==="artists")return(
@@ -3721,7 +3887,7 @@ function App(){
 
   if(view==="plan"&&planId)return(<>
     <BinderPlanPage planId={planId} user={user} onBack={handlePlanBack} checkOwned={checkOwned} onCardClick={setSelectedCard} intentMap={intentMap}/>
-    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+    {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent} user={user} onGoToPlans={handleGoToPlans}/>}
   </>);
 
   if(view==="owned-library")return(<>
@@ -3812,7 +3978,7 @@ function App(){
         )}
       </main>
 
-      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent}/>}
+      {selectedCard&&<CardModal card={selectedCard} owned={checkOwned(selectedCard)} manualOwned={manualOwned} manualMissing={manualMissing} isFavorite={favorites.has(selectedCard.id)} priceHistory={priceHistory} onToggleManual={handleToggleManual} onToggleFavorite={handleToggleFavorite} onRecordPrice={handleRecordPrice} onClose={()=>setSelectedCard(null)} intentStatus={intentMap.get(selectedCard.id)} onSetIntent={handleSetIntent} onClearIntent={handleClearIntent} user={user} onGoToPlans={handleGoToPlans}/>}
       {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onClearCache={clearCache} onClearManual={clearManual} onSignOut={()=>{handleSignOut();setShowSettings(false);}} hideTcgPocket={hideTcgPocket} onToggleTcgPocket={toggleHideTcgPocket} user={user} onUploadCSV={()=>fileRef.current&&fileRef.current.click()}/>}
     </div>
   );
