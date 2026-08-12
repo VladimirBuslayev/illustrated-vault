@@ -139,6 +139,47 @@ export async function fetchBinderCardIds(binderId) {
   }
 }
 
+/** BP-3.1B: membership rows WITH their stable identity.
+ *
+ *  fetchBinderCardIds answers "which cards are in this plan". This answers
+ *  "which membership ROWS are in this plan", which is a different question and
+ *  the one physical page placement needs: user_binder_layout_items references
+ *  user_binder_cards.id, not card_id. The card id is not a usable placement key
+ *  — nothing prevents the same illustration entering a plan through a different
+ *  membership row later, and a placement must point at exactly one row.
+ *
+ *  Ordering is IDENTICAL to fetchBinderCardIds (position ASC, created_at ASC,
+ *  id ASC) so the two reads describe the same sequence. position is carried
+ *  through as the manual LIST order only — it is never a page or pocket number,
+ *  and must not be reinterpreted as one.
+ *
+ *  Return contract matches the rest of this file:
+ *    null   the read FAILED. Nothing is known about membership.
+ *    []     the read SUCCEEDED and the plan is genuinely empty.
+ *
+ *  @returns {Promise<Array<{binderCardId:string,cardId:string,position:number}>|null>}
+ */
+export async function fetchBinderMembers(binderId) {
+  try {
+    const { data, error } = await supabase
+      .from('user_binder_cards')
+      .select('id, card_id, position, created_at')
+      .eq('binder_id', binderId)
+      .order('position',   { ascending: true })
+      .order('created_at', { ascending: true })
+      .order('id',         { ascending: true });
+    if (error) throw error;
+    return (data || []).map(r => ({
+      binderCardId: r.id,
+      cardId: r.card_id,
+      position: r.position,
+    }));
+  } catch (e) {
+    console.error('fetchBinderMembers failed:', e);
+    return null; // null = read failed (distinct from a genuinely empty [])
+  }
+}
+
 /** BP-2: which of the caller's binders already contain this EXACT card id.
  *
  *  One indexed read against the child table, filtered by card_id alone. No
