@@ -497,3 +497,63 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
 @media(prefers-reduced-motion:reduce){
   .bp-picker-trigger,.bp-picker-row,.bp-picker-add{transition:none;}
 }
+
+/* ── BP-3.1B: Cards | Pages sub-view ─────────────────────────────────────────
+   A quiet segmented control, not navigation chrome. It sits below the binder's
+   own identity and above the working surface, so the eye reaches the card art
+   without passing through a second row of competing UI.
+
+   Scope note: NO page-mat theme tokens, NO pocket geometry and none of the
+   eight background colours are defined here. Those belong to BP-3.1C. */
+.bp-subnav{display:inline-flex;gap:2px;padding:2px;margin-bottom:1.1rem;
+  background:#0f0f1c;border:1px solid #1e1e35;border-radius:10px;max-width:100%;}
+.bp-subtab{flex:0 0 auto;min-height:36px;padding:.34rem 1rem;border:none;border-radius:8px;
+  background:none;color:#6b6b90;font:inherit;font-size:.74rem;font-weight:600;
+  letter-spacing:.01em;cursor:pointer;white-space:nowrap;
+  transition:background .15s ease,color .15s ease;}
+.bp-subtab:hover:not(:disabled):not(.is-active){color:#a0a0c0;background:rgba(255,255,255,0.03);}
+.bp-subtab.is-active{background:#1a1630;color:#c0a0f8;}
+.bp-subtab:disabled{color:#33334e;cursor:default;}
+.bp-subtab:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+.bp-subnav-note{font-size:.66rem;color:#5a5a80;line-height:1.4;margin:-.7rem 0 1rem;}
+
+/* Pages shell — restrained by design. This surface is a state proof in
+   BP-3.1B; it must not look like a feature that is missing its buttons. */
+.bp-pages{border:1px solid #1e1e35;border-radius:12px;padding:1.5rem 1.2rem;
+  background:rgba(255,255,255,0.012);}
+.bp-pages-state{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;
+  font-size:.8rem;color:#6b6b90;line-height:1.55;}
+.bp-pages-fail{color:#f87171;}
+.bp-pages-retry{margin-top:.85rem;min-height:40px;padding:.45rem 1rem;border-radius:8px;
+  background:#141425;border:1px solid #2e2255;color:#9b7fe8;font:inherit;font-size:.74rem;
+  font-weight:700;cursor:pointer;transition:background .12s ease,border-color .12s ease;}
+.bp-pages-retry:hover{background:rgba(139,108,216,0.14);border-color:#3a3a5a;}
+.bp-pages-retry:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+
+.bp-pages-title{margin:0 0 .5rem;font-size:1.02rem;font-weight:600;color:#e8e8f4;
+  letter-spacing:-.01em;}
+.bp-pages-copy{margin:0;font-size:.82rem;color:#8888a8;line-height:1.6;max-width:44ch;}
+.bp-pages-soon{margin:1rem 0 0;font-size:.66rem;color:#4a4a70;letter-spacing:.06em;
+  text-transform:uppercase;}
+
+/* Metadata reads as a quiet ledger, not a dashboard. Tabular numerals keep the
+   placed/unplaced counts aligned as they change. */
+.bp-pages-meta{margin:0;display:flex;flex-direction:column;gap:.3rem;max-width:340px;}
+.bp-pages-metarow{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;
+  padding:.28rem 0;border-bottom:1px solid rgba(30,30,53,0.7);}
+.bp-pages-metarow:last-child{border-bottom:none;}
+.bp-pages-metarow dt{font-size:.66rem;color:#5a5a80;letter-spacing:.06em;text-transform:uppercase;}
+.bp-pages-metarow dd{margin:0;font-size:.8rem;color:#c8c8de;font-weight:600;
+  font-variant-numeric:tabular-nums;}
+
+@media(max-width:640px){
+  .bp-subnav{display:flex;width:100%;}
+  .bp-subtab{flex:1 1 0;min-height:42px;padding:.45rem .6rem;text-align:center;}
+  .bp-pages{padding:1.2rem 1rem;}
+  .bp-pages-retry{width:100%;}
+  .bp-pages-meta{max-width:none;}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .bp-subtab,.bp-pages-retry{transition:none;}
+}
