@@ -42,7 +42,8 @@ import { fetchArtistCards }                               from './services/cardS
 import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
          fetchBinderCardIds, addCardToBinder, removeCardFromBinder,
          reorderBinderCards, searchCatalogCards, fetchCardsByIds,
-         fetchBinderIdsContainingCard } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B + BP-1B + BP-2
+         fetchBinderIdsContainingCard, fetchBinderMembers } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B + BP-1B + BP-2 + BP-3.1B
+import { fetchBinderLayout } from './services/binderLayoutService.js'; // BP-3.1B (page-layout read layer)
 import { classifyCollectrRows, MATCHER_VERSION } from './services/snapshotMatcher.js';    // OL-0C
 import { loadCatalogIndex }                      from './services/catalogIndexLoader.js';  // OL-0C
 import { createImportSnapshot }                  from './services/importSnapshotService.js';// OL-0C
@@ -2036,6 +2037,88 @@ export function reorderIds(ids,from,to){
   return next;
 }
 
+// ── BP-3.1B: BINDER PAGES SHELL ──────────────────────────────────────────────
+// A read-only proof that the frontend distinguishes the five page-layer states
+// from one another. There is NO page UI here yet: no format buttons, no grids,
+// no pockets, no creation. Nothing in this component can write.
+//
+// The distinction this component exists to protect:
+//
+//   layoutResult.status === "failed"   NOTHING is known about the layout. A
+//                                      transient RPC failure must NEVER render
+//                                      as first-use setup, because inviting a
+//                                      collector to "begin arranging" a binder
+//                                      that already has an arrangement is how a
+//                                      real layout gets overwritten later.
+//   layout === null                    the read SUCCEEDED and there genuinely
+//                                      is no layout. THIS is first use.
+//
+// The same separation applies to membership: null is a failed read, [] is a
+// genuinely empty plan.
+const BP_FORMAT_LABEL={"3x3":"9-pocket","3x4":"12-pocket","4x4":"16-pocket"};
+const BP_THEME_LABEL={charcoal:"Charcoal","warm-black":"Warm black","deep-plum":"Deep plum",
+  "midnight-navy":"Midnight navy",forest:"Forest",burgundy:"Burgundy",sand:"Sand","soft-stone":"Soft stone"};
+
+function BinderPagesShell({members,layoutResult,onRetry}){
+  // A. Either read is still unresolved. Never render "no layout" here.
+  if(members===undefined||layoutResult===undefined){
+    return(
+      <div className="bp-pages">
+        <div className="bp-pages-state"><IcoSpin/> Loading page plan…</div>
+      </div>
+    );
+  }
+  // B. Membership read failed. Cards mode is unaffected and stays usable.
+  if(members===null){
+    return(
+      <div className="bp-pages">
+        <div className="bp-pages-state bp-pages-fail">Couldn't load this Binder Plan's page members.</div>
+        <button type="button" className="bp-pages-retry" onClick={onRetry}>Retry</button>
+      </div>
+    );
+  }
+  // C. Layout read failed — explicitly NOT first-use setup.
+  if(!layoutResult||layoutResult.status!=="ready"){
+    return(
+      <div className="bp-pages">
+        <div className="bp-pages-state bp-pages-fail">Couldn't load this Binder Plan's page layout.</div>
+        <button type="button" className="bp-pages-retry" onClick={onRetry}>Retry</button>
+      </div>
+    );
+  }
+  const layout=layoutResult.layout;
+  // D. Genuine first use. Restrained copy only — no format choices in BP-3.1B.
+  if(!layout){
+    return(
+      <div className="bp-pages">
+        <h3 className="bp-pages-title font-display">Plan your physical pages</h3>
+        <p className="bp-pages-copy">Choose a page format and background to begin arranging this Binder Plan.</p>
+        <p className="bp-pages-soon">Page setup coming next.</p>
+      </div>
+    );
+  }
+  // E. A layout exists. Read-only diagnostic metadata; no pocket grid yet.
+  const placedCount=layout.placements.length;
+  // Normalization already guarantees binderCardId uniqueness; the Set is the
+  // defensive floor, and the clamp keeps a placement referencing a row outside
+  // the current membership from producing a negative unplaced count.
+  const distinctPlaced=new Set(layout.placements.map(p=>p.binderCardId)).size;
+  const unplacedCount=Math.max(0,members.length-distinctPlaced);
+  return(
+    <div className="bp-pages">
+      <h3 className="bp-pages-title font-display">Page layout ready</h3>
+      <dl className="bp-pages-meta">
+        <div className="bp-pages-metarow"><dt>Format</dt><dd>{BP_FORMAT_LABEL[layout.formatKey]||layout.formatKey}</dd></div>
+        <div className="bp-pages-metarow"><dt>Pages</dt><dd>{layout.pageCount}</dd></div>
+        <div className="bp-pages-metarow"><dt>Background</dt><dd>{BP_THEME_LABEL[layout.backgroundTheme]||layout.backgroundTheme}</dd></div>
+        <div className="bp-pages-metarow"><dt>Placed</dt><dd>{placedCount}</dd></div>
+        <div className="bp-pages-metarow"><dt>Unplaced</dt><dd>{unplacedCount}</dd></div>
+      </dl>
+      <p className="bp-pages-soon">Page arrangement coming next.</p>
+    </div>
+  );
+}
+
 function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
   const[binder,setBinder]=useState(undefined); // undefined=loading, null=not found/unauthorized/error
   // BP-0B: inline edit of name/description. Session-only form state; Save
@@ -2104,6 +2187,20 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
   const reorderReqRef=useRef(0);
   const reorderBusyRef=useRef(false);
   const lastGoodRef=useRef(null);
+  // BP-3.1B: Cards | Pages sub-view. LOCAL state only — deliberately not a
+  // route, not a NAV_SURFACES entry, not URL-backed, and not visible to
+  // App-level routing. Cards is always the entry point.
+  //
+  // The page layer is loaded LAZILY: a collector who never opens Pages issues
+  // zero BP-3 requests. pagesMembers / pagesLayout are kept separate from
+  // memberIds / memberCards on purpose — the Cards surface is keyed on card
+  // ids, the page layer on user_binder_cards.id, and conflating them is the
+  // exact mistake the BP-3 authority boundaries exist to prevent.
+  const[subView,setSubView]=useState("cards");             // "cards" | "pages"
+  const[pagesMembers,setPagesMembers]=useState(undefined); // undefined=loading, null=read failed, array
+  const[pagesLayout,setPagesLayout]=useState(undefined);   // undefined=loading, {status:"ready"|"failed"}
+  const[pagesNonce,setPagesNonce]=useState(0);             // bump = retry BOTH page-layer reads
+  const pagesReqRef=useRef(0);                             // supersession: plan A's response can never land on plan B
   // BP-1A: binder metadata is keyed on planId ALONE, so retrying the catalog
   // read can never cancel an in-progress rename.
   useEffect(()=>{
@@ -2123,6 +2220,14 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
     setReorderBusy(false);
     setReorderMode(false);setReorderError("");
     setDragId(null);setDragOverId(null);
+    // BP-3.1B: the page layer belongs to one specific plan. Bumping the
+    // generation BEFORE anything new starts makes any in-flight members/layout
+    // response fail its identity check, so it cannot render plan A's pages
+    // inside plan B. Sub-view returns to Cards for the same reason the reorder
+    // mode does: a mode entered for one binder is not a mode for the next.
+    pagesReqRef.current+=1;
+    setSubView("cards");
+    setPagesMembers(undefined);setPagesLayout(undefined);
     fetchBinder(planId).then(row=>{if(!cancelled)setBinder(row);});
     return()=>{cancelled=true;};
   },[planId]);
@@ -2146,6 +2251,39 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
     });
     return()=>{cancelled=true;};
   },[planId,membersNonce]);
+  // BP-3.1B: page-layer load. Runs ONLY while Pages is the active sub-view, so
+  // mounting BinderPlanPage issues no BP-3 request at all.
+  //
+  // Both reads are initiated before either is awaited — Promise.all receives two
+  // already-running promises, not two thunks — so membership and layout are
+  // genuinely concurrent rather than sequential.
+  //
+  // Re-entering Pages re-runs this effect, which is the BP-2 stale-membership
+  // mitigation: a card added to this plan from CardModal while Cards was open is
+  // picked up on the next entry. Nothing App-wide is subscribed to; no event bus
+  // is introduced. State is reset to "loading" on every run rather than showing
+  // the previous document, so a refresh can never present stale data as current.
+  useEffect(()=>{
+    if(subView!=="pages")return undefined;
+    let cancelled=false;
+    const reqId=++pagesReqRef.current;
+    setPagesMembers(undefined);setPagesLayout(undefined);
+    const membersReq=fetchBinderMembers(planId);   // in flight
+    const layoutReq=fetchBinderLayout(planId);     // in flight, concurrently
+    Promise.all([membersReq,layoutReq]).then(([rows,layout])=>{
+      if(cancelled||reqId!==pagesReqRef.current)return; // superseded — belongs to a closed load
+      setPagesMembers(rows);                            // null stays null: a failed read is not an empty plan
+      setPagesLayout((layout&&layout.status)?layout:{status:"failed"});
+    }).catch(err=>{
+      console.error("BP-3.1B page-layer load failed:",err); // both services soft-fail; this is the floor
+      if(cancelled||reqId!==pagesReqRef.current)return;
+      setPagesMembers(null);setPagesLayout({status:"failed"});
+    });
+    return()=>{cancelled=true;};
+  },[planId,subView,pagesNonce]);
+  // Unmount invalidation: a response that resolves after this page is gone must
+  // not attempt a state commit belonging to a closed surface.
+  useEffect(()=>()=>{pagesReqRef.current+=1;},[]);
   // Debounced catalog search (300ms, min 2 chars). Session-only.
   useEffect(()=>{
     const q=query.trim();
@@ -2174,6 +2312,9 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
   // BP-1.1: membership must not change while an order is being authored or
   // saved. Derived once and used for both the notice and every Add button.
   const addBlocked=reorderMode||reorderBusy;
+  // BP-3.1B: same condition, different consequence — Pages cannot be entered
+  // while an order is in flight or being authored.
+  const pagesLocked=reorderMode||reorderBusy;
   const handleAdd=async card=>{
     // BP-1.1 — an insert during reorder would change membership underneath an
     // in-flight (or about-to-be-sent) reorder array, breaking the RPC's
@@ -2335,6 +2476,23 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
               </>
             )}
 
+            {/* ── BP-3.1B: Cards | Pages. A local sub-view control, not
+                   navigation. Pages is DISABLED while an order is being
+                   authored or saved: leaving mid-reorder would abandon a
+                   deliberate gesture, so the control refuses rather than
+                   silently aborting. The disabled attribute is the affordance;
+                   the guard inside onClick is the authority. ── */}
+            <div className="bp-subnav" role="group" aria-label="Binder plan view">
+              <button type="button" className={`bp-subtab${subView==="cards"?" is-active":""}`}
+                aria-pressed={subView==="cards"} onClick={()=>setSubView("cards")}>Cards</button>
+              <button type="button" className={`bp-subtab${subView==="pages"?" is-active":""}`}
+                aria-pressed={subView==="pages"} disabled={pagesLocked}
+                title={pagesLocked?"Finish reordering to open Pages":undefined}
+                onClick={()=>{if(pagesLocked)return;setSubView("pages");}}>Pages</button>
+            </div>
+            {pagesLocked&&<div className="bp-subnav-note">Finish reordering to open Pages.</div>}
+
+            {subView==="cards"&&(<>
             {/* ── BP-0A4: search / add region ── */}
             <div style={{marginBottom:"1.6rem"}}>
               {addBlocked&&query.trim().length>=2&&(
@@ -2495,6 +2653,12 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
               <div style={{marginTop:"1rem",fontSize:".66rem",color:"#4a4a70",lineHeight:1.5}}>
                 {orphanCount} {orphanCount===1?"card in this binder is":"cards in this binder are"} no longer in the catalog. {orphanCount===1?"It's":"They're"} still counted in the total and will reappear if the catalog restores {orphanCount===1?"it":"them"}. Reordering is paused until then.
               </div>
+            )}
+            </>)}
+
+            {subView==="pages"&&(
+              <BinderPagesShell members={pagesMembers} layoutResult={pagesLayout}
+                onRetry={()=>setPagesNonce(n=>n+1)}/>
             )}
           </>
         )}
@@ -3987,4 +4151,3 @@ function App(){
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 export { App, SharedBinder, ErrorBoundary };
-
