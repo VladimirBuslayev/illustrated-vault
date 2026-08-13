@@ -43,7 +43,7 @@ import { fetchBinders, fetchBinder, createBinder, deleteBinder, updateBinder,
          fetchBinderCardIds, addCardToBinder, removeCardFromBinder,
          reorderBinderCards, searchCatalogCards, fetchCardsByIds,
          fetchBinderIdsContainingCard, fetchBinderMembers } from './services/binderService.js'; // BP-0A1 + BP-0A3/4 + BP-0B + BP-1B + BP-2 + BP-3.1B
-import { fetchBinderLayout } from './services/binderLayoutService.js'; // BP-3.1B (page-layout read layer)
+import { fetchBinderLayout, createBinderLayout } from './services/binderLayoutService.js'; // BP-3.1B (read) + BP-3.1C (create)
 import { classifyCollectrRows, MATCHER_VERSION } from './services/snapshotMatcher.js';    // OL-0C
 import { loadCatalogIndex }                      from './services/catalogIndexLoader.js';  // OL-0C
 import { createImportSnapshot }                  from './services/importSnapshotService.js';// OL-0C
@@ -2056,10 +2056,34 @@ export function reorderIds(ids,from,to){
 // The same separation applies to membership: null is a failed read, [] is a
 // genuinely empty plan.
 const BP_FORMAT_LABEL={"3x3":"9-pocket","3x4":"12-pocket","4x4":"16-pocket"};
-const BP_THEME_LABEL={charcoal:"Charcoal","warm-black":"Warm black","deep-plum":"Deep plum",
-  "midnight-navy":"Midnight navy",forest:"Forest",burgundy:"Burgundy",sand:"Sand","soft-stone":"Soft stone"};
+const BP_THEME_LABEL={charcoal:"Charcoal","warm-black":"Warm Black","deep-plum":"Deep Plum",
+  "midnight-navy":"Midnight Navy",forest:"Forest",burgundy:"Burgundy",sand:"Sand","soft-stone":"Soft Stone"};
+// BP-3.1C: the three supported physical formats. cols x rows is the PHYSICAL
+// page geometry, not a CSS convenience — the preview grid is generated from it,
+// so a format can never be shown with a pocket count that disagrees with the
+// key the database will store. Arbitrary rows/columns are not supported.
+const BP_FORMATS=[
+  {key:"3x3",label:"9-pocket", cols:3,rows:3},
+  {key:"3x4",label:"12-pocket",cols:3,rows:4},
+  {key:"4x4",label:"16-pocket",cols:4,rows:4},
+];
+// Display order for the eight curated themes. The set is byte-identical to the
+// database allowlist and to THEMES in binderLayoutService; the allowlist itself
+// is NOT changed in this slice.
+const BP_THEME_KEYS=["charcoal","warm-black","deep-plum","midnight-navy","forest","burgundy","sand","soft-stone"];
 
-function BinderPagesShell({members,layoutResult,onRetry}){
+function BinderPagesShell({members,layoutResult,onRetry,onCreate,createBusy,createError}){
+  // BP-3.1C: setup selections. Hooks are unconditional and declared BEFORE any
+  // early return, so the state branch below can never change the hook order.
+  //
+  // Defaults — deliberately asymmetric, and reported as such:
+  //   format  NO default. Pocket geometry is the one choice that cannot be
+  //           changed later without reset, so it must be an act, not an accept.
+  //   theme   charcoal. It is already the app's canonical dark surface, so it
+  //           is a real default rather than an arbitrary first-in-list pick,
+  //           and it keeps the primary action one deliberate choice away.
+  const[formatKey,setFormatKey]=useState(null);
+  const[themeKey,setThemeKey]=useState("charcoal");
   // A. Either read is still unresolved. Never render "no layout" here.
   if(members===undefined||layoutResult===undefined){
     return(
@@ -2087,13 +2111,74 @@ function BinderPagesShell({members,layoutResult,onRetry}){
     );
   }
   const layout=layoutResult.layout;
-  // D. Genuine first use. Restrained copy only — no format choices in BP-3.1B.
+  // D. Genuine first use — BP-3.1C setup. Reached ONLY when the layout read
+  // SUCCEEDED and returned SQL NULL. A failed read is handled above and can
+  // never arrive here, so this flow cannot be offered for a binder that may
+  // already hold an arrangement.
   if(!layout){
+    const ready=!!formatKey&&!!themeKey;
     return(
       <div className="bp-pages">
         <h3 className="bp-pages-title font-display">Plan your physical pages</h3>
         <p className="bp-pages-copy">Choose a page format and background to begin arranging this Binder Plan.</p>
-        <p className="bp-pages-soon">Page setup coming next.</p>
+
+        <div className="bp-setup-group" role="group" aria-label="Page format">
+          <div className="bp-setup-legend">Format</div>
+          <div className="bp-fmt-row">
+            {BP_FORMATS.map(f=>{
+              const sel=formatKey===f.key;
+              return(
+                <button key={f.key} type="button" aria-pressed={sel}
+                  className={`bp-fmt${sel?" is-selected":""}`}
+                  onClick={()=>{if(!createBusy)setFormatKey(f.key);}}>
+                  {/* Abstract pocket density only — deliberately no card art.
+                      The grid is generated from the physical geometry, and it
+                      previews in the CURRENTLY selected theme so format and
+                      colour are judged together rather than in isolation. */}
+                  <span className={`bp-fmt-preview bp-theme-${themeKey}`} aria-hidden="true"
+                    style={{gridTemplateColumns:`repeat(${f.cols},1fr)`}}>
+                    {Array.from({length:f.cols*f.rows}).map((_,i)=><span key={i} className="bp-pocket-cell"/>)}
+                  </span>
+                  <span className="bp-fmt-label">{f.label}</span>
+                  <span className="bp-fmt-sub">{f.cols} × {f.rows}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="bp-setup-group" role="group" aria-label="Binder colour">
+          <div className="bp-setup-legend">Binder colour</div>
+          <div className="bp-swatch-row">
+            {BP_THEME_KEYS.map(k=>{
+              const sel=themeKey===k;
+              return(
+                <button key={k} type="button" aria-pressed={sel}
+                  className={`bp-swatch bp-theme-${k}${sel?" is-selected":""}`}
+                  onClick={()=>{if(!createBusy)setThemeKey(k);}}>
+                  {/* The chip IS the mat. The focus ring is drawn inside it, on
+                      --bp-mat, which is exactly the surface the contrast gate
+                      measures --bp-focus against. */}
+                  <span className="bp-swatch-chip" aria-hidden="true"><span className="bp-swatch-pocket"/></span>
+                  <span className="bp-swatch-label">{BP_THEME_LABEL[k]}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="bp-setup-action">
+          <button type="button" className="bp-create" disabled={!ready||createBusy}
+            onClick={()=>{if(ready&&!createBusy&&onCreate)onCreate(formatKey,themeKey);}}>
+            {createBusy?"Creating…":"Create page layout"}
+          </button>
+          {createBusy&&<span className="bp-create-saving" role="status" aria-live="polite">Setting up your pages…</span>}
+          {!formatKey&&!createBusy&&<span className="bp-create-hint">Choose a page format to continue.</span>}
+        </div>
+        {/* A create failure leaves BOTH selections exactly as they were: the
+            collector re-presses, they do not re-choose. Local layout state is
+            never advanced to ready by a failure. */}
+        {createError&&<div className="bp-create-error" role="alert">{createError}</div>}
       </div>
     );
   }
@@ -2201,6 +2286,15 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
   const[pagesLayout,setPagesLayout]=useState(undefined);   // undefined=loading, {status:"ready"|"failed"}
   const[pagesNonce,setPagesNonce]=useState(0);             // bump = retry BOTH page-layer reads
   const pagesReqRef=useRef(0);                             // supersession: plan A's response can never land on plan B
+  // BP-3.1C: layout creation. createBusyRef is the SERIALIZATION gate and is
+  // claimed synchronously BEFORE any setState — the disabled button alone is
+  // not enough, because two taps in the same tick both read a stale `false`
+  // from React state. This is the same pattern reorderBusyRef uses, and for the
+  // same reason: create_binder_page_layout is UNIQUE per binder, so a second
+  // in-flight call would surface a 23505 for a layout that in fact succeeded.
+  const[createBusy,setCreateBusy]=useState(false);
+  const[createError,setCreateError]=useState("");
+  const createBusyRef=useRef(false);
   // BP-1A: binder metadata is keyed on planId ALONE, so retrying the catalog
   // read can never cancel an in-progress rename.
   useEffect(()=>{
@@ -2228,6 +2322,7 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
     pagesReqRef.current+=1;
     setSubView("cards");
     setPagesMembers(undefined);setPagesLayout(undefined);
+    createBusyRef.current=false;setCreateBusy(false);setCreateError(""); // BP-3.1C: a failure belongs to the plan that produced it
     fetchBinder(planId).then(row=>{if(!cancelled)setBinder(row);});
     return()=>{cancelled=true;};
   },[planId]);
@@ -2268,6 +2363,7 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
     let cancelled=false;
     const reqId=++pagesReqRef.current;
     setPagesMembers(undefined);setPagesLayout(undefined);
+    setCreateError(""); // BP-3.1C: never greet a fresh entry with a previous attempt's error
     const membersReq=fetchBinderMembers(planId);   // in flight
     const layoutReq=fetchBinderLayout(planId);     // in flight, concurrently
     Promise.all([membersReq,layoutReq]).then(([rows,layout])=>{
@@ -2284,6 +2380,44 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
   // Unmount invalidation: a response that resolves after this page is gone must
   // not attempt a state commit belonging to a closed surface.
   useEffect(()=>()=>{pagesReqRef.current+=1;},[]);
+  // BP-3.1C: create the page layout, then apply the RETURNED canonical document
+  // directly. No second fetch: create_binder_page_layout returns the same
+  // document fetch_binder_page_layout would, through the same strict
+  // normalizer, so re-reading would only add a round trip and a window in which
+  // the surface disagrees with itself.
+  //
+  // The generation captured here is the one the current Pages load established.
+  // Changing plan, or leaving and re-entering Pages, bumps it — so a create
+  // that resolves late can neither mark another plan "ready" nor surface its
+  // error there. A FAILURE never advances pagesLayout: the setup flow stays
+  // exactly as the collector left it, selections intact.
+  const handleCreateLayout=useCallback(async(formatKey,backgroundTheme)=>{
+    if(createBusyRef.current)return;          // synchronous gate — claimed before any setState
+    createBusyRef.current=true;
+    const reqId=pagesReqRef.current;
+    setCreateBusy(true);setCreateError("");
+    try{
+      const layout=await createBinderLayout(planId,{formatKey,backgroundTheme});
+      if(reqId!==pagesReqRef.current)return;  // superseded — belongs to a closed load
+      setPagesLayout({status:"ready",layout});
+    }catch(err){
+      console.error(err);                     // backend diagnostics stay console-only
+      if(reqId!==pagesReqRef.current)return;
+      setCreateError("Couldn't create the page layout. Your choices are still here — try again.");
+    }finally{
+      // Generation-safe release. A create that resolves after its generation
+      // closed owns NOTHING any more: releasing the ref or the flag here would
+      // hand a newer load's serialization gate to a request that is no longer
+      // authoritative — either unlocking a create that is genuinely still in
+      // flight, or stranding the flag as permanently true. The newer generation
+      // establishes its own busy state; the only other release is the explicit
+      // reset in the plan-change effect, which is deliberately preserved.
+      if(reqId===pagesReqRef.current){
+        createBusyRef.current=false;
+        setCreateBusy(false);
+      }
+    }
+  },[planId]);
   // Debounced catalog search (300ms, min 2 chars). Session-only.
   useEffect(()=>{
     const q=query.trim();
@@ -2315,6 +2449,14 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
   // BP-3.1B: same condition, different consequence — Pages cannot be entered
   // while an order is in flight or being authored.
   const pagesLocked=reorderMode||reorderBusy;
+  // BP-3.1C: the mirror image. Pages cannot be LEFT while a create is in
+  // flight. create_binder_page_layout is one short atomic operation that may
+  // already be executing on the server, so leaving would mean either inventing
+  // cancellation semantics it does not have, or letting the collector wander
+  // away from the only surface that can report the outcome. Holding the surface
+  // for the length of one RPC is the smaller cost, and it removes the
+  // leave-and-re-enter path that could otherwise strand the busy flag.
+  const cardsLocked=createBusy;
   const handleAdd=async card=>{
     // BP-1.1 — an insert during reorder would change membership underneath an
     // in-flight (or about-to-be-sent) reorder array, breaking the RPC's
@@ -2484,13 +2626,16 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
                    the guard inside onClick is the authority. ── */}
             <div className="bp-subnav" role="group" aria-label="Binder plan view">
               <button type="button" className={`bp-subtab${subView==="cards"?" is-active":""}`}
-                aria-pressed={subView==="cards"} onClick={()=>setSubView("cards")}>Cards</button>
+                aria-pressed={subView==="cards"} disabled={cardsLocked}
+                title={cardsLocked?"Finish creating the page layout":undefined}
+                onClick={()=>{if(cardsLocked)return;setSubView("cards");}}>Cards</button>
               <button type="button" className={`bp-subtab${subView==="pages"?" is-active":""}`}
                 aria-pressed={subView==="pages"} disabled={pagesLocked}
                 title={pagesLocked?"Finish reordering to open Pages":undefined}
                 onClick={()=>{if(pagesLocked)return;setSubView("pages");}}>Pages</button>
             </div>
             {pagesLocked&&<div className="bp-subnav-note">Finish reordering to open Pages.</div>}
+            {cardsLocked&&<div className="bp-subnav-note">Finish creating the page layout.</div>}
 
             {subView==="cards"&&(<>
             {/* ── BP-0A4: search / add region ── */}
@@ -2658,7 +2803,8 @@ function BinderPlanPage({planId,user,onBack,checkOwned,onCardClick,intentMap}){
 
             {subView==="pages"&&(
               <BinderPagesShell members={pagesMembers} layoutResult={pagesLayout}
-                onRetry={()=>setPagesNonce(n=>n+1)}/>
+                onRetry={()=>setPagesNonce(n=>n+1)}
+                onCreate={handleCreateLayout} createBusy={createBusy} createError={createError}/>
             )}
           </>
         )}
