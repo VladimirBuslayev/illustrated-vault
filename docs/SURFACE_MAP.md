@@ -1,11 +1,24 @@
 # Illustrated Vault — Product Surface Map
 
-Last updated: 2026-07-02
-Status: Planning document. No implementation implied by this file.
+Last updated: 2026-08-13
+Status: Live surface map. §1 describes surfaces that are shipped and in
+production; §2 remains forward-looking. This file records surface ownership
+boundaries — it does not authorize implementation on its own.
 
 Purpose: define what each surface owns, what it must not own, and how the
 future Collection Goals / Lenses model fits — so new features land in the
 right place instead of accreting onto whatever surface is nearest.
+
+Three binder concepts are distinct and must not be conflated:
+
+- **Binder** — artist-first collection browse. The continuous, whole-collection
+  visual scroll across tracked artists. Not a user-authored list.
+- **Planned Binder** — an intentional themed card list the collector builds.
+  Membership is explicit and catalog-independent; `position` is a manual **list
+  order** and nothing more.
+- **Binder Page Layout** — the optional physical page-placement planning layer
+  over one Planned Binder's membership. Pockets are occupied by membership rows,
+  never by catalog card IDs, and never by list `position`.
 
 ---
 
@@ -31,6 +44,37 @@ right place instead of accreting onto whatever surface is nearest.
 - **Secondary job:** In-collection search, sort, view modes, color mode.
 - **Does not belong here:** Acquisition planning beyond intent pills, artist management, set-centric browsing, dashboard-style stats.
 - **Risks:** Sort/filter clutter; identity blur against Artist Page (Binder = everything, Artist Page = one lens deep) and later against non-artist lenses. Binder should stay artist-sectioned; other groupings belong to other lenses.
+
+### Owned Library — shipped
+
+- **Primary job:** The exhaustive physical-collection archive. Answers "what do I physically own?" across the imported collection, including cards outside the tracked-artist roster.
+- **Ownership authority:** authenticated ownership follows the active import snapshot canonical-card authority plus explicit manual overrides. Never fall back to loose `owned_keys` matching — that remains legacy recognition infrastructure and still powers only the separate SharedBinder boundary.
+- **Secondary job:** Collection search/browse and card inspection.
+- **Does not belong here:** Missing-card completion planning, Hunt Board prioritization, Planned Binder membership, or generic portfolio/value analytics.
+- **Risks:** Ownership-authority drift, cross-printing false positives, or turning the archive into a generic tracker. False-positive physical ownership is more harmful than a temporary false negative.
+
+### Artist Directory ("Explore Artists") — shipped
+
+- **Primary job:** Artist discovery and archive-roster management. Gallery browse over the roster, Find Illustrator search against `illustrator_directory`, Add to Archive, and per-artist tier reassignment / Remove from Archive on dynamically added artists.
+- **Secondary job:** Entry point into the Artist Page lens.
+- **Does not belong here:** Card-level actions, ownership editing, hunt planning, price analysis, spreadsheet-style artist tables. Tracked-artist management belongs here and **not** in Settings — tracking is a collecting decision, not a preference.
+- **Standing rule:** users can look at anything, but can act only on what is in their archive. Untracked discovery results are read-only until added to the archive; once an artist is in the user's archive, the existing roster-management actions (tier reassignment, Remove from Archive) are allowed.
+- **Risks:** Drifting from gallery to database. Curated roster entries must stay visually and functionally untouched by the Manage affordance, which is dynamic-only by construction.
+
+### Planned Binder — shipped
+
+- **Primary job:** An intentional themed card list the collector is building — create/rename/describe/delete, global catalog search, add/remove, manual list ordering, and Hunt intent visibility on rows.
+- **Secondary job:** Hosts the Cards / Pages sub-navigation into the page-layout layer.
+- **Does not belong here:** Artist-first browse (that is Binder), acquisition ranking (that is Hunt Board), ownership authority. Membership is a statement of intent and is deliberately catalog-independent — it must survive a catalog row becoming unavailable.
+- **Risks:** `position` being reinterpreted as physical placement. It is a list sequence, full stop.
+
+### Binder Page Layout ("Pages") — shipped through first-use setup
+
+- **Primary job:** Physical page-placement planning for one Planned Binder: page format (9 / 12 / 16-pocket), background theme, and — once BP-3.1D resumes — pocket arrangement.
+- **Secondary job:** None. Its restraint is deliberate.
+- **Does not belong here:** Membership changes (that is Planned Binder), list reordering, ownership, intent. A pocket is occupied by a membership row, never by a global catalog card ID.
+- **Current containment:** setup only. A layout can be created but not yet arranged, re-themed, or reset from the app; the corresponding RPCs exist but have no frontend seam. A failed layout read must never render as first-use setup.
+- **Risks:** Overwriting a real arrangement by treating an unknown state as "no layout." The three read outcomes (ready-with-layout / ready-with-null / failed) must stay distinct.
 
 ### SharedBinder
 
@@ -71,15 +115,15 @@ with type-specific heroes, not invent new page designs. One layout, many
 lenses. This is how the collection-goals abstraction gets earned without a
 rewrite.
 
-| Future concept | Belongs in | Notes |
+| Concept | Belongs in | Status / notes |
 |---|---|---|
-| Browse/search all artists | **New: Artist Directory** | Discovery surface over the Gate 3 `artists` table. Visual, card-art-led — a gallery of illustrators, not a table. Establishes the directory → lens pattern that Sets will reuse. |
-| Tracked artist management | **Artist Directory** (track/untrack), with a small "manage" affordance near the Dashboard artist list | Not Settings. Tracking is a collecting decision made in context of discovery. |
-| Set pages / Set Lens v0 | **New: Set Page** (Lens skeleton) | Second goal type. Entry points: CardModal set link first, a set index later. Reuses segments, intent pills, completion. |
-| Pokémon Search / Pokémon Lens v0 | **New: search-first surface → Pokémon Page** (Lens skeleton) | Search is the entry; the result page is just another lens. Do not build a global "all cards" search grid. |
-| Custom lists / collection goals | **New: Goals surface** | The generalization step. A goal = (type, target, progress, hunt targets, showcase). Artist/Set/Pokémon lenses become goal types retroactively; custom lists are the first user-defined type. |
-| Binder planning | **Grows out of Goals** — a goal type with physical-layout semantics (pages, slots) | Deliberately last. No standalone Binder Composer before the goal model is proven. |
-| Shareable views | **SharedBinder, later generalized to "share a lens/goal"** | v1 stays artist-collection sharing. Read-only contract carries over to any future shared lens. |
+| Browse/search all artists | **Artist Directory** | **Shipped** (A-D1, A-D2c-lite). Gallery of illustrators, not a table. Established the directory → lens pattern that Sets will reuse. |
+| Tracked artist management | **Artist Directory** | **Shipped** (A-D2a/b0/c/d): add to archive, tier reassignment, remove. Not Settings. |
+| Binder planning | **Planned Binder + Binder Page Layout** | **Shipped ahead of the original sequence.** Binder Planning was originally deferred until the goal model was proven; BP-0A/B, BP-1A and BP-3.1A/B/C shipped it as its own concrete surface instead. Physical placement is a separate optional layer over membership, not a property of it. |
+| Set pages / Set Lens v0 | **New: Set Page** (Lens skeleton) | Not built. The next unbuilt Lens type — the first reuse of the Artist Page skeleton, not literally the second goal type now that Binder Plan exists. Entry points: CardModal set link first, a set index later. Reuses segments, intent pills, completion. |
+| Pokémon Search / Pokémon Lens v0 | **New: search-first surface → Pokémon Page** (Lens skeleton) | Not built. Search is the entry; the result page is just another lens. Do not build a global "all cards" search grid. |
+| Custom lists / collection goals | **New: Goals surface** | Not built. The generalization step. A goal = (type, target, progress, hunt targets, showcase). Artist/Set/Pokémon lenses become goal types retroactively. |
+| Shareable views | **SharedBinder, later generalized to "share a lens/goal"** | v1 stays artist-collection sharing and read-only. Read-only contract carries over to any future shared lens. |
 | Hunt Board acquisition planning | **Hunt Board (unchanged role)** | Stays the single cross-goal plan. Later enhancement: goal-aware grouping. Never per-lens boards. |
 
 ---
@@ -92,33 +136,37 @@ content, not chrome:
 - **Anchors (persistent, small header):** Dashboard (home) · Binder (collection) · Hunt Board (plan). These are the three verbs: *overview, browse, hunt.*
 - **Lenses (Artist / future Set / future Pokémon pages):** reached through anchors, directories, and cross-links — never top-level tabs. This is the guard against tab explosion as goal types grow from 1 to 5.
 - **Directories (Artist Directory, later set index):** hang off Dashboard and/or Binder as "explore" entry points.
-- **CardModal as connective tissue:** artist name links to Artist Page today; set and Pokémon links join it when those lenses exist. Most cross-lens travel should happen through cards, because cards are the shared atom of every lens.
+- **Sub-navigation within a surface** (Planned Binder's Cards / Pages tabs) is content-local and does not become app chrome. A second layer inside one surface is acceptable; a second layer in the header is not.
+- **CardModal as connective tissue:** artist name links to Artist Page today, and the Binder Plan entry point adds a card to a plan from the same surface; set and Pokémon links join them when those lenses exist. Most cross-lens travel should happen through cards, because cards are the shared atom of every lens.
 - **SharedBinder:** stays URL-only (`?share=`), outside app navigation.
 
-Known debt to flag (not fix now): navigation is view-state only — Artist
-Pages and future lenses have no URLs, so they can't be linked, bookmarked, or
-back-buttoned. Real routing becomes necessary around Set Lens / shareable
-lens views. Record it as an upcoming infrastructure decision, not a current
-task.
+Navigation debt — now an active concern, not a flagged future one. Navigation
+is still view-state only: Artist Pages, Planned Binders, the Pages sub-view and
+future lenses have no URLs, so they cannot be linked, bookmarked, or
+back-buttoned, and page/route state is not durably restored across reloads.
+The Hunt Board back button always returns to Dashboard regardless of entry
+point. Deep sub-navigation (Planned Binder → Pages) made this materially worse.
+
+This is the substance of **NAV-1 — Product Architecture & Durable Navigation**,
+the second slice in the current near-term sequence. It is a scheduled slice,
+not an open question; see ROADMAP.md.
 
 ---
 
-## 4. Product sequencing recommendation
+## 4. Product sequencing
 
-The agreed sequence is **confirmed**, with rationale:
+**Superseded.** The sequence this document recommended in 2026-07 (Surface Map
+→ Artist expansion → Set Lens v0 → feel-check → Pokémon Lens → Collection Goals
+→ Binder Planning last) no longer describes the plan. The Surface Map, artist
+expansion, and the feel-check slices shipped; Binder Planning shipped early as
+its own surface rather than last out of Goals.
 
-1. **Product Surface Map** — this document.
-2. **Artist expansion / tracked artist management** — correctly next: the Artist Directory establishes the directory → lens → track pattern, exercises the Gate 3 `artists` table, and deepens the flagship lens before any new lens type exists.
-3. **Set Lens v0** — first reuse of the Lens skeleton; proves the model generalizes.
-4. **Artist Page Slice C or Brand/Logo/Loading V-B** — feel-check decision point; choose whichever the app most needs after two structural slices.
-5. **Pokémon Search / Lens v0** — second skeleton reuse; adds the search entry pattern.
-6. **Collection Goals / Custom Lists** — generalize only after three concrete lens types exist to generalize *from*.
-7. **Binder Planning v0** — last, once the goal/list model is clear.
+Sequencing authority now lives in ROADMAP.md. The current near-term order is
+CAT-2 → NAV-1 → SEC-0 → AUTH-1 → BETA-0, with Binder Page Planning BP-3.1D+
+paused. Set Lens, Pokémon Lens, and Collection Goals remain valid long-term
+direction behind that order.
 
-One nuance: the step-4 feel-check is allowed to move earlier if the app
-starts feeling structurally sound but emotionally flat — brand work is the
-pressure valve, not a fixed slot. Nothing else in the order should move
-without an explicit decision.
+Do not re-derive sequencing from this file.
 
 ---
 
@@ -127,31 +175,19 @@ without an explicit decision.
 - **Generic tracker drift:** global filter bars, an "all cards" grid, spreadsheet-style tables. Mitigation: every surface must answer one of the five collector questions; directories are galleries, not databases.
 - **Database clone drift:** exposing the raw catalog without goal context. Mitigation: catalog data is only ever reached *through* a lens or directory with progress and curation attached.
 - **Marketplace/price drift:** deal feeds, portfolio-value charts on Dashboard, price alerts. Pricing stays per-card buying context (modal, Hunt Board sort). All alert/valuation features remain deferred.
-- **Overbuilt binder planner:** schema and UI for pages/slots before the goal model exists. Hard-deferred per roadmap.
+- **Overbuilt binder planner:** the original mitigation was to hard-defer pages/slots until the goal model existed. Binder planning shipped first instead, contained by keeping placement a separate optional layer over membership and by holding arrangement/theme/reset behind the paused BP-3.1D+ boundary. The live risk is now the reverse: adding write seams to the layout layer ahead of an approved slice.
 - **Cluttered dashboard:** module creep. Budget: one summary element per goal type, everything links out.
 - **Lens divergence:** each new lens getting bespoke UI. Mitigation: the Lens skeleton is the contract; deviations need a reason.
 - **Intent semantics dilution:** as lenses multiply, pressure will grow to merge favorites and intent or add per-lens statuses. The favorites-vs-intent distinction and the four-status model hold unless deliberately revisited.
-- **Navigation debt:** view-state routing (no URLs) is acceptable now, a blocker later. Decide on routing before or during Set Lens v0.
+- **Navigation debt:** view-state routing (no URLs) and non-durable page/route state. No longer "acceptable now" — scheduled as NAV-1 (§3).
 
 ---
 
-## 6. Recommended next implementation slice
+## 6. Next implementation slice
 
-**Artist Directory v0 (read-only browse) — slice A-D1.**
+This file no longer recommends one. The former recommendation — Artist
+Directory v0 (A-D1) — shipped, along with A-D2a/b0/c/d.
 
-Scope: a directory surface listing all artists from the Gate 3 `artists`
-table — visual, card-art-led, with name, card count, and (for tracked
-artists) progress — where tapping a tracked artist opens their existing
-Artist Page. No track/untrack mutation yet; no schema changes; no changes to
-the `ARTISTS` roster mechanism.
-
-Why this slice:
-
-- It is the first step of the agreed "Artist expansion" phase and establishes the directory → lens pattern that Set Lens v0 will copy.
-- It reads data that already exists (the `artists` table was built in Gate 3 and is currently underused by the frontend).
-- It is narrow, independently revertible, and touches no invariants: no ownership logic, no intent, no SharedBinder, no schema.
-- It surfaces the real design questions of tracked-artist management (what does an *untracked* artist's page look like? where does progress come from?) *before* any tracking persistence is built — audit-first, in product form.
-
-Track/untrack persistence (which will require a schema decision, e.g. a
-user-tracked-artists table vs. the current hardcoded roster) becomes slice
-A-D2, planned only after A-D1 is validated.
+The next slice is **CAT-2 — Catalog Trust & Visual Completeness**, per
+ROADMAP.md. Slice selection is roadmap authority; this document's job is to say
+where a slice's behavior belongs once it is approved, not to choose it.

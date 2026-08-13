@@ -1,6 +1,6 @@
 Illustrated Vault — Current State
 
-Last updated: 2026-07-28
+Last updated: 2026-08-13
 
 Production
 
@@ -75,6 +75,42 @@ CAT-1
 Temporal metadata restoration (series / release_date)
 
 ✓ Complete 2026-07-28
+
+BP-1A
+
+Planned Binder manual list ordering
+
+✓ Complete
+
+Artist Page 3.0
+
+Source-governed editorial dossier composition
+
+✓ Complete
+
+BP-3.1A
+
+Binder Page Layout data foundation
+
+✓ Complete
+
+BP-3.1B
+
+Binder Page frontend read layer + Cards / Pages shell
+
+✓ Complete
+
+BP-3.1C
+
+First-use Binder Page setup (format + theme)
+
+✓ Complete, production-validated
+
+WF-1
+
+Development / knowledge workflow and agent contract
+
+✓ Complete 2026-08-13
 
 Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or deferred cleanup remains.
 
@@ -164,6 +200,16 @@ Hunting segment framing: a quiet summary line ("N active targets · M on the lis
 
 Manage-in-mini-header for dynamic artists is deliberately NOT in this slice — deferred to Artist Page C2.
 
+Artist Page 3.0 — editorial archive complete
+
+Artist Page 3.0 adds source-governed editorial dossiers on top of the Slice C composition. Content lives in src/constants/artistEditorial.js, keyed by artist slug, and is additive: an artist absent from ARTIST_EDITORIAL still renders the full page from existing ARTIST_FACTS / ARTIST_META content.
+
+Source-integrity rules are part of the contract, not style guidance: no invented first-person quotes, no paraphrase inside quotation marks, no long copied source passages, secondary-source claims phrased as description rather than settled self-description, and no source portraits, scans or non-catalog artwork referenced or hosted. Every image on the page comes from the existing card catalog.
+
+Notable cards resolve by exact canonical ID against the artist's own loaded card array — never by name prefix and never "first matching card". expectName is a mandatory integrity guard: an ID that resolves to a card whose name does not match is omitted rather than substituted, with a console diagnostic.
+
+Komiya was the content pilot, not a separate route. The mobile notable-works rail was refined in the same phase. No schema, ownership, intent, or SharedBinder behavior changed.
+
 Explore Artists directory — A-D1 live
 
 Read-only artists view entered via the "Explore Artists →" link on the Dashboard artist section header; derived from in-memory state. Tapping an artist opens the existing Artist Page.
@@ -234,7 +280,93 @@ Authenticated strict ownership is reused live: canonical plan cards resolve thro
 
 Planned binder cards open the existing CardModal.
 
-This is still a list-based planning surface, not a 9-pocket physical page planner. Page layout, slot positions, and physical storage modeling remain deferred.
+Superseded note: this section previously recorded that page layout, slot positions, and physical storage modeling remained deferred. That is no longer current — see Binder Page Planning — BP-3.1A/B/C below. Planned Binder membership itself remains a list, and the physical placement layer is a separate, optional layer over it.
+
+Planned Binder ordering and intent visibility — BP-1A complete
+
+user_binder_cards gained a position integer NOT NULL column carrying a collector-authored list sequence, backfilled deterministically from the then-current service order, with a supporting (binder_id, position, created_at, id) index, a BEFORE INSERT assignment trigger (ubc_before_insert_assign_position / user_binder_cards_assign_position()), and an atomic whole-binder reorder_binder_cards(uuid, text[]) RPC.
+
+Ordering semantics are load-bearing: position is a LIST SEQUENCE. It is not a page number, a pocket index, or any physical binder placement, and must not be reinterpreted as one.
+
+No foreign key was added from user_binder_cards.card_id to cards or cards_effective. This is deliberate: a planned binder is a statement of intent and must survive a catalog row becoming temporarily unavailable. Do not add one later without an explicit product decision.
+
+Hunt intent is visible on planned binder rows, and CardModal gained a Binder Plan entry point so a card can be added to a plan from the universal per-card action surface.
+
+Canonical migration:
+
+/docs/sql/bp-1a-planned-binder-ordering.sql
+
+Binder Page Planning — BP-3.1A/B/C complete
+
+Binder Page Layout is the optional physical page-placement layer over Binder Plan membership. It is a distinct authority from both membership and list order.
+
+Three authorities, never conflated:
+
+user_binder_cards — exact Binder Plan membership (inclusion).
+
+user_binder_cards.position — manual list order only.
+
+user_binder_layout_items — physical pocket placement.
+
+A pocket is occupied by a binder membership row (user_binder_cards.id), never by a global catalog card ID. That is what lets placement clear itself when a card leaves the plan, survive catalog absence, and keep future duplicate physical slots representable. Empty pockets are derived (no row), unplaced cards are derived (a membership with no item), and pages are derived from page_count — there is no page table.
+
+BP-3.1A (SQL, complete) — data foundation:
+
+additive UNIQUE (id, binder_id) on user_binder_cards, added solely to be a legal referent for the composite foreign key below;
+
+user_binder_layouts (at most one per binder, optional) and user_binder_layout_items (occupied pockets only);
+
+RLS is parent-derived SELECT only — there is no client write path to either table;
+
+composite FK makes foreign-binder placement structurally impossible rather than merely validated;
+
+RPCs: iv_binder_layout_document(uuid) (private, STABLE), fetch_binder_page_layout(uuid) (atomic read), create_binder_page_layout(uuid, text, text), save_binder_page_layout(uuid, integer, jsonb), set_binder_layout_theme(uuid, text), reset_binder_page_layout(uuid, text);
+
+no foreign key from any layout table to cards or cards_effective — placement follows membership, and membership is deliberately catalog-independent.
+
+Canonical migration and validation:
+
+/docs/sql/bp-3-1a-binder-page-layout-foundation.sql
+
+/docs/sql/bp-3-1a-binder-page-layout-validation.sql
+
+BP-3.1B (app, complete) — frontend read layer and Cards / Pages shell:
+
+src/services/binderLayoutService.js is the only frontend seam for the BP-3 page-layout RPC surface.
+
+Reads soft-fail into three closed outcomes that must stay distinct:
+
+{ status: "ready", layout: null } — the read succeeded and this binder genuinely has no layout. This is the only payload that may render first-use setup.
+
+{ status: "ready", layout: {…} } — the read succeeded and the document passed strict normalization.
+
+{ status: "failed" } — nothing is known. This is not evidence that a layout is absent and must never render as first-use setup.
+
+A malformed-but-successful RPC response is a read failure, not a repairable document. Nothing coerces a value, defaults a theme, or drops a bad placement: normalization rebuilds the document field by field from validated input and returns null on any violation — wrong contractVersion, binder-ID mismatch, unknown format key or theme, a page or pocket exceeding its ceiling, or a duplicate membership row / duplicate page:pocket slot.
+
+Planned Binder detail gained a Cards / Pages sub-navigation. Membership and layout reads are kept in separate state (undefined = loading, null = failed read, [] = genuinely empty), are request-superseded so one plan's response can never land on another, and the Pages tab is locked while reorder mode is active.
+
+BP-3.1C (app, complete, production-validated) — first-use Binder Page setup:
+
+createBinderLayout is the layout create path. Writes throw rather than soft-failing, because a create that quietly returned a falsy value would let the UI render "ready" for a layout the database may not hold. A malformed successful create fails closed through the same strict normalizer.
+
+Format choices are the three supported physical geometries: 3x3 (9-pocket), 3x4 (12-pocket), 4x4 (16-pocket). Columns × rows is physical page geometry, not CSS convenience — the preview grid is generated from it, so a format can never be shown with a pocket count that disagrees with the key the database stores. Arbitrary rows/columns are not supported.
+
+Eight curated background themes: charcoal, warm-black, deep-plum, midnight-navy, forest, burgundy, sand, soft-stone. The set is byte-identical across the database allowlist, THEMES in binderLayoutService.js, and the UI display order.
+
+Defaults are deliberately asymmetric: format has no default, because pocket geometry cannot be changed later without reset and must therefore be an act rather than an accept; theme defaults to charcoal, the app's existing canonical dark surface.
+
+Creation persists the page layout and the shell then reports format, page count, background, placed and unplaced counts.
+
+Current Binder Page state and containment:
+
+format choices 9-pocket / 12-pocket / 16-pocket;
+
+curated background themes;
+
+persisted page-layout creation;
+
+BP-3.1D onward — actual page arrangement, pocket drag/placement, theme change and reset — intentionally paused, not abandoned. save_binder_page_layout, set_binder_layout_theme and reset_binder_page_layout exist in the database but have no frontend seam, so no code in binderLayoutService.js can modify or remove an existing layout.
 
 SharedBinder — read-only share surface
 
@@ -1160,7 +1292,7 @@ External-set cards — none render today; future set-path cards are override-onl
 
 Recommended next slice:
 
-Deliberately open. CAT-1 is complete and does not choose its successor. The next roadmap decision should weigh SORT-1 (sorting architecture, now unblocked) against a visible artist-first collector improvement, on product grounds rather than on the momentum of having just finished catalog work. SORT-1 is a backlog candidate, not automatically the next major build. See ROADMAP.md.
+Settled. The "deliberately open" state recorded after CAT-1 is closed. The agreed near-term sequence is CAT-2 (Catalog Trust & Visual Completeness) → NAV-1 (Product Architecture & Durable Navigation) → SEC-0 (User Data & Application Security Audit) → AUTH-1 (Persistent Sign-In & Session Reliability) → BETA-0 (Small Collector Beta). Binder Page Planning BP-3.1D+ is paused, not abandoned. SORT-1 remains a backlog candidate and is not in the near-term sequence. See ROADMAP.md.
 
 Historical note — CAT-1 was selected as the slice following CAT-0 because the root cause was fully confirmed, the same TCGdex source was already fetched, the database columns already existed, there were no ownership or printing-identity implications, and the defect was narrow and deterministic.
 
@@ -1168,7 +1300,7 @@ Binding guardrail that governed CAT-1, retained as precedent. The sync path perf
 
 Deferred by CAT-0: Pokémon TCG API fallback Probe B · image remediation · illustrator enrichment · artist FK repair · OL-0D p_artist_id filter semantics (latent; no user-facing Owned Library artist-filter workflow established) · add_artist_to_archive duplicate-identity risk · index hygiene · pricing.
 
-Roadmap after CAT-1 (unchanged in substance; CAT-1 is now complete):
+Roadmap after CAT-1 — superseded as sequencing. The evidence-backed illustrator slice and OWN-1 (Artwork vs Printing ownership policy) remain valid work items and their preconditions are unchanged, but they are no longer the stated next sequence. Catalog trust and image completeness are now carried by CAT-2. See ROADMAP.md for the current order.
 
 evidence-backed illustrator slice (pending revalidated upstream cause and governance) → OWN-1 Artwork vs Printing ownership policy
 
@@ -1199,6 +1331,36 @@ Loose owned_keys collisions no longer inflate authenticated counts.
 Owned Library counts remain separate and snapshot-authoritative through OL-0D.
 
 SharedBinder remains intentionally separate on its share-token legacy path.
+
+WF-1 — development and knowledge workflow — complete
+
+The working model is settled as of 2026-08-13. It is recorded here because it governs where authority lives, not merely how work is done.
+
+Implementation authority:
+
+The public GitHub repository is the canonical implementation source of truth. Production behavior and the canonical docs in this repository decide what is true; nothing outside it does.
+
+The canonical local full clone is C:\dev\illustrated-vault. It is a complete working tree, not a partial export.
+
+Roles:
+
+Claude Code is the primary implementation agent, operating under AGENTS.md and CLAUDE.md.
+
+ChatGPT is the strategy, architecture, and independent PR review layer.
+
+Delivery loop:
+
+feature branch → build/test → pull request → review → merge. Every implementation slice reaches GitHub as a PR before main; the PR is the review boundary between implementation and production.
+
+Knowledge layer:
+
+The private illustrated-vault-notes repository, worked through Obsidian, is the exploratory knowledge layer: product thinking, research, audits, UX observations, and future ideas.
+
+It is explicitly not implementation authority. It may contain incomplete, exploratory, or incorrect thinking by design.
+
+Promotion rule: observation → evidence → decision → canonical repo documentation → implementation. An idea does not acquire authority by being written down in the vault; it acquires authority by being promoted into this repository's canonical documentation as an approved decision.
+
+The permanent agent contract lives in AGENTS.md (repository-wide) and CLAUDE.md (Claude Code workflow). This section records the workflow's authority boundaries only and deliberately does not duplicate their instructions.
 
 Current repo structure — main branch
 
@@ -1237,6 +1399,8 @@ user archive/planning: user_tracked_artists, user_collection, card_overrides, ca
 
 planned binders: user_binders, user_binder_cards
 
+binder page layout: user_binder_layouts, user_binder_layout_items
+
 import snapshots: user_import_batches, user_import_rows
 
 pricing/history: price_history
@@ -1255,7 +1419,17 @@ get_active_import_snapshot_read_model
 
 get_active_snapshot_owned_card_ids
 
+reorder_binder_cards
+
+fetch_binder_page_layout
+
+create_binder_page_layout
+
+Installed but with no frontend seam today (BP-3.1D+ paused): save_binder_page_layout, set_binder_layout_theme, reset_binder_page_layout, and the private iv_binder_layout_document.
+
 Known limitations / open items
+
+Binder Page Planning stops at first-use setup. A layout can be created but not yet arranged, re-themed, or reset from the app. The corresponding RPCs exist in the database and are intentionally unreachable from the frontend until BP-3.1D resumes. Do not add a write seam to binderLayoutService.js outside an approved slice.
 
 SharedBinder remains on its separate loose share-token owned_keys path. This divergence is known and intentionally out of OWN-0B; any future share cutover requires its own authority and compatibility design.
 

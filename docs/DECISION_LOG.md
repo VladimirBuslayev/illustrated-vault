@@ -1,5 +1,47 @@
 Illustrated Vault — Decision Log
 
+2026-08-13 — WF-1: development authority and knowledge-promotion rule
+
+Decision:
+
+The public GitHub repository is the canonical handoff surface and the single
+source of truth for implementation. Production behavior plus the canonical docs
+in this repository decide what is true; no other artifact does.
+
+Claude Code is the primary implementation agent. ChatGPT is the product,
+architecture, and independent PR review layer. The two roles are deliberately
+separate so that the party writing a change is not the sole party judging it.
+
+The private Obsidian / GitHub notes repository (illustrated-vault-notes) is the
+exploratory knowledge layer: product thinking, research, audits, UX
+observations, and future ideas. It is explicitly not implementation authority
+and may contain incomplete, exploratory, or incorrect thinking by design.
+
+Promotion rule — the only path by which an idea acquires authority:
+
+observation → evidence → decision → canonical repo documentation →
+implementation
+
+An idea in the knowledge vault does not become architecture by being written
+down, by being persuasive, or by being repeated. It becomes architecture when it
+is promoted into this repository's canonical documentation as an approved
+decision. A vault note and a canonical doc are never co-equal sources; if they
+disagree, the canonical doc governs and the disagreement is reported rather than
+silently resolved.
+
+Reason:
+
+Two agents and a private idea space create three plausible-looking sources of
+truth. Without a stated hierarchy, exploratory thinking leaks into production
+architecture by momentum. Naming one authority and one promotion path makes that
+leak a visible violation rather than an accident.
+
+Status:
+
+Accepted. The operating contract itself lives in AGENTS.md (repository-wide) and
+CLAUDE.md (Claude Code workflow) and is deliberately not duplicated here.
+Authority boundaries are recorded in CURRENT_STATE.md.
+
 2026-07-28 — CAT-1: temporal metadata restoration (series / release_date)
 
 Decision:

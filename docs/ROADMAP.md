@@ -1,6 +1,6 @@
 Illustrated Vault — Roadmap
 
-Last updated: 2026-07-28
+Last updated: 2026-08-13
 
 Completed
 
@@ -48,37 +48,61 @@ No schema change. No ownership, matcher, artist, image or pricing behavior chang
 
 Full evidence: /docs/CAT-1_TEMPORAL_METADATA_RESTORATION_CLOSEOUT.md.
 
+Artist expansion — A-D1 / A-D2a–d ✓
+
+Explore Artists directory, tracked-artist data foundation, Find Illustrator + Add to Archive, and per-user tier / remove management. Superseded the "Artist expansion / tracked artist management" line of the old sequence.
+
+Artist Page Slice C ✓ and Artist Page 3.0 ✓
+
+Slice C consolidated the page (chip diet, merged FROM THE ARCHIVE band, Hunting-segment framing). Artist Page 3.0 added source-governed editorial dossiers in src/constants/artistEditorial.js with exact-canonical-ID notable-card resolution and an expectName integrity guard, plus the mobile notable-works rail refinement.
+
+Planned Binders — BP-0A/B ✓ and BP-1A ✓
+
+Planned Binder create/rename/describe/delete, catalog search, add/remove, and Supabase persistence. BP-1A added collector-authored manual list ordering (user_binder_cards.position, assignment trigger, atomic reorder_binder_cards RPC), Hunt intent visibility on plan rows, and a Binder Plan entry point in CardModal.
+
+position is a list sequence, not a page or pocket index.
+
+Binder Page Planning — BP-3.1A / BP-3.1B / BP-3.1C ✓
+
+The physical page-placement layer over Binder Plan membership, shipped through first use and production-validated.
+
+BP-3.1A — data foundation: user_binder_layouts / user_binder_layout_items, parent-derived SELECT-only RLS with no client write path, composite FK making foreign-binder placement structurally impossible, and the layout RPC surface.
+
+BP-3.1B — frontend read layer and the Planned Binder Cards / Pages sub-navigation. A failed read is never rendered as first-use setup.
+
+BP-3.1C — first-use setup: 9-pocket / 12-pocket / 16-pocket format choice, eight curated background themes, and persisted layout creation.
+
+BP-3.1D onward is paused, not abandoned — see Paused below.
+
 Other shipped
 
-SharedBinder missing-card CSV export. V-A visual quiet pass.
+SharedBinder missing-card CSV export. V-A visual quiet pass. Brand V-B. Dashboard/copy V-C and V-C.1.
 
-Sequencing — next slices (guardrail)
+WF-1 — development and knowledge workflow ✓ (2026-08-13)
 
-H-2/H-3 validation is complete. The agreed order:
+GitHub public repo as canonical implementation authority; Claude Code as primary implementation agent; ChatGPT as strategy/architecture/review layer; the private Obsidian notes repo as a non-authoritative exploratory knowledge layer; feature branch → build/test → PR → review → merge. Contract in AGENTS.md / CLAUDE.md; authority boundaries recorded in CURRENT_STATE.md and DECISION_LOG.md.
 
-Product Surface Map — map the app's surfaces and navigation before adding new lens types; plan, not build.
+Sequencing — current near-term order (guardrail)
 
-Artist expansion / tracked artist management — grow beyond the fixed roster; artist directory / add-artist flow.
+This replaces the earlier post-Hunt-Board sequence (Product Surface Map → Artist expansion → Set Lens v0 → feel-check → Pokémon Lens → Collection Goals → Binder Planning). That order is superseded: the Surface Map, artist expansion, the feel-check slices, and Binder Planning have all shipped, and the remaining lens work is no longer the near-term priority.
 
-Set Lens v0 — first non-artist goal type: browse and track completion by set.
+The agreed order is:
 
-Artist Page Slice C (collapsible/curated Notable Cards, hero refinement) or Brand/Logo/Loading V-B (calmer landing/loading, refined flame/star mythology, logo direction) — choose based on how the app feels at that point.
+1. CAT-2 — Catalog Trust & Visual Completeness
 
-Pokémon Search / Lens v0 — browse and track by Pokémon.
+2. NAV-1 — Product Architecture & Durable Navigation
 
-Collection Goals / Custom Lists — user-defined goals and lists.
+3. SEC-0 — User Data & Application Security Audit
 
-Binder Planning v0 — only once the goal/list model is clearer. Do not start a large Binder Composer before a clear v0 plan exists.
+4. AUTH-1 — Persistent Sign-In & Session Reliability
+
+5. BETA-0 — Small Collector Beta
 
 This order is a guardrail: do not pull later slices forward without an explicit decision.
 
-Next decision — deliberately open
+Paused
 
-CAT-1 does not choose its successor, and this document does not either.
-
-The next major build should be decided by weighing SORT-1 against a visible artist-first collector improvement from the sequence above — on product grounds, not on the momentum of having just finished catalog work. Two consecutive infrastructure slices (CAT-0, CAT-1) have shipped without a user-visible change; that is a reason to look hard at the collector-facing option, not a reason to reflexively pick it either.
-
-Make the comparison explicitly and record it here before starting.
+Binder Page Planning BP-3.1D+ — page arrangement, pocket placement, theme change, and layout reset. Paused, not abandoned. The database RPCs (save_binder_page_layout, set_binder_layout_theme, reset_binder_page_layout) already exist and are deliberately unreachable from the frontend until this resumes. Do not add a write seam to binderLayoutService.js outside an approved slice.
 
 Backlog candidates
 
@@ -90,11 +114,13 @@ First input, now available for free: a read-only diff of SET_ORDER rank against 
 
 Known already: setOrder.js is a curated total ordering, not pure release-date chronology. The TCG Pocket block sits after the Mega Evolution block despite earlier first sets, consistent with hideTcgPocket defaulting true; and 196 mapped set IDs cover 214 catalog set_id values, so at least 18 fall to ?? 999.
 
-SORT-1 is a candidate, not a commitment. It is infrastructure with modest immediate collector value; that trade-off is the substance of the next decision.
+SORT-1 is a candidate, not a commitment, and it is not in the current near-term sequence.
+
+Set Lens v0, Pokémon Search / Lens v0, and Collection Goals / Custom Lists — the remaining unbuilt lens types from the superseded sequence. Still valid long-term direction, deliberately behind the current near-term order.
 
 Strategic direction — collection goals
 
-The long-term organizing principle is collection goals: Artist, Set, Pokémon, Custom List, and Binder Plan are different goal types, each with progress, hunt targets, and showcase. This abstraction is earned gradually through the sequence above. The app must not become a generic database/filter tracker — artist-first, premium, calm, visual, and intentional remains the identity.
+The long-term organizing principle is collection goals: Artist, Set, Pokémon, Custom List, and Binder Plan are different goal types, each with progress, hunt targets, and showcase. This abstraction is earned gradually, one concrete goal type at a time — Artist and Binder Plan now exist as real, opinionated surfaces. The app must not become a generic database/filter tracker — artist-first, premium, calm, visual, and intentional remains the identity.
 
 Later / app readiness
 
@@ -110,9 +136,13 @@ pricing confidence labels and last-updated context
 
 Deferred (explicitly)
 
-Binder 3x3 spread view, Next Hunts module
+Next Hunts module
 
-Global UI redesign, navigation architecture overhaul
+Superseded: "Binder 3x3 spread view" is no longer a deferral. Physical page planning shipped as Binder Page Planning BP-3.1A/B/C with 9/12/16-pocket formats; the remaining arrangement work is paused under BP-3.1D+, not deferred indefinitely.
+
+Superseded: "navigation architecture overhaul" is no longer an indefinite deferral either — durable routes and state restoration are now the substance of NAV-1 in the near-term sequence.
+
+Global UI redesign
 
 Friend comparison / social features
 
