@@ -7,12 +7,22 @@
 //   user_binder_layouts / _items page-placement layer only
 //   ownership / Hunt intent      untouched by anything in this file
 //
-// This slice implements the READ only. create / save / theme / reset RPCs are
-// deliberately absent: nothing in this module can mutate a layout.
+// Implemented here: the layout READ (fetchBinderLayout) and, since BP-3.1C, the
+// layout CREATE (createBinderLayout). save / theme / reset RPCs remain
+// deliberately absent — no code in this module can modify or remove an EXISTING
+// layout, only read one or bring the first one into being.
 //
-// Read convention (matching binderService.js): soft-fail. The UI never sees a
-// throw from here; it sees one of three closed outcomes, and the two non-happy
-// ones are DIFFERENT and must stay different:
+// The two conventions differ on purpose, matching binderService.js:
+//
+//   READ  soft-fails. The UI never sees a throw from fetchBinderLayout; it sees
+//         one of three closed outcomes, so a transient failure renders as a calm
+//         degraded state rather than an error boundary.
+//   WRITE throws. createBinderLayout surfaces failure to its caller, because a
+//         write that quietly returned a falsy value would let the UI render
+//         "ready" for a layout the database may not hold.
+//
+// The three read outcomes, and the two non-happy ones are DIFFERENT and must
+// stay different:
 //
 //   { status:"ready",  layout:null }    the read SUCCEEDED and this binder
 //                                       genuinely has no layout yet. This is
@@ -192,6 +202,53 @@ export async function fetchBinderLayout(binderId) {
     console.error('fetchBinderLayout failed:', e);
     return FAILED;
   }
+}
+
+/** BP-3.1C: create the single page layout for a binder.
+ *
+ *  WRITE convention — this THROWS. Reads in this file soft-fail so the UI can
+ *  render a calm degraded state; a write must not, because a create that
+ *  silently returned a falsy value would let the caller render "ready" for a
+ *  layout the database may not hold.
+ *
+ *  format_key is written in exactly two places in a layout's life (here and in
+ *  reset_binder_page_layout, which this slice does NOT implement). The client
+ *  validates both arguments against its own copy of the contract before the
+ *  round trip, so an unsupported value is refused locally rather than
+ *  discovered as a 22023 — the RPC remains the authority either way.
+ *
+ *  The returned document is the SAME canonical shape fetch_binder_page_layout
+ *  returns and is put through the SAME strict normalizer. There is exactly one
+ *  definition of a valid layout in this file. A malformed successful create
+ *  FAILS CLOSED: it throws rather than handing the UI a half-trusted document,
+ *  because the alternative is arranging physical pages from a response we have
+ *  already found to be wrong.
+ *
+ *  @param {string} binderId
+ *  @param {{formatKey:string,backgroundTheme:string}} choices
+ *  @returns {Promise<object>} the normalized canonical layout document
+ */
+export async function createBinderLayout(binderId, { formatKey, backgroundTheme } = {}) {
+  if (!binderId) throw new Error('createBinderLayout: binderId is required.');
+  if (!Object.prototype.hasOwnProperty.call(FORMAT_POCKETS, formatKey)) {
+    throw new Error('createBinderLayout: unsupported page format.');
+  }
+  if (!THEMES.has(backgroundTheme)) {
+    throw new Error('createBinderLayout: unsupported background theme.');
+  }
+  const { data, error } = await supabase.rpc('create_binder_page_layout', {
+    p_binder_id: binderId,
+    p_format_key: formatKey,
+    p_background_theme: backgroundTheme,
+  });
+  if (error) throw error;
+  const layout = normalizeLayoutDocument(data, binderId);
+  if (!layout) {
+    // Diagnostics are already in console from the normalizer; user-facing copy
+    // stays generic and carries no backend detail.
+    throw new Error('createBinderLayout: the created layout could not be verified.');
+  }
+  return layout;
 }
 
 // Exported for validation harnesses and future BP-3.1C reuse. Not consumed by
