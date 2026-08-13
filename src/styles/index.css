@@ -557,3 +557,151 @@ input[type="search"]::-webkit-search-cancel-button{display:none;}
 @media(prefers-reduced-motion:reduce){
   .bp-subtab,.bp-pages-retry{transition:none;}
 }
+
+
+/* ── BP-3.1C: Binder Page setup — format + background theme ──────────────────
+   THEME TOKENS. Five tokens per theme, and every rule below reads them through
+   var(); no page-region colour is hard-coded, so BP-3.1D page rendering can
+   adopt the same tokens without a second palette appearing.
+
+   SCOPE IS DELIBERATE: every token is declared under `.bp-pages`, which only
+   the Binder Pages shell carries. Nothing outside that subtree can inherit
+   them, no existing app colour changes, and this is NOT a global design-token
+   refactor.
+
+   These values are not eyeballed. Each palette was solved against the measured
+   WCAG gate (ink/mat >= 4.5, and pocket, pocket-border and focus vs mat >= 3,
+   and focus vs pocket >= 3) — all 40 checks pass. Do not nudge a hex here
+   without re-running the contrast harness: the 3:1 pocket-on-mat requirement is
+   what forces the dark themes' pockets to read as LIGHTER sleeves rather than
+   darker wells, and a "small" darkening breaks the gate.
+
+   --bp-mat            the binder/page mat AROUND the pockets
+   --bp-pocket         empty pocket fill
+   --bp-pocket-border  pocket edge
+   --bp-ink            text ON the mat
+   --bp-focus          focus ring drawn inside the mat
+
+   Card artwork is NEVER tinted by any of these. No token is applied to an
+   <img>, and no filter, blend mode or opacity is set on card imagery here. */
+.bp-pages .bp-theme-charcoal{
+  --bp-mat:#17171f;
+  --bp-pocket:#6b6b7c;
+  --bp-pocket-border:#828298;
+  --bp-ink:#ebebf5;
+  --bp-focus:#d5ccf5;
+}
+.bp-pages .bp-theme-warm-black{
+  --bp-mat:#1a1614;
+  --bp-pocket:#7a695d;
+  --bp-pocket-border:#928172;
+  --bp-ink:#f5ece4;
+  --bp-focus:#f9c993;
+}
+.bp-pages .bp-theme-deep-plum{
+  --bp-mat:#1d1424;
+  --bp-pocket:#7f5f96;
+  --bp-pocket-border:#9a76b0;
+  --bp-ink:#f0e4f6;
+  --bp-focus:#e2b4ff;
+}
+.bp-pages .bp-theme-midnight-navy{
+  --bp-mat:#101a2e;
+  --bp-pocket:#546c99;
+  --bp-pocket-border:#6986b2;
+  --bp-ink:#e2eaf6;
+  --bp-focus:#a0cdff;
+}
+.bp-pages .bp-theme-forest{
+  --bp-mat:#101f19;
+  --bp-pocket:#51745c;
+  --bp-pocket-border:#658c71;
+  --bp-ink:#e4f0e8;
+  --bp-focus:#96e2af;
+}
+.bp-pages .bp-theme-burgundy{
+  --bp-mat:#22111a;
+  --bp-pocket:#8e5e70;
+  --bp-pocket-border:#aa7587;
+  --bp-ink:#f6e2e8;
+  --bp-focus:#ffafc3;
+}
+.bp-pages .bp-theme-sand{
+  --bp-mat:#d9cfbe;
+  --bp-pocket:#6f6555;
+  --bp-pocket-border:#5e5647;
+  --bp-ink:#241f18;
+  --bp-focus:#0a0907;
+}
+.bp-pages .bp-theme-soft-stone{
+  --bp-mat:#d3d3cf;
+  --bp-pocket:#666665;
+  --bp-pocket-border:#575756;
+  --bp-ink:#20201f;
+  --bp-focus:#080808;
+}
+
+/* ── Setup flow ───────────────────────────────────────────────────────────── */
+.bp-setup-group{margin-top:1.5rem;}
+.bp-setup-legend{font-size:.66rem;color:#5a5a80;letter-spacing:.06em;text-transform:uppercase;
+  margin-bottom:.6rem;}
+
+/* Format options. Flexible so three options fit 320px without overflow. */
+.bp-fmt-row{display:flex;gap:.6rem;flex-wrap:wrap;}
+.bp-fmt{flex:1 1 92px;min-width:92px;max-width:150px;display:flex;flex-direction:column;
+  align-items:center;gap:.4rem;padding:.7rem .5rem;border-radius:10px;background:#0f0f1c;
+  border:1px solid #1e1e35;color:#8888a8;font:inherit;cursor:pointer;
+  transition:border-color .15s ease,background .15s ease;}
+.bp-fmt:hover:not(.is-selected){border-color:#2e2550;background:#12121f;}
+.bp-fmt.is-selected{border-color:#8b6cd8;background:#141127;color:#e8e8f4;}
+.bp-fmt:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+.bp-fmt-label{font-size:.76rem;font-weight:700;color:inherit;}
+.bp-fmt-sub{font-size:.64rem;color:#5a5a80;font-variant-numeric:tabular-nums;}
+
+/* The abstract pocket grid. Aspect ratio is a PAGE, not a card, and no card
+   art appears in it. */
+.bp-fmt-preview{display:grid;gap:2px;width:100%;max-width:78px;aspect-ratio:3/4;padding:3px;
+  border-radius:4px;background:var(--bp-mat);border:1px solid var(--bp-pocket-border);}
+.bp-pocket-cell{background:var(--bp-pocket);border:1px solid var(--bp-pocket-border);
+  border-radius:1px;min-height:0;min-width:0;}
+.bp-fmt:focus-visible .bp-fmt-preview{outline:2px solid var(--bp-focus);outline-offset:-2px;}
+
+/* Theme swatches. The chip IS the mat; the inner square is an empty pocket, so
+   the swatch previews the two tokens that will dominate the real page. */
+.bp-swatch-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:.5rem;}
+.bp-swatch{display:flex;flex-direction:column;align-items:center;gap:.35rem;padding:.45rem .3rem;
+  border-radius:10px;background:none;border:1px solid transparent;color:#8888a8;font:inherit;
+  cursor:pointer;transition:border-color .15s ease,color .15s ease;}
+.bp-swatch:hover:not(.is-selected){border-color:#26263f;color:#b0b0c8;}
+.bp-swatch.is-selected{border-color:#8b6cd8;color:#e8e8f4;}
+.bp-swatch:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+.bp-swatch-chip{width:100%;max-width:64px;aspect-ratio:3/4;border-radius:5px;display:flex;
+  align-items:center;justify-content:center;background:var(--bp-mat);
+  border:1px solid var(--bp-pocket-border);}
+.bp-swatch-pocket{width:52%;height:46%;border-radius:2px;background:var(--bp-pocket);
+  border:1px solid var(--bp-pocket-border);}
+.bp-swatch:focus-visible .bp-swatch-chip{outline:2px solid var(--bp-focus);outline-offset:-3px;}
+.bp-swatch-label{font-size:.66rem;font-weight:600;text-align:center;line-height:1.3;}
+
+/* Primary action. One deliberate button; no secondary control competes with it. */
+.bp-setup-action{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;margin-top:1.6rem;}
+.bp-create{min-height:42px;padding:.55rem 1.15rem;border-radius:9px;background:#1a1233;
+  border:1px solid #3a2a6a;color:#c0a0f8;font:inherit;font-size:.78rem;font-weight:700;
+  cursor:pointer;transition:background .15s ease,border-color .15s ease;}
+.bp-create:hover:not(:disabled){background:rgba(139,108,216,0.18);border-color:#4a3a80;}
+.bp-create:disabled{background:#0f0f1c;border-color:#1e1e35;color:#3d3d5c;cursor:default;}
+.bp-create:focus-visible{outline:2px solid #8b6cd8;outline-offset:2px;}
+.bp-create-hint,.bp-create-saving{font-size:.68rem;color:#5a5a80;line-height:1.4;}
+.bp-create-error{margin-top:.8rem;font-size:.72rem;color:#f87171;line-height:1.5;}
+
+@media(max-width:640px){
+  .bp-fmt{flex:1 1 0;min-width:0;padding:.6rem .35rem;}
+  .bp-fmt-preview{max-width:64px;}
+  .bp-swatch-row{grid-template-columns:repeat(auto-fill,minmax(72px,1fr));}
+  .bp-create{width:100%;}
+  .bp-setup-action{gap:.5rem;}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .bp-fmt,.bp-swatch,.bp-create{transition:none;}
+}
