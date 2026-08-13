@@ -45,12 +45,20 @@ Three binder concepts are distinct and must not be conflated:
 - **Does not belong here:** Acquisition planning beyond intent pills, artist management, set-centric browsing, dashboard-style stats.
 - **Risks:** Sort/filter clutter; identity blur against Artist Page (Binder = everything, Artist Page = one lens deep) and later against non-artist lenses. Binder should stay artist-sectioned; other groupings belong to other lenses.
 
+### Owned Library — shipped
+
+- **Primary job:** The exhaustive physical-collection archive. Answers "what do I physically own?" across the imported collection, including cards outside the tracked-artist roster.
+- **Ownership authority:** authenticated ownership follows the active import snapshot canonical-card authority plus explicit manual overrides. Never fall back to loose `owned_keys` matching — that remains legacy recognition infrastructure and still powers only the separate SharedBinder boundary.
+- **Secondary job:** Collection search/browse and card inspection.
+- **Does not belong here:** Missing-card completion planning, Hunt Board prioritization, Planned Binder membership, or generic portfolio/value analytics.
+- **Risks:** Ownership-authority drift, cross-printing false positives, or turning the archive into a generic tracker. False-positive physical ownership is more harmful than a temporary false negative.
+
 ### Artist Directory ("Explore Artists") — shipped
 
 - **Primary job:** Artist discovery and archive-roster management. Gallery browse over the roster, Find Illustrator search against `illustrator_directory`, Add to Archive, and per-artist tier reassignment / Remove from Archive on dynamically added artists.
 - **Secondary job:** Entry point into the Artist Page lens.
 - **Does not belong here:** Card-level actions, ownership editing, hunt planning, price analysis, spreadsheet-style artist tables. Tracked-artist management belongs here and **not** in Settings — tracking is a collecting decision, not a preference.
-- **Standing rule:** users can look at anything, but can act only on what is in their archive. Discovery surfaces are read-only windows.
+- **Standing rule:** users can look at anything, but can act only on what is in their archive. Untracked discovery results are read-only until added to the archive; once an artist is in the user's archive, the existing roster-management actions (tier reassignment, Remove from Archive) are allowed.
 - **Risks:** Drifting from gallery to database. Curated roster entries must stay visually and functionally untouched by the Manage affordance, which is dynamic-only by construction.
 
 ### Planned Binder — shipped
@@ -112,10 +120,10 @@ rewrite.
 | Browse/search all artists | **Artist Directory** | **Shipped** (A-D1, A-D2c-lite). Gallery of illustrators, not a table. Established the directory → lens pattern that Sets will reuse. |
 | Tracked artist management | **Artist Directory** | **Shipped** (A-D2a/b0/c/d): add to archive, tier reassignment, remove. Not Settings. |
 | Binder planning | **Planned Binder + Binder Page Layout** | **Shipped ahead of the original sequence.** Binder Planning was originally deferred until the goal model was proven; BP-0A/B, BP-1A and BP-3.1A/B/C shipped it as its own concrete surface instead. Physical placement is a separate optional layer over membership, not a property of it. |
-| Set pages / Set Lens v0 | **New: Set Page** (Lens skeleton) | Not built. Second goal type. Entry points: CardModal set link first, a set index later. Reuses segments, intent pills, completion. |
+| Set pages / Set Lens v0 | **New: Set Page** (Lens skeleton) | Not built. The next unbuilt Lens type — the first reuse of the Artist Page skeleton, not literally the second goal type now that Binder Plan exists. Entry points: CardModal set link first, a set index later. Reuses segments, intent pills, completion. |
 | Pokémon Search / Pokémon Lens v0 | **New: search-first surface → Pokémon Page** (Lens skeleton) | Not built. Search is the entry; the result page is just another lens. Do not build a global "all cards" search grid. |
 | Custom lists / collection goals | **New: Goals surface** | Not built. The generalization step. A goal = (type, target, progress, hunt targets, showcase). Artist/Set/Pokémon lenses become goal types retroactively. |
-| Shareable views | **SharedBinder, later generalized to "share a lens/goal"** | v1 stays artist-collection sharing, private and read-only. Read-only contract carries over to any future shared lens. |
+| Shareable views | **SharedBinder, later generalized to "share a lens/goal"** | v1 stays artist-collection sharing and read-only. Read-only contract carries over to any future shared lens. |
 | Hunt Board acquisition planning | **Hunt Board (unchanged role)** | Stays the single cross-goal plan. Later enhancement: goal-aware grouping. Never per-lens boards. |
 
 ---
