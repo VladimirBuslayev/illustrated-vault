@@ -70,13 +70,73 @@
 //     pricing, rarity, image_url, set_name and last_synced_at across the
 //     catalog, and would repair the 499 stale artist FKs (F-19) as an
 //     unscoped side effect. Do not use it during or around a CAT-1 window.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// CAT-2B1 — catalog identity collision guard
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Upstream periodically re-namespaces a subset out of its parent set, changing a
+// physical printing's canonical card ID (observed 2026-08-13:
+// swsh{9,10,11,12}.5tg -> swsh{9,10,11,12}tg). This file has no delete pass and
+// no rename handling, so such a restructure would ADD the renamed rows alongside
+// the old ones — two canonical IDs for one physical printing.
+//
+// That is invisible to CAT-0's (id) and (set_id, local_id) invariants but fatal
+// to the snapshot importer, whose Tier-1 key is
+// (normName(name), normSet(set_name), normNum(local_id)). Two rows sharing it
+// turn a collector's MATCHED row into AMBIGUOUS at their next import, silently
+// removing a card they own.
+//
+// G3 — no card-writing set is upserted until its rows are validated.
+//   `assertNoIdentityCollisions` runs immediately before `upsertRows` in
+//   `syncSet`, in straight-line code with no intervening try/catch. It throws, so
+//   `upsertRows` is structurally unreachable for a colliding set. Nothing is
+//   partially written: the check covers the whole set's row collection at once.
+//
+// G4 — a collision fails closed for its own set, and fails the run.
+//   Scope of the failure is exactly one set: zero rows are written for it, and
+//   every other set is still processed. A single renamed set must not stall
+//   unrelated catalog coverage, and refusing the rest of the run would hide how
+//   many sets are affected behind whichever one happened to be attempted first.
+//
+//   The failure must not be lost either. `main()`'s per-set catch already
+//   swallows ordinary fetch failures; a CatalogIdentityCollisionError is instead
+//   RECORDED in `identityCollisions`, restated in an end-of-run summary, and made
+//   to set `process.exitCode = 1` — the same failure-visibility idiom CAT-1 uses
+//   for failed temporal sets, so a partial run cannot appear green.
+//
+//   Ordinary per-set failures are untouched and remain non-fatal.
+//
+// Containment: the guard REFUSES the write. It never deletes, aliases, merges or
+// repairs a row, and takes no position on which of two colliding identities is
+// correct. Reconciling the already-stored Trainer Gallery namespaces is a
+// separate, evidence-gated decision.
+//
+// The identity is built from the frozen `src/utils/keys.js` normalizers — the
+// same functions the importer uses. Do not reimplement them here; a guard that
+// normalized differently would defend a key nothing consumes.
 
 import { createClient } from '@supabase/supabase-js';
+import {
+  createIdentityIndex,
+  addRowsToIndex,
+  assertNoIdentityCollisions,
+  existingDuplicateGroups,
+  formatCollisionReport,
+  formatCollisionRunSummary,
+  isCollisionError,
+} from './catalog-identity-guard.mjs';
 
 const TCGDEX_BASE = 'https://api.tcgdex.net/v2/en';
 const BATCH_SIZE = 10;        // concurrent card-detail fetches per batch
 const BATCH_DELAY_MS = 250;   // pause between batches
 const UPSERT_CHUNK = 500;     // rows per Supabase upsert call
+
+// CAT-2B1 — page size for the existing-catalog identity load. PostgREST caps a
+// single response (commonly 1000 rows), so one .select() CANNOT be assumed to
+// return all ~23,780 rows. A silently truncated index would be worse than no
+// guard at all: it would report "safe" for identities it never loaded.
+const IDENTITY_PAGE_SIZE = 1000;
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -371,6 +431,67 @@ function resolveScopedSets(sets) {
   return matches;
 }
 
+// CAT-2B1 — build the existing-catalog identity index.
+//
+// Selects the four identity columns and nothing else: no images, pricing,
+// illustrator, or other unrelated payload.
+//
+// Pagination is explicit and deterministic (ordered by id, fixed-size ranges).
+// Any page shorter than IDENTITY_PAGE_SIZE — including an empty one — ends the
+// walk, and the cursor always advances by a full page, so a finite table always
+// terminates the loop.
+//
+// Cost: roughly ceil(rows / 1000) extra reads per card-writing run — about 24
+// requests against the current catalog. Paid once per run, not per set.
+//
+// Only called for card-writing modes. Temporal mode performs no upsert and must
+// not pay for — or depend on — this read.
+async function loadCatalogIdentityIndex() {
+  const index = createIdentityIndex();
+  let from = 0;
+  let pages = 0;
+
+  for (;;) {
+    const { data, error } = await supabase
+      .from('cards')
+      .select('id, name, set_name, local_id')
+      .order('id', { ascending: true })
+      .range(from, from + IDENTITY_PAGE_SIZE - 1);
+    if (error) throw error;
+
+    const rows = data || [];
+    pages++;
+    addRowsToIndex(index, rows);
+
+    if (rows.length < IDENTITY_PAGE_SIZE) break;
+    from += rows.length;
+  }
+
+  console.log(
+    `Identity index loaded — ${index.indexed} identities from ${pages} page(s)` +
+    (index.skipped > 0 ? `; ${index.skipped} row(s) had no constructible Tier-1 identity` : '')
+  );
+
+  // A pre-existing duplicate group means the catalog is ALREADY in the state this
+  // guard exists to prevent. It is not caused by this run, so loading does not
+  // abort — but it is surfaced loudly, because the next write touching that
+  // identity will fail closed and this is the explanation.
+  const dupes = existingDuplicateGroups(index);
+  if (dupes.length > 0) {
+    console.error(
+      `\nWARNING — ${dupes.length} pre-existing Tier-1 identity group(s) already map to ` +
+      `more than one canonical card ID. These predate this run.`
+    );
+    for (const d of dupes) {
+      const [name, set, num] = d.components;
+      console.error(`  - name="${name}" set="${set}" num="${num}" -> ${d.ids.join(', ')}`);
+    }
+    console.error('');
+  }
+
+  return index;
+}
+
 async function getStoredCountForSet(setId) {
   const { count, error } = await supabase
     .from('cards')
@@ -380,13 +501,15 @@ async function getStoredCountForSet(setId) {
   return count ?? 0;
 }
 
-async function syncSet(setSummary, aliasMap, unmatched) {
+async function syncSet(setSummary, aliasMap, unmatched, identityIndex) {
   const setDetail = await fetchJson(`${TCGDEX_BASE}/sets/${setSummary.id}`);
   const briefCards = setDetail.cards || [];
 
   // ── Temporal mode ───────────────────────────────────────────────────────────
   // Reuses the Set-detail fetch already performed above. No card-detail fetch,
   // no full-row upsert, no card write of any kind.
+  // CAT-2B1: identityIndex is null here — a mode that cannot upsert cannot
+  // introduce a colliding identity, so it neither loads nor invokes the guard.
   if (SYNC_MODE === 'temporal') {
     await updateSetTemporal(setDetail);
     return { synced: 0 };
@@ -426,7 +549,24 @@ async function syncSet(setSummary, aliasMap, unmatched) {
     await sleep(BATCH_DELAY_MS);
   }
 
+  // ── CAT-2B1 G3 — identity guard, immediately before the write ───────────────
+  // Validates the ENTIRE row collection for this set against every identity
+  // already in the catalog plus every identity this run has already committed.
+  // Throws CatalogIdentityCollisionError on conflict. There is no try/catch
+  // between here and upsertRows, so a colliding set cannot reach the write at
+  // all — not even partially.
+  if (identityIndex) {
+    assertNoIdentityCollisions(identityIndex, rows, { setId: setSummary.id });
+  }
+
   await upsertRows(rows);
+
+  // Commit AFTER the write succeeds, never before. upsertRows throws on error, so
+  // rows that failed to land never enter the index — a later set in this same run
+  // is only ever checked against identities that are genuinely in the catalog.
+  if (identityIndex) {
+    addRowsToIndex(identityIndex, rows);
+  }
 
   // Post-upsert placement is load-bearing: for a new set the rows do not exist
   // before this point, so an earlier UPDATE would match nothing. upsertRows
@@ -534,6 +674,19 @@ function reportTemporal() {
   }
 }
 
+// CAT-2B1 G4 — end-of-run integrity report.
+//
+// Sets process.exitCode rather than calling process.exit(), matching how
+// reportTemporal() reports failed temporal sets: the run finishes its normal
+// reporting and Node exits non-zero afterwards. A clean run prints nothing and
+// leaves the exit code alone.
+function reportIdentityCollisions(entries) {
+  const summary = formatCollisionRunSummary(entries);
+  if (summary === null) return;
+  console.error(`\n${summary}`);
+  process.exitCode = 1;
+}
+
 async function main() {
   console.log(
     `Starting card sync — mode: ${SYNC_MODE}` +
@@ -549,14 +702,37 @@ async function main() {
   // Blank scope leaves the list exactly as fetched.
   const sets = resolveScopedSets(allSets);
 
+  // CAT-2B1 — the identity guard applies to every mode capable of calling
+  // upsertRows, which today is incremental and full. Temporal mode writes no card
+  // rows, so it neither loads the index nor runs the guard.
+  const identityIndex = SYNC_MODE === 'temporal' ? null : await loadCatalogIdentityIndex();
+
   const unmatched = new Set();
+  const identityCollisions = []; // [{ setId, collisions }] — CAT-2B1 G4
   let totalSynced = 0;
 
   for (const setSummary of sets) {
     try {
-      const { synced } = await syncSet(setSummary, aliasMap, unmatched);
+      const { synced } = await syncSet(setSummary, aliasMap, unmatched, identityIndex);
       totalSynced += synced;
     } catch (err) {
+      // CAT-2B1 G4 — a catalog identity collision is an INTEGRITY failure, not a
+      // per-set transport failure. It is contained to THIS set: the guard threw
+      // before upsertRows, so zero rows were written and updateSetTemporal never
+      // ran for it. Record it, report it now while the context is local, and let
+      // the loop continue — unrelated sets must not be held hostage by one
+      // renamed set, and stopping here would hide how many sets are affected.
+      //
+      // It is NOT swallowed: reportIdentityCollisions() restates it at the end of
+      // the run and sets process.exitCode = 1.
+      if (isCollisionError(err)) {
+        console.error(`\n${formatCollisionReport(err)}\n`);
+        console.error(
+          `Set ${setSummary.id} was REFUSED — zero rows written. Continuing with the remaining sets.`
+        );
+        identityCollisions.push({ setId: setSummary.id, collisions: err.collisions || [] });
+        continue;
+      }
       console.error(`Error syncing set ${setSummary.id}: ${err.message}`);
       if (SYNC_MODE === 'temporal') {
         // Narrow correction, temporal mode only. In temporal mode the Set-detail
@@ -580,6 +756,11 @@ async function main() {
       console.log(`  - ${name}`);
     }
   }
+
+  // CAT-2B1 G4 — LAST, deliberately. A refused set is the highest-severity output
+  // of the run, and a failed Actions job is read from the tail of the log. Printed
+  // after the unmatched-illustrator list so it is never buried behind it.
+  reportIdentityCollisions(identityCollisions);
 }
 
 main().catch((err) => {
