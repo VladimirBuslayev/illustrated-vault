@@ -77,6 +77,25 @@ CREATE TRIGGER card_extras_set_updated_at
 
 -- ── PHASE 2: cards_effective view ────────────────────────────
 --
+-- ⚠ SUPERSEDED — DO NOT REUSE THIS DEFINITION AS CURRENT TRUTH.
+--
+--   The DDL below is the Gate 1 execution record and is preserved as history.
+--   It is NO LONGER what production holds: Gate 3 added `c.artist_id` as a
+--   fourteenth column and that change was never written back here.
+--
+--   Running a CREATE OR REPLACE VIEW built from the text below would SILENTLY
+--   DROP artist_id and break the FK artist query path (cardService
+--   ARTIST_SELECT), illustrator_directory (max(artist_id)),
+--   add_artist_to_archive, and the Artist Page.
+--
+--   Current production definition, recovered by read-only introspection
+--   2026-08-14:
+--       docs/sql/cat-2d0-production-baseline.sql  §3
+--   Drift analysis:
+--       docs/CAT-2D.0_PRODUCTION_SQL_RECOVERY.md  §3.3
+--
+--   This comment is the only CAT-2D.0 change to this file. No DDL was altered.
+--
 -- Read-model that merges cards (raw TCGdex sync target) with
 -- card_extras (manual editorial layer). The frontend queries
 -- this view instead of cards directly.
