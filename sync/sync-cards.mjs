@@ -433,6 +433,26 @@ function resolveScopedSets(sets) {
 
 // CAT-2B1 — build the existing-catalog identity index.
 //
+// CAT-2D.1 — SOURCE IS THE EFFECTIVE CANONICAL CATALOG, NOT RAW `cards`.
+//   Under the retained raw-history model, public.cards keeps obsolete provider
+//   rows permanently. If the guard indexed raw `cards`, a reconciled rename
+//   would collide with its own retired predecessor forever: the four renamed
+//   Trainer Gallery sets would be refused on every future run even AFTER their
+//   identities were correctly reconciled.
+//
+//   public.cards_effective excludes any id carrying an approved alias, so an
+//   obsolete row is by definition not a catalog member and must not participate
+//   in collision detection. The view exposes exactly the four identity columns
+//   this index needs, so this is a source change, not a shape change.
+//
+//   With an empty alias table the two sources are row-for-row identical, so
+//   this change is a provable no-op at deploy time.
+//
+//   Deliberately NOT changed to the effective catalog: upsertRows (writes
+//   provider history), updateSetTemporal (CAT-1's sole temporal writer, must
+//   still reach historical rows) and getStoredCountForSet (F-6 skip predicate).
+//   Those three remain raw-`cards` consumers.
+//
 // Selects the four identity columns and nothing else: no images, pricing,
 // illustrator, or other unrelated payload.
 //
@@ -453,7 +473,7 @@ async function loadCatalogIdentityIndex() {
 
   for (;;) {
     const { data, error } = await supabase
-      .from('cards')
+      .from('cards_effective')
       .select('id, name, set_name, local_id')
       .order('id', { ascending: true })
       .range(from, from + IDENTITY_PAGE_SIZE - 1);
