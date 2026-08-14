@@ -1,0 +1,125 @@
+-- docs/sql/own-0a-1-active-snapshot-owned-card-ids.sql
+-- ═══════════════════════════════════════════════════════════════════════════
+-- OWN-0A — get_active_snapshot_owned_card_ids()
+-- CANONICAL PATH, RESERVED BY CAT-2D.0
+--
+--   ██  FUNCTION BODY NOT RECOVERED. THIS FILE CONTAINS NO EXECUTABLE SQL.  ██
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- WHY THIS FILE EXISTS
+--   docs/OWN-0A_CLOSEOUT.md:202 records this exact path as a deployed file. It
+--   was never committed — `git log --all` over this path returns nothing, and
+--   the function appears nowhere in the repository except prose descriptions
+--   and its JS caller. Production has been running a SECURITY DEFINER ownership
+--   function whose definition the repository does not hold.
+--
+--   CAT-2D.1 was blocked on precisely this: it must add alias resolution to this
+--   function, and the only alternative to having the real body is inventing one.
+--   Inventing the body of the single authority for whether a collector owns a
+--   card is not an acceptable engineering action, so the slice stopped.
+--
+--   This file reserves the canonical path and records everything CAT-2D.0 did
+--   recover, so that the next attempt starts from evidence instead of prose.
+--
+-- HOW TO COMPLETE THIS FILE
+--   Run, read-only, against production:
+--
+--     select pg_get_functiondef('public.get_active_snapshot_owned_card_ids()'::regprocedure);
+--
+--   Paste the result below the metadata block, replacing this notice. Do NOT
+--   reconstruct it from the contract description below — the description is
+--   sufficient to VERIFY a body, never to AUTHOR one.
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- RECOVERED METADATA — read-only introspection, 2026-08-14
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Identity
+--   name                public.get_active_snapshot_owned_card_ids
+--   arguments           () — zero-arg; NOT callable with a caller-supplied user id
+--   returns             jsonb
+--   language            plpgsql
+--   volatility          STABLE
+--   security            SECURITY DEFINER          <-- differs from OL-0D, which is INVOKER
+--   proconfig           SET search_path TO ''
+--   proacl / EXECUTE    postgres, anon, authenticated, service_role
+--
+-- Scoping and safety
+--   * internally scoped to auth.uid(); the caller cannot address another user
+--   * read-only; performs no writes
+--   * NO cards_effective join — returns raw stored canonical card_ids, so a
+--     matched id is owned whether or not it currently renders as a catalog tile
+--   * owned-row predicate: match_status = 'matched' AND card_id IS NOT NULL,
+--     grouped by card_id
+--   * reconciles the active matched-row count against the batch header and
+--     RAISES SQLSTATE 23514 on mismatch (fail-closed)
+--
+-- States
+--   ready
+--   no_active_batch
+--   multiple_active_batches
+--   error                (reason: no_auth)
+--
+-- Return contract
+--   {
+--     contractVersion: 1,
+--     state:           <one of the four above>,
+--     batchId:         uuid            -- ready only
+--     activatedAt:     timestamptz     -- ready only
+--     matcherVersion:  text            -- ready only
+--     ownedCardIds:    text[]          -- ready only, distinct, sorted
+--     reconciliation: {                -- ready only
+--       distinctMatchedCardIds: integer,
+--       matchedRows:            integer
+--     }
+--   }
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CLIENT-OBSERVED CONTRACT — corroborating repo evidence
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- src/services/ownedLibraryService.js:287-362 consumes this RPC and enforces,
+-- on `ready`, all of the following. Any recovered body MUST satisfy them, and
+-- they are independent confirmation of the metadata above:
+--
+--   contractVersion === 1                                          (L315)
+--   state ∈ { ready, no_active_batch, multiple_active_batches, error }  (L288-290)
+--   ownedCardIds is an array of non-empty strings                  (L330-333)
+--   no duplicate ids                                               (L334)
+--   ownedCardIds.length === reconciliation.distinctMatchedCardIds   (L343)
+--   distinct set size === reconciliation.distinctMatchedCardIds     (L346)
+--   reconciliation.matchedRows >= distinctMatchedCardIds            (L349)
+--   batchId, matcherVersion non-empty; activatedAt a valid timestamp (L356-358)
+--
+-- The wrapper never soft-fails to an empty owned set: malformed payloads throw.
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- NOTE FOR CAT-2D.1 — do not act on this here
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- CAT-2D.1 will add alias resolution to this function:
+--   coalesce(alias.canonical_card_id, r.card_id)
+--
+-- Two consequences follow from the metadata above and are recorded now so they
+-- are not rediscovered late:
+--
+--   1. Because this function is SECURITY DEFINER, it can read
+--      card_identity_aliases regardless of the caller's privileges. The OL-0D
+--      read model is SECURITY INVOKER and therefore CANNOT — see
+--      docs/CAT-2D.0_PRODUCTION_SQL_RECOVERY.md §5.
+--
+--   2. Alias resolution can collapse two historical ids onto one survivor, which
+--      would violate the client's `length === distinctMatchedCardIds` assertion
+--      above. The three-count contract in the CAT-2D design note exists for that
+--      reason and must land in the same slice as any resolution change.
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ROLLBACK (recorded from OWN-0A_CLOSEOUT.md:155, for completeness)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+--   drop function if exists public.get_active_snapshot_owned_card_ids();
+--
+-- Dropping it removes the authoritative ownership read. Under OWN-0B the App
+-- gates every ownership-dependent surface when this read fails, so a drop is a
+-- full ownership outage, not a soft degradation. Do not drop without a plan.
