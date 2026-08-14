@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "sync": "node sync-cards.mjs"
+    "sync": "node sync-cards.mjs",
+    "test:identity-guard": "node catalog-identity-guard.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0"
