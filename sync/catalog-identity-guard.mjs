@@ -267,3 +267,36 @@ export function formatCollisionReport(err) {
   lines.push('  deliberately — do NOT widen the guard to let the write through.');
   return lines.join('\n');
 }
+
+/**
+ * End-of-run summary across every set that failed the guard.
+ *
+ * A collision is contained to its own set: the rest of the run proceeds, so one
+ * renamed set cannot stall unrelated catalog coverage. The cost of continuing is
+ * that the failure would otherwise scroll far up the log behind later sets, so
+ * the run must restate it at the end — and the process must still exit non-zero.
+ *
+ * `entries` is [{ setId, collisions }] in the order the sets were attempted.
+ * Returns null when the run was clean, so the caller prints nothing.
+ */
+export function formatCollisionRunSummary(entries) {
+  const list = entries || [];
+  if (list.length === 0) return null;
+
+  const groups = list.reduce((n, e) => n + ((e.collisions && e.collisions.length) || 0), 0);
+  const lines = [];
+  lines.push('CATALOG IDENTITY COLLISIONS — this run is INCOMPLETE.');
+  lines.push(
+    `  ${list.length} set(s) were refused, covering ${groups} conflicting Tier-1 ` +
+    `identity group(s). Zero rows were written for those sets.`
+  );
+  for (const e of list) {
+    const n = (e.collisions && e.collisions.length) || 0;
+    const ids = new Set();
+    for (const c of e.collisions || []) for (const id of c.allIds || []) ids.add(id);
+    lines.push(`  - ${e.setId}: ${n} identity group(s); canonical ids involved: ${[...ids].sort().join(', ')}`);
+  }
+  lines.push('  Every other set was processed normally — this is containment, not a full stop.');
+  lines.push('  Exiting non-zero so a partial run cannot appear green.');
+  return lines.join('\n');
+}

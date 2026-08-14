@@ -93,12 +93,19 @@
 //   `upsertRows` is structurally unreachable for a colliding set. Nothing is
 //   partially written: the check covers the whole set's row collection at once.
 //
-// G4 — a collision is fatal to the whole process.
-//   `main()`'s per-set catch deliberately swallows ordinary fetch failures and
-//   continues. A CatalogIdentityCollisionError must NOT disappear into it, so the
-//   catch re-throws that one error type. It reaches the top-level handler, Node
-//   exits non-zero, and no later set is processed. Ordinary failures are
-//   untouched and still non-fatal.
+// G4 — a collision fails closed for its own set, and fails the run.
+//   Scope of the failure is exactly one set: zero rows are written for it, and
+//   every other set is still processed. A single renamed set must not stall
+//   unrelated catalog coverage, and refusing the rest of the run would hide how
+//   many sets are affected behind whichever one happened to be attempted first.
+//
+//   The failure must not be lost either. `main()`'s per-set catch already
+//   swallows ordinary fetch failures; a CatalogIdentityCollisionError is instead
+//   RECORDED in `identityCollisions`, restated in an end-of-run summary, and made
+//   to set `process.exitCode = 1` — the same failure-visibility idiom CAT-1 uses
+//   for failed temporal sets, so a partial run cannot appear green.
+//
+//   Ordinary per-set failures are untouched and remain non-fatal.
 //
 // Containment: the guard REFUSES the write. It never deletes, aliases, merges or
 // repairs a row, and takes no position on which of two colliding identities is
@@ -116,6 +123,7 @@ import {
   assertNoIdentityCollisions,
   existingDuplicateGroups,
   formatCollisionReport,
+  formatCollisionRunSummary,
   isCollisionError,
 } from './catalog-identity-guard.mjs';
 
@@ -666,6 +674,19 @@ function reportTemporal() {
   }
 }
 
+// CAT-2B1 G4 — end-of-run integrity report.
+//
+// Sets process.exitCode rather than calling process.exit(), matching how
+// reportTemporal() reports failed temporal sets: the run finishes its normal
+// reporting and Node exits non-zero afterwards. A clean run prints nothing and
+// leaves the exit code alone.
+function reportIdentityCollisions(entries) {
+  const summary = formatCollisionRunSummary(entries);
+  if (summary === null) return;
+  console.error(`\n${summary}`);
+  process.exitCode = 1;
+}
+
 async function main() {
   console.log(
     `Starting card sync — mode: ${SYNC_MODE}` +
@@ -687,6 +708,7 @@ async function main() {
   const identityIndex = SYNC_MODE === 'temporal' ? null : await loadCatalogIdentityIndex();
 
   const unmatched = new Set();
+  const identityCollisions = []; // [{ setId, collisions }] — CAT-2B1 G4
   let totalSynced = 0;
 
   for (const setSummary of sets) {
@@ -695,16 +717,21 @@ async function main() {
       totalSynced += synced;
     } catch (err) {
       // CAT-2B1 G4 — a catalog identity collision is an INTEGRITY failure, not a
-      // per-set transport failure, and must not be swallowed by this catch. Log
-      // it concisely and re-throw so main() rejects, the top-level handler exits
-      // non-zero, and no later set is processed. Every other error keeps its
-      // existing non-fatal behavior exactly.
+      // per-set transport failure. It is contained to THIS set: the guard threw
+      // before upsertRows, so zero rows were written and updateSetTemporal never
+      // ran for it. Record it, report it now while the context is local, and let
+      // the loop continue — unrelated sets must not be held hostage by one
+      // renamed set, and stopping here would hide how many sets are affected.
+      //
+      // It is NOT swallowed: reportIdentityCollisions() restates it at the end of
+      // the run and sets process.exitCode = 1.
       if (isCollisionError(err)) {
         console.error(`\n${formatCollisionReport(err)}\n`);
         console.error(
-          `Aborting the run at set ${setSummary.id}. Remaining sets were NOT processed.`
+          `Set ${setSummary.id} was REFUSED — zero rows written. Continuing with the remaining sets.`
         );
-        throw err;
+        identityCollisions.push({ setId: setSummary.id, collisions: err.collisions || [] });
+        continue;
       }
       console.error(`Error syncing set ${setSummary.id}: ${err.message}`);
       if (SYNC_MODE === 'temporal') {
@@ -729,6 +756,11 @@ async function main() {
       console.log(`  - ${name}`);
     }
   }
+
+  // CAT-2B1 G4 — LAST, deliberately. A refused set is the highest-severity output
+  // of the run, and a failed Actions job is read from the tail of the log. Printed
+  // after the unmatched-illustrator list so it is never buried behind it.
+  reportIdentityCollisions(identityCollisions);
 }
 
 main().catch((err) => {

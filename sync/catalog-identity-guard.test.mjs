@@ -22,6 +22,7 @@ import {
   assertNoIdentityCollisions,
   existingDuplicateGroups,
   formatCollisionReport,
+  formatCollisionRunSummary,
   isCollisionError,
   CatalogIdentityCollisionError,
 } from './catalog-identity-guard.mjs';
@@ -331,6 +332,65 @@ test('KEY serialization is collision-safe across component boundaries', () => {
   assert.notEqual(a, b);
   assert.equal(identityKey({ name: 'x', set_name: 'y', local_id: '1' }),
                identityKey({ name: ' X ', set_name: 'Y', local_id: ' 1 ' }));
+});
+
+// ── Run-level containment: refuse the set, keep going, fail the run ─────────
+test('RUN-SUMMARY a clean run returns null so nothing is printed', () => {
+  assert.equal(formatCollisionRunSummary([]), null);
+  assert.equal(formatCollisionRunSummary(null), null);
+  assert.equal(formatCollisionRunSummary(undefined), null);
+});
+
+test('RUN-SUMMARY names every refused set and the canonical IDs involved', () => {
+  const ix = indexWith(
+    { id: 'swsh9.5tg-TG01', name: 'Flareon', set_name: 'Brilliant Stars Trainer Gallery', local_id: 'TG01' },
+    { id: 'swsh10.5tg-TG01', name: 'Abomasnow', set_name: 'Astral Radiance Trainer Gallery', local_id: 'TG01' }
+  );
+
+  // Two independent sets each collide; both are recorded, neither stops the other.
+  const entries = [];
+  for (const [setId, row] of [
+    ['swsh9tg', { id: 'swsh9tg-TG01', name: 'Flareon', set_name: 'Brilliant Stars Trainer Gallery', local_id: 'TG01' }],
+    ['swsh10tg', { id: 'swsh10tg-TG01', name: 'Abomasnow', set_name: 'Astral Radiance Trainer Gallery', local_id: 'TG01' }],
+  ]) {
+    try { assertNoIdentityCollisions(ix, [row], { setId }); }
+    catch (err) { entries.push({ setId, collisions: err.collisions }); }
+  }
+  assert.equal(entries.length, 2, 'both sets must be recorded, not just the first');
+
+  const summary = formatCollisionRunSummary(entries);
+  for (const needle of ['swsh9tg', 'swsh10tg', 'swsh9.5tg-TG01', 'swsh10.5tg-TG01', '2 set(s)']) {
+    assert.ok(summary.includes(needle), `run summary missing "${needle}"`);
+  }
+  assert.ok(/exit/i.test(summary), 'run summary must state that the run exits non-zero');
+});
+
+test('RUN-SUMMARY an independent set after a refused one is still allowed', () => {
+  const ix = indexWith({ id: 'swsh9.5tg-TG01', name: 'Flareon', set_name: 'Brilliant Stars Trainer Gallery', local_id: 'TG01' });
+
+  // Set 1 collides and is refused — nothing is written, so nothing is committed.
+  const colliding = [{ id: 'swsh9tg-TG01', name: 'Flareon', set_name: 'Brilliant Stars Trainer Gallery', local_id: 'TG01' }];
+  assert.throws(() => assertNoIdentityCollisions(ix, colliding, { setId: 'swsh9tg' }));
+  assert.equal(ix.indexed, 1, 'a refused set must not enter the index');
+
+  // Set 2 is unrelated and must still pass — containment, not a full stop.
+  const independent = [{ id: 'sv01-001', name: 'Sprigatito', set_name: 'Scarlet & Violet', local_id: '001' }];
+  expectAllowed(ix, independent, 'independent set after refusal');
+  addRowsToIndex(ix, independent);
+  assert.equal(ix.indexed, 2, 'the independent set commits normally');
+
+  // The refused identity stays refused for the rest of the run.
+  assert.throws(() => assertNoIdentityCollisions(ix, colliding, { setId: 'swsh9tg-retry' }));
+});
+
+test('RUN-SUMMARY counts identity groups across sets, not just sets', () => {
+  const entries = [
+    { setId: 'a', collisions: [{ allIds: ['a-1', 'b-1'] }, { allIds: ['a-2', 'b-2'] }] },
+    { setId: 'b', collisions: [{ allIds: ['c-1', 'd-1'] }] },
+  ];
+  const summary = formatCollisionRunSummary(entries);
+  assert.ok(summary.includes('2 set(s)'), 'set count');
+  assert.ok(summary.includes('3 conflicting'), 'identity group count across sets');
 });
 
 test('ERROR isCollisionError distinguishes integrity failure from ordinary errors', () => {
