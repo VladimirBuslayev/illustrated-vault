@@ -1,8 +1,13 @@
 name: Sync Card Catalog
 
 on:
-  schedule:
-    - cron: '0 6 * * 1' # every Monday 6am UTC
+  # CAT-2B0 — scheduled execution is TEMPORARILY PAUSED.
+  # TCGdex renamed four Trainer Gallery set IDs (swsh{9,10,11,12}.5tg ->
+  # swsh{9,10,11,12}tg). An unattended incremental run would ingest 120 cards whose
+  # (name, set_name, local_id) triples duplicate rows already stored under the old
+  # namespaces, creating conflicting physical-printing identities. Restore the
+  # `schedule:` trigger only once the durable identity guard lands in CAT-2B.
+  # Manual `workflow_dispatch` below is intentionally left fully operational.
   workflow_dispatch:
     inputs:
       sync_mode:
