@@ -29,6 +29,11 @@ and the entire Artist Page — from a change whose stated purpose was to be a pr
 **The general condition:** the repository could not rebuild its own production surface. CAT-2D.0
 exists to close that, and its value outlives CAT-2D.
 
+**Both conditions above are now resolved.** The two paragraphs describe the state CAT-2D.0 found,
+not the state it leaves. The ownership function's exact production body is committed at the
+canonical path, and `cards_effective`'s live definition is recorded with `artist_id`. **CAT-2D.1 has
+no remaining SQL-source blocker.**
+
 ---
 
 ## 2. Method
@@ -45,36 +50,48 @@ No object was created, altered, dropped or executed. Nothing was deployed.
 
 | # | Object | Verdict | Canonical location |
 |---|---|---|---|
-| 1 | `get_active_snapshot_owned_card_ids()` | **Metadata recovered; body still outstanding** | `docs/sql/own-0a-1-active-snapshot-owned-card-ids.sql` (path reserved, no executable SQL) |
-| 2 | `get_active_import_snapshot_read_model(...)` | **No drift detected** (property-level) | `docs/sql/ol-0d-4-active-snapshot-performance-hardening.sql` — unchanged |
+| 1 | `get_active_snapshot_owned_card_ids()` | **RECOVERED IN FULL** — exact production body | `docs/sql/own-0a-1-active-snapshot-owned-card-ids.sql` |
+| 2 | `get_active_import_snapshot_read_model(...)` | **No drift detected** (property/semantic level) | `docs/sql/ol-0d-4-active-snapshot-performance-hardening.sql` — unchanged |
 | 3 | `cards_effective` | **CORRECTED** — committed text was stale | `docs/sql/cat-2d0-production-baseline.sql` §3 |
 | 4 | `illustrator_directory` | **Already current** | `docs/sql/a-d2a-2-illustrator-directory.sql` — unchanged |
 
-### 3.1 `get_active_snapshot_owned_card_ids()` — recovered / outstanding
+### 3.1 `get_active_snapshot_owned_card_ids()` — recovered in full
 
-Recovered: zero-arg signature, `returns jsonb`, `language plpgsql`, `STABLE`,
-**`SECURITY DEFINER`**, `SET search_path TO ''`, EXECUTE granted to `postgres`, `anon`,
-`authenticated`, `service_role`; internally `auth.uid()`-scoped; no `cards_effective` join; owned
-predicate `match_status = 'matched' AND card_id IS NOT NULL` grouped by `card_id`; header/row
-reconciliation raising `23514`; states `ready` / `no_active_batch` / `multiple_active_batches` /
-`error(no_auth)`; and the full `contractVersion` / `batchId` / `activatedAt` / `matcherVersion` /
-`ownedCardIds` / `reconciliation.{distinctMatchedCardIds,matchedRows}` return shape.
+The exact live `pg_get_functiondef` body is now committed verbatim at the canonical path the
+OWN-0A closeout referenced. It was transcribed byte-for-byte and **verified by diff against the
+introspection capture: zero differences, matching SHA256** (`15527edf…7ab2`). Nothing was authored,
+inferred, reformatted or "improved"; the only additions to the file are comments outside the
+function body.
 
-**Still outstanding: the function body.** The introspection brief states the exact live body was
-supplied, but no `pg_get_functiondef` output reached this slice — only the property list above. The
-body was therefore **not** written, because authoring a `SECURITY DEFINER` ownership function from a
-description is the precise failure mode CAT-2D.0 exists to end. The recovered metadata is sufficient
-to **verify** a body; it is not sufficient to **author** one.
+Recovered properties: zero-arg signature, `returns jsonb`, `language plpgsql`, `STABLE`,
+**`SECURITY DEFINER`**, `SET search_path TO ''`, `proacl`
+`{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}` — EXECUTE
+only, all four roles.
 
-The canonical path is reserved and documents exactly how to complete it:
+The body confirms every property previously known only from prose: `auth.uid()` scoping, no
+`cards_effective` join, the owned predicate `match_status = 'matched' AND card_id IS NOT NULL`,
+fail-closed handling of zero and multiple active batches, and header reconciliation raising
+`errcode 23514`.
 
-```sql
-select pg_get_functiondef('public.get_active_snapshot_owned_card_ids()'::regprocedure);
-```
+`src/services/ownedLibraryService.js:287-362` enforces eight assertions on the `ready` payload; all
+are satisfied by the recovered body.
 
-Independent corroboration of the contract now lives beside the metadata:
-`src/services/ownedLibraryService.js:287-362` enforces eight distinct assertions on the `ready`
-payload, all consistent with the recovered shape.
+**Three things the real body settles that the description could not** — recorded for CAT-2D.1:
+
+1. **The `23514` reconciliation is safe under alias resolution.** It compares `count(*)` of matched
+   rows against `v_batch.matched_rows` — a *row* count against the immutable batch header. Distinct
+   card ids play no part. Alias resolution collapses ids, never rows, so it cannot trip this
+   exception. The header contract is untouched by CAT-2D.1.
+2. **The three-count change is local and small.** All three quantities already come from one scan;
+   resolution adds a left join to the alias map and one more aggregate.
+3. **The client assertion is the only thing that breaks.** `ownedLibraryService.js:343` enforces
+   `ownedCardIds.length === distinctMatchedCardIds`. Under collapse the array shrinks while that
+   count does not, so the wrapper throws and ownership enters the fail-closed error state. The
+   function and the wrapper must change in the **same** slice.
+
+**Handoff note.** The exact body was present in the original production introspection throughout; it
+simply did not reach the implementing context on the first pass. A-1 was a transcription/handoff
+gap, **not** a production evidence gap — the introspection was complete.
 
 ### 3.2 `get_active_import_snapshot_read_model(...)` — no drift detected
 
@@ -100,10 +117,15 @@ Every introspected property matches it:
 create a second source of truth for one object and guarantee eventual drift. `ol-0d-4` remains
 canonical.
 
-**Residual ambiguity:** this is a **property-level** match, not byte-level. The live
-`pg_get_functiondef` body was not supplied, so no literal text comparison was performed. Every
-observable property agrees, which is strong but not conclusive — a body change that preserved all of
-them would not be detected. See §6.
+`proacl`: `{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}` —
+EXECUTE only, all four roles. Identical grant shape to the ownership RPC; the meaningful difference
+between the two functions is `prosecdef`, not their ACL.
+
+**Equivalence status, stated precisely:** the exact production body **is** present in the captured
+introspection output. Repo equivalence was verified at the **property/semantic** level — every
+property above matches `ol-0d-4`. A **literal byte comparison was not performed** in CAT-2D.0, and
+`ol-0d-4` is deliberately retained as the single canonical repo body rather than duplicated here.
+Low risk and non-blocking; closable at any time with one text diff. Tracked as A-2 in §6.
 
 ### 3.3 `cards_effective` — corrected
 
@@ -205,14 +227,27 @@ Not decided here. Recorded so CAT-2D.1 starts from the real privilege model.
 
 ## 6. Remaining ambiguity
 
-| # | Item | Effect |
-|---|---|---|
-| A-1 | **The `get_active_snapshot_owned_card_ids()` body is still missing.** The brief stated it was supplied; it did not reach this slice. | **Still blocks CAT-2D.1 scope D and F.** One read-only `pg_get_functiondef` call closes it. |
-| A-2 | `get_active_import_snapshot_read_model` was matched at property level, not byte level. | Low risk. Every observable property agrees with `ol-0d-4`. A `pg_get_functiondef` diff would make it conclusive. |
-| A-3 | View and function **grants/ACLs** were captured for the two functions (`postgres, anon, authenticated, service_role`) but not reported for the two views. | Low risk — both views are demonstrably readable by the frontend's publishable key. Worth capturing when A-1 is collected. |
-| A-4 | `card_extras` and `cards` themselves were not introspected. | Out of CAT-2D.0's four-object scope. `card_extras`' `ON DELETE CASCADE` is already documented in the CAT-2D design. |
+| # | Item | Status | Effect |
+|---|---|---|---|
+| A-1 | `get_active_snapshot_owned_card_ids()` body | **CLOSED** — exact production body committed, diff-verified byte-identical (SHA256 `15527edf…7ab2`). Was a transcription/handoff gap, not a production evidence gap. | None. **No longer blocks CAT-2D.1.** |
+| A-2 | `get_active_import_snapshot_read_model` verified at property/semantic level, not byte level | **Open, non-blocking** | Low risk. The exact body exists in the introspection capture; `ol-0d-4` is retained as the single canonical repo body. One text diff closes it whenever desired. |
+| A-3 | View and function ACLs | **CLOSED** — all four objects' ACLs and both views' `reloptions` recovered and recorded | None. |
+| A-4 | `card_extras` and `cards` not introspected | **Open, out of scope** | Outside CAT-2D.0's four-object scope. `card_extras`' `ON DELETE CASCADE` is already documented in the CAT-2D design. |
 
-**CAT-2D.1 remains blocked on A-1 alone.** A-2 through A-4 are recorded, not blocking.
+**No remaining blocker to starting CAT-2D.1.** A-2 and A-4 are recorded and non-blocking.
+
+Recovered ACLs, for the record:
+
+| Object | `relacl` / `proacl` | Notes |
+|---|---|---|
+| `cards_effective` | `{postgres,anon,authenticated,service_role}=arwdDxtm/postgres` | `reloptions ["security_invoker=true"]` |
+| `illustrator_directory` | `{postgres,anon,authenticated,service_role}=arwdDxtm/postgres` | `reloptions ["security_invoker=true"]` |
+| `get_active_snapshot_owned_card_ids()` | `{postgres,anon,authenticated,service_role}=X/postgres` | EXECUTE only |
+| `get_active_import_snapshot_read_model(...)` | `{postgres,anon,authenticated,service_role}=X/postgres` | EXECUTE only |
+
+The views' full privilege sets are not a privilege escalation: both are `security_invoker`, so every
+read executes with the caller's own permissions against the underlying tables, where RLS governs
+visibility.
 
 ---
 
@@ -221,7 +256,7 @@ Not decided here. Recorded so CAT-2D.1 starts from the real privilege model.
 | File | Change |
 |---|---|
 | `docs/sql/cat-2d0-production-baseline.sql` | **new** — recovered production definitions for `cards_effective` and `illustrator_directory`; pointers for the two functions |
-| `docs/sql/own-0a-1-active-snapshot-owned-card-ids.sql` | **new** — canonical path reserved; recovered metadata and client-observed contract; **no executable SQL** |
+| `docs/sql/own-0a-1-active-snapshot-owned-card-ids.sql` | **new** — **exact executable production baseline**: the live `pg_get_functiondef` body verbatim, plus recovered metadata, client-observed contract and CAT-2D.1 notes as comments outside the function |
 | `docs/CAT-2D.0_PRODUCTION_SQL_RECOVERY.md` | **new** — this document |
 | `docs/sql/card_extras_and_view.sql` | comment-only superseded marker; **no DDL change** |
 

@@ -28,7 +28,7 @@
 --   an invitation. Do not run this file as part of this slice.
 --
 -- SCOPE — four objects
---   1. public.get_active_snapshot_owned_card_ids()      -> BODY NOT RECOVERED,
+--   1. public.get_active_snapshot_owned_card_ids()      -> RECOVERED in full,
 --                                                          see own-0a-1-*.sql
 --   2. public.get_active_import_snapshot_read_model(...)-> no drift detected,
 --                                                          see §2
@@ -52,14 +52,19 @@
 -- §1. public.get_active_snapshot_owned_card_ids()
 -- ═══════════════════════════════════════════════════════════════════════════
 --
--- STATUS: metadata recovered; FUNCTION BODY NOT PRESENT IN THIS SLICE.
+-- STATUS: RECOVERED IN FULL — exact production body, verbatim.
 --
--- The recovered metadata and the reserved canonical path live in:
+-- Canonical location:
 --   docs/sql/own-0a-1-active-snapshot-owned-card-ids.sql
 --
--- That file deliberately contains NO executable statement, because inventing a
--- SECURITY DEFINER ownership function body is precisely the failure mode
--- CAT-2D.0 exists to end. See §1 of the recovery document.
+-- That file is now an exact executable production baseline: the live
+-- pg_get_functiondef output, transcribed byte-for-byte and verified by diff
+-- against the introspection capture. Not restated here — one object, one
+-- canonical body, no second source of truth.
+--
+-- Recovered properties: () -> jsonb, plpgsql, STABLE, SECURITY DEFINER,
+-- SET search_path TO '', proacl {postgres,anon,authenticated,service_role} = X
+-- (EXECUTE only).
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -91,14 +96,21 @@
 --   artist_id in page payload         yes                     yes            (L316)
 --   executable by                     postgres, anon, authenticated, service_role
 --
+--   proacl                            {postgres=X/postgres,anon=X/postgres,
+--                                      authenticated=X/postgres,service_role=X/postgres}
+--                                     (EXECUTE only, for all four roles)
+--
 -- DUPLICATION DELIBERATELY AVOIDED. Restating a 423-line function body here
 -- would create a second source of truth for the same object and guarantee they
 -- drift. The single canonical definition stays in ol-0d-4.
 --
--- RESIDUAL AMBIGUITY: this is a PROPERTY-level match, not a byte-level one. The
--- live pg_get_functiondef body was reported as recovered but was not supplied to
--- this slice, so a literal text comparison has NOT been performed. See the
--- recovery document §2 for what would close it.
+-- EQUIVALENCE STATUS, stated precisely: the exact production body IS present in
+-- the captured introspection output. Repo equivalence was verified at the
+-- PROPERTY / SEMANTIC level against ol-0d-4 — every property above matches. A
+-- literal byte comparison of the two bodies was NOT performed in CAT-2D.0, and
+-- ol-0d-4 is deliberately retained as the single canonical repo body rather
+-- than duplicated here. Recorded as ambiguity A-2 in the recovery document:
+-- low risk, non-blocking, closable with one text diff whenever desired.
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -122,6 +134,18 @@
 -- security_invoker = true is REQUIRED and must never be relaxed: the view runs
 -- with the calling role's permissions so that RLS on the underlying tables is
 -- honored. CAT-2D.1 must not weaken this to make an alias join easier.
+--
+-- Recovered relation metadata (introspection, 2026-08-14):
+--   reloptions  ["security_invoker=true"]
+--   relacl      {postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,
+--                authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}
+--
+-- Note on that ACL: all four roles hold the full privilege set on the VIEW
+-- object. That is not a privilege escalation, because security_invoker = true
+-- means every read still executes with the caller's own permissions against
+-- public.cards and public.card_extras, and RLS there is what actually governs
+-- visibility. The ACL is recorded as production truth; CAT-2D.1 changes neither
+-- it nor the invoker setting.
 
 CREATE OR REPLACE VIEW public.cards_effective
   WITH (security_invoker = true)
@@ -174,8 +198,19 @@ AS
 --   lower-case keywords    upper-case keywords    deparser canonicalization
 --
 -- Recovered production column types: illustrator text, artist_id text,
--- card_count integer. security_invoker = true. Restated here for the record;
--- the canonical definition remains a-d2a-2-illustrator-directory.sql.
+-- card_count integer.
+--
+-- Recovered relation metadata (introspection, 2026-08-14):
+--   reloptions  ["security_invoker=true"]
+--   relacl      {postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,
+--                authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}
+--
+-- Identical ACL shape to cards_effective, and the same reasoning applies: the
+-- view is security_invoker, so reads execute with the caller's permissions
+-- against cards_effective beneath it.
+--
+-- Restated here for the record; the canonical definition remains
+-- a-d2a-2-illustrator-directory.sql.
 
 CREATE OR REPLACE VIEW public.illustrator_directory
   WITH (security_invoker = true)
