@@ -94,10 +94,15 @@ comment on table public.card_identity_aliases is
 -- Service-role bypasses RLS for migrations.
 alter table public.card_identity_aliases enable row level security;
 
--- Explicitly NOT granted to anon/authenticated. Provenance (evidence,
--- approved_by, approved_at, slice, timestamps) must never be publicly
--- queryable. Revoke defensively in case a blanket schema grant ran earlier.
-revoke all on table public.card_identity_aliases from anon, authenticated;
+-- Explicit, fail-closed privilege state. Provenance (evidence, approved_by,
+-- approved_at, slice, timestamps) must never be publicly queryable.
+--
+-- PUBLIC is revoked as well as the named roles: a privilege held via PUBLIC is
+-- held by every role, so revoking only anon/authenticated would leave a hole
+-- that `has_table_privilege` would still report as granted. This also makes the
+-- migration idempotent against a prior deployment or a blanket schema grant
+-- (`grant ... on all tables in schema public`) having run at any point.
+revoke all on table public.card_identity_aliases from public, anon, authenticated;
 
 -- updated_at maintenance, mirroring card_extras' existing pattern.
 create or replace function public.set_card_identity_aliases_updated_at()
@@ -118,7 +123,7 @@ create trigger card_identity_aliases_set_updated_at
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- §2. Two-sided no-chain enforcement — resolution depth is always exactly 1
+-- §2. Two-sided no-chain enforcement — resolution depth 1 under serialized writes
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- A one-sided check is NOT sufficient. Given A -> B, an insert of B -> C passes
@@ -134,7 +139,30 @@ create trigger card_identity_aliases_set_updated_at
 -- canonical_card_id multiplicity. Trainer Galleries need exactly that, since
 -- both the parent and the old subset generation alias to one live survivor.
 --
--- Because depth is always 1, resolution is a single lookup:
+-- SCOPE OF THE GUARANTEE — SERIALIZED WRITES (review finding).
+--   R1/R2 are evaluated with row-level triggers against the state each
+--   transaction can see. Under READ COMMITTED, two CONCURRENT privileged
+--   transactions could each observe the pre-state and each pass its own check,
+--   committing a chain neither saw. The trigger therefore proves depth = 1 for
+--   SEQUENTIAL writers; it does NOT by itself prove it under arbitrary
+--   concurrent writers.
+--
+--   This is acceptable and is deliberately not solved with a broader
+--   concurrency system, because alias population is a SINGLE-WRITER,
+--   SERIALIZED MIGRATION OPERATION by construction:
+--     * the table is never user-authored — there is no runtime write path;
+--     * the only grant on it is none (see below): writes require the table
+--       owner or service_role running a migration;
+--     * CAT-2D.1 populates nothing at all.
+--
+--   BINDING REQUIREMENT ON CAT-2D.2 AND LATER: any migration that changes alias
+--   topology (insert, delete, or a flatten UPDATE) MUST first take an explicit
+--   lock serializing alias writers, e.g.
+--       lock table public.card_identity_aliases in share row exclusive mode;
+--   or an equivalent advisory lock held for the whole transaction, BEFORE
+--   reading or writing any alias row. Do not rely on the trigger alone.
+--
+-- Given serialized writes, depth is always 1, so resolution is a single lookup:
 --     coalesce((select canonical_card_id from ... where alias_card_id = $1), $1)
 -- There is deliberately NO recursive resolver. A recursive resolver tolerates
 -- chains, and tolerated chains become cycles.
@@ -240,9 +268,28 @@ create or replace view public.card_identity_resolution as
   from public.card_identity_aliases a;
 
 comment on view public.card_identity_resolution is
-  'CAT-2D. Minimal public alias-resolution surface: obsolete card id -> canonical survivor. Owner-rights view over the private card_identity_aliases table so provenance columns are unreachable. Read by cards_effective, the OL-0D read model and the ownership RPC.';
+  'CAT-2D. Minimal public alias-resolution surface: obsolete card id -> canonical survivor. Owner-rights READ-ONLY view over the private card_identity_aliases table so provenance columns are unreachable. Read by cards_effective, the OL-0D read model and the ownership RPC. Never grant DML on this view: it is automatically updatable and runs with owner rights.';
 
-grant select on public.card_identity_resolution to anon, authenticated, service_role;
+-- ── READ-ONLY HARDENING — load-bearing, not ceremony ──────────────────────
+--
+-- This is a simple single-table view with no aggregate, DISTINCT, GROUP BY,
+-- set operation or window function, so PostgreSQL makes it AUTOMATICALLY
+-- UPDATABLE. Any INSERT/UPDATE/DELETE privilege on it would write straight
+-- through to card_identity_aliases — and because the view runs with OWNER
+-- rights, such a write would bypass the base table's own privilege wall
+-- entirely. A single stray DML grant would hand alias authorship to anon.
+--
+-- So privilege state is stated explicitly and fail-closed rather than assumed:
+-- revoke EVERYTHING (including via PUBLIC, and including service_role) first,
+-- then grant back exactly one privilege. GRANT alone is not sufficient — it
+-- cannot remove a privilege an earlier deployment or a blanket schema grant
+-- may already have left in place.
+--
+-- service_role gets SELECT only. It has no operational need for DML here:
+-- alias population is done by migrations running as the table owner, not
+-- through this surface. Phase E asserts all of this rather than printing it.
+revoke all on table public.card_identity_resolution from public, anon, authenticated, service_role;
+grant select on table public.card_identity_resolution to anon, authenticated, service_role;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -786,10 +833,27 @@ begin
 end;
 $$;
 
--- Grants restated verbatim (CREATE OR REPLACE preserves them; restated so this
--- migration is self-contained and idempotent).
+-- ── ACL CORRECTION (review finding) ───────────────────────────────────────
+--
+-- ol-0d-4 ends with `revoke all ... from public; grant execute ... to
+-- authenticated;` and describes that as restating the grants verbatim. It is
+-- NOT verbatim against production: CAT-2D.0 recovered the live proacl as
+--   {postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+-- i.e. EXECUTE for four roles, not one.
+--
+-- Copying ol-0d-4's tail into this migration would therefore have SILENTLY
+-- NARROWED the production ACL — dropping EXECUTE for postgres, anon and
+-- service_role — inside a slice whose entire acceptance criterion is that
+-- nothing observable changes. CREATE OR REPLACE preserves an existing ACL, but
+-- an explicit REVOKE immediately afterwards does not, and a migration that
+-- calls itself self-contained cannot lean on preservation anyway.
+--
+-- The grants below are the CAT-2D.0 RECOVERED PRODUCTION CONTRACT. No repo
+-- evidence indicates any of the four was intentionally removed. Phase E asserts
+-- the resulting ACL.
 revoke all on function public.get_active_import_snapshot_read_model(uuid, integer, integer, text, text, text, text, text) from public;
-grant execute on function public.get_active_import_snapshot_read_model(uuid, integer, integer, text, text, text, text, text) to authenticated;
+grant execute on function public.get_active_import_snapshot_read_model(uuid, integer, integer, text, text, text, text, text)
+  to postgres, anon, authenticated, service_role;
 
 commit;
 

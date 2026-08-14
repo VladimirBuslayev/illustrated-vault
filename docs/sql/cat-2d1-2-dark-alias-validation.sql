@@ -1,6 +1,6 @@
 -- docs/sql/cat-2d1-2-dark-alias-validation.sql
 -- ═══════════════════════════════════════════════════════════════════════════
--- CAT-2D.1 — validation
+-- CAT-2D.1 — deployment + validation procedure
 --
 -- CAT-2D.1 makes an architectural change whose entire acceptance criterion is
 -- that NOTHING OBSERVABLE CHANGES. With zero alias rows the exclusion excludes
@@ -8,75 +8,179 @@
 -- be byte-for-byte / set-for-set what production produced before deployment.
 --
 -- ⚠ ACCEPTANCE TARGETS ARE CAPTURED LIVE, NOT HARDCODED.
---   Phase A runs BEFORE deployment and records the real pre-state into a temp
---   table. Phase C compares against THAT, not against any historical constant.
---   Do not substitute a remembered figure (e.g. an old owned-card count) for a
---   captured one — the active batch may have changed since it was written down.
+--   Phase A records the real pre-state. Phase C compares against THAT. Never
+--   substitute a remembered figure (e.g. an old owned-card count) — the active
+--   batch may have changed since it was written down.
 --
--- Phases:
---   A  PRE-DEPLOY capture      (read-only; run before cat-2d1-1)
---   B  DEPLOY                  (run cat-2d1-1-dark-alias-foundation.sql)
---   C  POST-DEPLOY equivalence (read-only)
---   D  alias constraint proofs (writes inside an explicitly ROLLED BACK tx)
---   E  security / privilege proofs (read-only)
---   F  untouched-data proofs   (read-only)
+-- ─────────────────────────────────────────────────────────────────────────
+-- TWO OPERATIONAL PROBLEMS THIS FILE SOLVES (review findings)
+-- ─────────────────────────────────────────────────────────────────────────
 --
--- Phases A and C must run in the SAME session: the capture lives in a temp
--- table. Phase A additionally prints the ownership and OL-0D payloads so they
--- can be saved outside the session if the connection is lost.
+-- P1. auth.uid() IS NULL IN THE SQL EDITOR.
+--     Both RPCs are auth.uid()-scoped. A Dashboard / psql connection carries no
+--     app JWT, so auth.uid() returns NULL and the two functions would answer
+--     {state: error, reason: no_auth} and RAISE 28000 respectively. Capturing
+--     that as a "pre-state" would be meaningless.
 --
--- Ownership and OL-0D checks must run AS THE OWNER ACCOUNT: both RPCs are
--- auth.uid()-scoped and return no_auth / raise 28000 for an anonymous session.
+--     Solved below by explicitly setting `request.jwt.claims`, which is exactly
+--     what Supabase's auth.uid() reads, and then ASSERTING that auth.uid()
+--     equals the intended validation user before anything is captured.
+--
+-- P2. A TEMP TABLE CANNOT SURVIVE SEPARATE DASHBOARD RUNS.
+--     Each Run may use a different pooled backend, so session-scoped state is
+--     not reliable across phases.
+--
+--     Solved below by capturing into a PERSISTENT table,
+--     public.cat2d1_pre_capture, which every phase can find regardless of
+--     session. It is privilege-locked on creation and DROPPED in Phase G.
+--     Each phase re-establishes the JWT context from that table, so
+--     **every phase is independently runnable, in any session, in any order
+--     after A** — no "same session" prose remains.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHY WE SET CLAIMS BUT DO NOT `SET ROLE authenticated`
+-- ─────────────────────────────────────────────────────────────────────────
+--   The migration DDL needs owner privileges, and switching roles mid-script
+--   would break it. Staying privileged while setting `request.jwt.claims` is
+--   sound for THIS purpose because both RPCs scope explicitly in SQL —
+--   `where user_id = v_uid and status = 'active'` — rather than relying solely
+--   on RLS. The payload is therefore identical whether or not RLS is bypassed.
+--
+--   That argument covers the EQUIVALENCE phases only. The PRIVILEGE phase (E)
+--   does not depend on it: it asserts effective privileges per named role with
+--   has_table_privilege / has_function_privilege, which accounts for PUBLIC
+--   membership, and adds real DML attempts under `set role`.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- PHASES
+-- ─────────────────────────────────────────────────────────────────────────
+--   A0  discover the validation user            (read-only)
+--   A   PRE-DEPLOY capture                      (creates the capture table)
+--   B   DEPLOY                                  (run cat-2d1-1)
+--   C   POST-DEPLOY equivalence                 (read-only)
+--   D   alias constraint proofs                 (writes; ROLLED BACK)
+--   E   privilege assertions + negative DML     (asserts; ROLLED BACK)
+--   F   untouched-data proofs                   (read-only)
+--   G   cleanup                                 (drops the capture table)
+--
+-- Run A0 → A → B → C → D → E → F → G in order. Each may be its own Run.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- PHASE A — PRE-DEPLOY CAPTURE   (read-only; run BEFORE cat-2d1-1)
+-- PHASE A0 — DISCOVER THE VALIDATION USER   (read-only)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Pick the user whose active snapshot should be used as the acceptance target.
+-- Normally there is exactly one row here.
+
+select
+  b.user_id      as validation_user_uuid,
+  b.id           as active_batch_id,
+  b.activated_at,
+  b.matcher_version,
+  b.matched_rows
+from public.user_import_batches b
+where b.status = 'active'
+order by b.activated_at desc;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE A — PRE-DEPLOY CAPTURE   (run BEFORE cat-2d1-1)
 -- ═══════════════════════════════════════════════════════════════════════════
 
-create temp table if not exists cat2d1_pre (
+-- ── The ONLY line an operator edits in this file ──────────────────────────
+--    Paste the validation_user_uuid from Phase A0 between the quotes.
+--    Deliberately not hardcoded anywhere else, and never in the migration.
+select set_config('cat2d1.validation_user', 'PASTE-VALIDATION-USER-UUID-HERE', false);
+-- ──────────────────────────────────────────────────────────────────────────
+
+-- Establish the authenticated identity that auth.uid() will report.
+select set_config(
+  'request.jwt.claims',
+  json_build_object('sub', current_setting('cat2d1.validation_user'), 'role', 'authenticated')::text,
+  false
+);
+
+-- Capture table. PERSISTENT (survives separate Dashboard runs), privilege
+-- locked (it holds this user's owned-card ids), dropped in Phase G.
+create table if not exists public.cat2d1_pre_capture (
   key   text primary key,
   value jsonb not null
 );
+revoke all on table public.cat2d1_pre_capture from public, anon, authenticated, service_role;
 
--- A1. cards_effective shape and content fingerprint.
-insert into cat2d1_pre (key, value)
+do $$
+declare
+  v_uid       uuid;
+  v_expected  text := current_setting('cat2d1.validation_user', true);
+  v_batches   int;
+begin
+  -- A-GUARD 1: the operator actually pasted a uuid.
+  if v_expected is null or v_expected = '' or v_expected = 'PASTE-VALIDATION-USER-UUID-HERE' then
+    raise exception 'FAIL A-GUARD: paste the validation user UUID into the marked set_config line first';
+  end if;
+
+  -- A-GUARD 2: auth.uid() is established and is EXACTLY the intended user.
+  v_uid := auth.uid();
+  if v_uid is null then
+    raise exception 'FAIL A-GUARD: auth.uid() is NULL — request.jwt.claims was not applied to this session';
+  end if;
+  if v_uid::text <> v_expected then
+    raise exception 'FAIL A-GUARD: auth.uid() is % but the validation user is %', v_uid, v_expected;
+  end if;
+
+  -- A-GUARD 3: that user has exactly one active batch (otherwise the ownership
+  -- RPC would legitimately answer multiple_active_batches / no_active_batch and
+  -- the capture would not be a usable acceptance target).
+  select count(*) into v_batches
+  from public.user_import_batches where user_id = v_uid and status = 'active';
+  if v_batches <> 1 then
+    raise exception 'FAIL A-GUARD: validation user has % active batches, expected exactly 1', v_batches;
+  end if;
+
+  raise notice 'PHASE A context OK — auth.uid() = %, one active batch.', v_uid;
+end $$;
+
+-- A1. cards_effective shape and content fingerprints.
+insert into public.cat2d1_pre_capture (key, value)
+select 'validation_user', to_jsonb(current_setting('cat2d1.validation_user'))
+on conflict (key) do update set value = excluded.value;
+
+insert into public.cat2d1_pre_capture (key, value)
 select 'cards_effective_rows', to_jsonb(count(*)) from public.cards_effective
 on conflict (key) do update set value = excluded.value;
 
-insert into cat2d1_pre (key, value)
-select 'cards_effective_id_checksum',
-       to_jsonb(md5(string_agg(id, ',' order by id)))
+insert into public.cat2d1_pre_capture (key, value)
+select 'cards_effective_id_checksum', to_jsonb(md5(string_agg(id, ',' order by id)))
 from public.cards_effective
 on conflict (key) do update set value = excluded.value;
 
--- Full-row fingerprint: proves values, not just the id set, are unchanged.
-insert into cat2d1_pre (key, value)
+-- Full-row fingerprint: proves VALUES are unchanged, not just the id set.
+insert into public.cat2d1_pre_capture (key, value)
 select 'cards_effective_row_checksum',
        to_jsonb(md5(string_agg(md5(to_jsonb(ce)::text), ',' order by ce.id)))
 from public.cards_effective ce
 on conflict (key) do update set value = excluded.value;
 
--- A2. column contract: ordered column list of the view.
-insert into cat2d1_pre (key, value)
-select 'cards_effective_columns',
-       jsonb_agg(column_name order by ordinal_position)
+-- A2. ordered column contract.
+insert into public.cat2d1_pre_capture (key, value)
+select 'cards_effective_columns', jsonb_agg(column_name order by ordinal_position)
 from information_schema.columns
 where table_schema = 'public' and table_name = 'cards_effective'
 on conflict (key) do update set value = excluded.value;
 
--- A3. ownership RPC payload (run as the owner account).
-insert into cat2d1_pre (key, value)
+-- A3/A4. the two auth.uid()-scoped payloads.
+insert into public.cat2d1_pre_capture (key, value)
 select 'owned_ids_payload', public.get_active_snapshot_owned_card_ids()
 on conflict (key) do update set value = excluded.value;
 
--- A4. OL-0D representative payload (first page, default sort).
-insert into cat2d1_pre (key, value)
-select 'ol0d_payload', public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'name_asc')
+insert into public.cat2d1_pre_capture (key, value)
+select 'ol0d_payload',
+       public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'name_asc')
 on conflict (key) do update set value = excluded.value;
 
 -- A5. untouched-data fingerprints.
-insert into cat2d1_pre (key, value)
+insert into public.cat2d1_pre_capture (key, value)
 select 'user_import_rows_checksum',
        to_jsonb(md5(string_agg(
          md5(coalesce(card_id,'~') || '|' || coalesce(candidate_card_ids::text,'~') || '|' ||
@@ -85,44 +189,75 @@ select 'user_import_rows_checksum',
 from public.user_import_rows
 on conflict (key) do update set value = excluded.value;
 
-insert into cat2d1_pre (key, value)
+insert into public.cat2d1_pre_capture (key, value)
 select 'card_overrides_checksum',
        to_jsonb(md5(coalesce(string_agg(md5(to_jsonb(o)::text), ',' order by o.user_id, o.card_id), '')))
 from public.card_overrides o
 on conflict (key) do update set value = excluded.value;
 
-insert into cat2d1_pre (key, value)
+insert into public.cat2d1_pre_capture (key, value)
 select 'card_extras_checksum',
        to_jsonb(md5(coalesce(string_agg(md5(to_jsonb(e)::text), ',' order by e.card_id), '')))
 from public.card_extras e
 on conflict (key) do update set value = excluded.value;
 
-insert into cat2d1_pre (key, value)
+insert into public.cat2d1_pre_capture (key, value)
 select 'cards_rows', to_jsonb(count(*)) from public.cards
 on conflict (key) do update set value = excluded.value;
 
--- Print the capture so it survives a lost session.
-select key, value from cat2d1_pre order by key;
+-- A6. sanity: the captured ownership payload must be a usable 'ready' target.
+do $$
+declare v_state text;
+begin
+  select value ->> 'state' into v_state from public.cat2d1_pre_capture where key = 'owned_ids_payload';
+  if v_state <> 'ready' then
+    raise exception 'FAIL A6: captured ownership state is % — expected ready. Fix the context before deploying.', v_state;
+  end if;
+  raise notice 'PHASE A PASSED — pre-state captured.';
+end $$;
+
+select key, jsonb_pretty(value) from public.cat2d1_pre_capture order by key;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PHASE B — DEPLOY
 -- ═══════════════════════════════════════════════════════════════════════════
---   Run docs/sql/cat-2d1-1-dark-alias-foundation.sql now, in the SAME session,
---   then continue with Phase C.
+--   Run docs/sql/cat-2d1-1-dark-alias-foundation.sql now, top to bottom.
+--   It is one transaction and needs owner privileges. No JWT context required.
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PHASE C — POST-DEPLOY EQUIVALENCE   (read-only)
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- Re-establish the SAME identity, read from the capture table, so this phase is
+-- runnable in a fresh session.
+select set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub', (select value #>> '{}' from public.cat2d1_pre_capture where key = 'validation_user'),
+    'role', 'authenticated'
+  )::text,
+  false
+);
+
 do $$
 declare
-  v_pre  jsonb;
-  v_now  jsonb;
-  v_txt  text;
-  v_n    bigint;
+  v_pre jsonb; v_now jsonb; v_txt text; v_n bigint; v_uid uuid; v_expected text;
 begin
+  -- C-GUARD: identity must match the capture, or the comparison is meaningless.
+  select value #>> '{}' into v_expected from public.cat2d1_pre_capture where key = 'validation_user';
+  if v_expected is null then
+    raise exception 'FAIL C-GUARD: no capture found — run Phase A first';
+  end if;
+  v_uid := auth.uid();
+  if v_uid is null then
+    raise exception 'FAIL C-GUARD: auth.uid() is NULL — the claims setting above did not apply';
+  end if;
+  if v_uid::text <> v_expected then
+    raise exception 'FAIL C-GUARD: auth.uid() is % but the capture was taken as %', v_uid, v_expected;
+  end if;
+
   -- C0. the alias table exists and is EMPTY. Everything below depends on this.
   if to_regclass('public.card_identity_aliases') is null then
     raise exception 'FAIL C0: public.card_identity_aliases does not exist';
@@ -136,21 +271,21 @@ begin
   end if;
 
   -- C1. cards_effective row count unchanged.
-  select value into v_pre from cat2d1_pre where key = 'cards_effective_rows';
+  select value into v_pre from public.cat2d1_pre_capture where key = 'cards_effective_rows';
   select to_jsonb(count(*)) into v_now from public.cards_effective;
   if v_pre is distinct from v_now then
     raise exception 'FAIL C1: cards_effective row count changed: % -> %', v_pre, v_now;
   end if;
 
-  -- C2. cards_effective exact ID set unchanged.
-  select value into v_pre from cat2d1_pre where key = 'cards_effective_id_checksum';
+  -- C2. exact ID set unchanged.
+  select value into v_pre from public.cat2d1_pre_capture where key = 'cards_effective_id_checksum';
   select to_jsonb(md5(string_agg(id, ',' order by id))) into v_now from public.cards_effective;
   if v_pre is distinct from v_now then
     raise exception 'FAIL C2: cards_effective ID set changed';
   end if;
 
-  -- C3. cards_effective full-row values unchanged.
-  select value into v_pre from cat2d1_pre where key = 'cards_effective_row_checksum';
+  -- C3. full-row values unchanged.
+  select value into v_pre from public.cat2d1_pre_capture where key = 'cards_effective_row_checksum';
   select to_jsonb(md5(string_agg(md5(to_jsonb(ce)::text), ',' order by ce.id)))
     into v_now from public.cards_effective ce;
   if v_pre is distinct from v_now then
@@ -158,7 +293,7 @@ begin
   end if;
 
   -- C4. 14-column contract intact, in order, artist_id at position 14.
-  select value into v_pre from cat2d1_pre where key = 'cards_effective_columns';
+  select value into v_pre from public.cat2d1_pre_capture where key = 'cards_effective_columns';
   select jsonb_agg(column_name order by ordinal_position) into v_now
   from information_schema.columns
   where table_schema = 'public' and table_name = 'cards_effective';
@@ -174,56 +309,51 @@ begin
 
   -- C5. cards_effective remains security_invoker.
   select unnest(reloptions) into v_txt
-  from pg_class where oid = 'public.cards_effective'::regclass and reloptions is not null
-  limit 1;
+  from pg_class where oid = 'public.cards_effective'::regclass and reloptions is not null limit 1;
   if coalesce(v_txt, '') <> 'security_invoker=true' then
     raise exception 'FAIL C5: cards_effective must remain security_invoker=true (found %)', coalesce(v_txt, '<none>');
   end if;
 
-  -- C6. ownership RPC: exact owned-ID set and metadata preserved; counts agree.
-  select value into v_pre from cat2d1_pre where key = 'owned_ids_payload';
+  -- C6. ownership RPC: exact owned-ID set and metadata preserved.
+  select value into v_pre from public.cat2d1_pre_capture where key = 'owned_ids_payload';
   v_now := public.get_active_snapshot_owned_card_ids();
 
-  if (v_pre ->> 'state') <> (v_now ->> 'state') then
-    raise exception 'FAIL C6: ownership state changed: % -> %', v_pre ->> 'state', v_now ->> 'state';
+  if (v_now ->> 'state') <> 'ready' then
+    raise exception 'FAIL C6: ownership state is % — expected ready', v_now ->> 'state';
   end if;
-
-  if (v_now ->> 'state') = 'ready' then
-    if (v_pre -> 'ownedCardIds') is distinct from (v_now -> 'ownedCardIds') then
-      raise exception 'FAIL C6: owned-ID set changed (array is sorted, so this is an exact comparison)';
-    end if;
-    if (v_pre #>> '{reconciliation,distinctMatchedCardIds}')
-       is distinct from (v_now #>> '{reconciliation,distinctMatchedCardIds}') then
-      raise exception 'FAIL C6: distinctMatchedCardIds changed';
-    end if;
-    if (v_pre #>> '{reconciliation,matchedRows}')
-       is distinct from (v_now #>> '{reconciliation,matchedRows}') then
-      raise exception 'FAIL C6: matchedRows changed';
-    end if;
-    -- New additive fields must be present and must show zero collapse.
-    if (v_now #>> '{reconciliation,distinctResolvedCardIds}') is null then
-      raise exception 'FAIL C6: distinctResolvedCardIds missing from the payload';
-    end if;
-    if (v_now #>> '{reconciliation,distinctResolvedCardIds}')
-       is distinct from (v_now #>> '{reconciliation,distinctMatchedCardIds}') then
-      raise exception 'FAIL C6: with zero aliases distinctResolved must equal distinctMatched';
-    end if;
-    if (v_now #>> '{reconciliation,aliasCollapsedCount}') <> '0' then
-      raise exception 'FAIL C6: aliasCollapsedCount must be 0 with an empty alias table (found %)',
-        v_now #>> '{reconciliation,aliasCollapsedCount}';
-    end if;
-    if (v_pre ->> 'batchId') is distinct from (v_now ->> 'batchId')
-       or (v_pre ->> 'activatedAt') is distinct from (v_now ->> 'activatedAt')
-       or (v_pre ->> 'matcherVersion') is distinct from (v_now ->> 'matcherVersion') then
-      raise exception 'FAIL C6: batch metadata changed';
-    end if;
-    if (v_now ->> 'contractVersion') <> '1' then
-      raise exception 'FAIL C6: contractVersion must remain 1';
-    end if;
+  if (v_pre -> 'ownedCardIds') is distinct from (v_now -> 'ownedCardIds') then
+    raise exception 'FAIL C6: owned-ID set changed (array is sorted, so this is an exact comparison)';
+  end if;
+  if (v_pre #>> '{reconciliation,distinctMatchedCardIds}')
+     is distinct from (v_now #>> '{reconciliation,distinctMatchedCardIds}') then
+    raise exception 'FAIL C6: distinctMatchedCardIds changed';
+  end if;
+  if (v_pre #>> '{reconciliation,matchedRows}')
+     is distinct from (v_now #>> '{reconciliation,matchedRows}') then
+    raise exception 'FAIL C6: matchedRows changed';
+  end if;
+  if (v_now #>> '{reconciliation,distinctResolvedCardIds}') is null then
+    raise exception 'FAIL C6: distinctResolvedCardIds missing from the payload';
+  end if;
+  if (v_now #>> '{reconciliation,distinctResolvedCardIds}')
+     is distinct from (v_now #>> '{reconciliation,distinctMatchedCardIds}') then
+    raise exception 'FAIL C6: with zero aliases distinctResolved must equal distinctMatched';
+  end if;
+  if (v_now #>> '{reconciliation,aliasCollapsedCount}') <> '0' then
+    raise exception 'FAIL C6: aliasCollapsedCount must be 0 with an empty alias table (found %)',
+      v_now #>> '{reconciliation,aliasCollapsedCount}';
+  end if;
+  if (v_pre ->> 'batchId') is distinct from (v_now ->> 'batchId')
+     or (v_pre ->> 'activatedAt') is distinct from (v_now ->> 'activatedAt')
+     or (v_pre ->> 'matcherVersion') is distinct from (v_now ->> 'matcherVersion') then
+    raise exception 'FAIL C6: batch metadata changed';
+  end if;
+  if (v_now ->> 'contractVersion') <> '1' then
+    raise exception 'FAIL C6: contractVersion must remain 1';
   end if;
 
   -- C7. OL-0D: representative page identical.
-  select value into v_pre from cat2d1_pre where key = 'ol0d_payload';
+  select value into v_pre from public.cat2d1_pre_capture where key = 'ol0d_payload';
   v_now := public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'name_asc');
   if v_pre is distinct from v_now then
     raise exception 'FAIL C7: OL-0D payload changed under an empty alias map';
@@ -232,33 +362,31 @@ begin
   raise notice 'PHASE C PASSED — cards_effective, ownership and OL-0D are equivalent under an empty alias map.';
 end $$;
 
--- C8. spot-check other OL-0D argument combinations (compare by eye or capture
--- them in Phase A too if a stricter gate is wanted).
-select 'ol0d sort=set_asc'       as variant, public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'set_asc')       is not null as ok
+-- C8. spot-check other OL-0D argument combinations still execute.
+select 'ol0d sort=set_asc' as variant,
+       public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'set_asc') ->> 'state' as state
 union all
-select 'ol0d sort=quantity_desc',                public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'quantity_desc') is not null
+select 'ol0d sort=quantity_desc',
+       public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'quantity_desc') ->> 'state'
 union all
-select 'ol0d status=missing',                    public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'missing', 'name_asc')  is not null
+select 'ol0d status=missing',
+       public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'missing', 'name_asc') ->> 'state'
 union all
-select 'ol0d offset page 2',                     public.get_active_import_snapshot_read_model(null, 60, 60, null, null, null, 'all', 'name_asc')     is not null;
+select 'ol0d offset page 2',
+       public.get_active_import_snapshot_read_model(null, 60, 60, null, null, null, 'all', 'name_asc') ->> 'state';
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PHASE D — ALIAS CONSTRAINT PROOFS   (writes; explicitly ROLLED BACK)
 -- ═══════════════════════════════════════════════════════════════════════════
 --
--- ⚠ This phase INSERTS alias rows to prove the constraints reject what they
---   must. It ends with ROLLBACK. CAT-2D.1 ships with the table EMPTY — verify
---   with Phase C0 again afterwards.
---
--- Uses real existing card ids so the FK is satisfied; pick any three.
+-- ⚠ INSERTS alias rows to prove the constraints reject what they must, then
+--   ROLLS BACK. CAT-2D.1 ships with the table EMPTY.
 
 begin;
 
 do $$
-declare
-  v_a text; v_b text; v_c text;
-  v_msg text;
+declare v_a text; v_b text; v_c text; v_msg text;
 begin
   select id into v_a from public.cards order by id offset 0 limit 1;
   select id into v_b from public.cards order by id offset 1 limit 1;
@@ -285,7 +413,7 @@ begin
   exception when foreign_key_violation then null;
   end;
 
-  -- D3. empty ids refused.
+  -- D3. blank ids refused.
   begin
     insert into public.card_identity_aliases
       (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)
@@ -299,8 +427,8 @@ begin
     (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)
     values (v_a, v_b, 'set_rename', '{}'::jsonb, 'validation', 'CAT-2D.1');
 
-  -- D4. R2 — B -> C refused, because B is currently a survivor for A -> B.
-  --     This is the case a one-sided trigger would have MISSED.
+  -- D4. R2 — B -> C refused (B is currently a survivor). This is the case a
+  --     one-sided trigger would have MISSED.
   begin
     insert into public.card_identity_aliases
       (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)
@@ -309,7 +437,7 @@ begin
   exception when check_violation then null;
   end;
 
-  -- D5. R1 — C -> A refused, because A is already an alias.
+  -- D5. R1 — C -> A refused (A is already an alias).
   begin
     insert into public.card_identity_aliases
       (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)
@@ -318,13 +446,12 @@ begin
   exception when check_violation then null;
   end;
 
-  -- D6. many aliases -> one survivor MUST remain allowed (Trainer Galleries
-  --     need exactly this: two obsolete generations, one live survivor).
+  -- D6. many aliases -> one survivor MUST remain allowed.
   insert into public.card_identity_aliases
     (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)
     values (v_c, v_b, 'set_rename', '{}'::jsonb, 'validation', 'CAT-2D.1');
 
-  -- D7. duplicate alias_card_id refused (PK): one old id, one survivor.
+  -- D7. duplicate alias_card_id refused (PK).
   begin
     insert into public.card_identity_aliases
       (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)
@@ -333,7 +460,7 @@ begin
   exception when unique_violation then null;
   end;
 
-  -- D8. with two aliases live, cards_effective must now EXCLUDE both.
+  -- D8. with two aliases live, cards_effective must EXCLUDE both and keep the survivor.
   if exists (select 1 from public.cards_effective where id in (v_a, v_c)) then
     raise exception 'FAIL D8: cards_effective still exposes an aliased id';
   end if;
@@ -341,7 +468,7 @@ begin
     raise exception 'FAIL D8: cards_effective must still expose the survivor';
   end if;
 
-  -- D9. the resolution view exposes exactly two columns.
+  -- D9. resolution view exposes exactly two columns.
   select string_agg(column_name, ',' order by ordinal_position) into v_msg
   from information_schema.columns
   where table_schema = 'public' and table_name = 'card_identity_resolution';
@@ -354,7 +481,6 @@ end $$;
 
 rollback;   -- ⚠ MANDATORY: CAT-2D.1 ships with ZERO alias rows.
 
--- Re-assert emptiness after the rollback.
 select case when count(*) = 0 then 'OK: alias table empty after rollback'
             else 'FAIL: alias rows survived the rollback' end as phase_d_cleanup,
        count(*) as alias_rows
@@ -362,59 +488,164 @@ from public.card_identity_aliases;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- PHASE E — SECURITY / PRIVILEGE PROOFS   (read-only)
+-- PHASE E — PRIVILEGE ASSERTIONS   (asserted, not printed)
 -- ═══════════════════════════════════════════════════════════════════════════
+--
+-- has_table_privilege / has_function_privilege report EFFECTIVE privilege, so
+-- a privilege held indirectly via PUBLIC is correctly reported as held. That is
+-- exactly why they are used here instead of reading information_schema grants.
 
--- E1. provenance is NOT reachable by anon/authenticated on the base table.
---     Expect ZERO rows: no privilege of any kind is granted on the table.
-select 'E1 base-table grants to anon/authenticated (expect none)' as check_name,
-       grantee, privilege_type
-from information_schema.role_table_grants
-where table_schema = 'public'
-  and table_name = 'card_identity_aliases'
-  and grantee in ('anon', 'authenticated');
+do $$
+declare
+  r text;
+  p text;
+begin
+  -- E1. base table: anon/authenticated have NOTHING.
+  foreach r in array array['anon', 'authenticated'] loop
+    foreach p in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] loop
+      if has_table_privilege(r, 'public.card_identity_aliases', p) then
+        raise exception 'FAIL E1: % must NOT have % on card_identity_aliases (provenance would be reachable)', r, p;
+      end if;
+    end loop;
+  end loop;
 
--- E2. only the two-column resolution surface is granted.
-select 'E2 resolution view grants' as check_name, grantee, privilege_type
-from information_schema.role_table_grants
-where table_schema = 'public'
-  and table_name = 'card_identity_resolution'
-  and grantee in ('anon', 'authenticated', 'service_role')
-order by grantee, privilege_type;
+  -- E2. resolution view: SELECT granted to exactly the three read roles.
+  foreach r in array array['anon', 'authenticated', 'service_role'] loop
+    if not has_table_privilege(r, 'public.card_identity_resolution', 'SELECT') then
+      raise exception 'FAIL E2: % must have SELECT on card_identity_resolution', r;
+    end if;
+  end loop;
 
--- E3. the resolution view projects exactly two columns.
-select 'E3 resolution columns' as check_name, column_name, ordinal_position
-from information_schema.columns
-where table_schema = 'public' and table_name = 'card_identity_resolution'
-order by ordinal_position;
+  -- E3. resolution view: NO write privilege for anyone. The view is a simple
+  --     single-table view and is therefore AUTOMATICALLY UPDATABLE — a DML
+  --     grant here would write through to the private base table with OWNER
+  --     rights, bypassing E1 entirely. This is the assertion that matters most.
+  foreach r in array array['anon', 'authenticated', 'service_role'] loop
+    foreach p in array array['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] loop
+      if has_table_privilege(r, 'public.card_identity_resolution', p) then
+        raise exception 'FAIL E3: % must NOT have % on card_identity_resolution (auto-updatable owner-rights view)', r, p;
+      end if;
+    end loop;
+  end loop;
 
--- E4. RLS is enabled on the base table and has NO policies (defence in depth).
-select 'E4 base-table RLS' as check_name,
-       c.relrowsecurity as rls_enabled,
-       (select count(*) from pg_policies p
-         where p.schemaname = 'public' and p.tablename = 'card_identity_aliases') as policy_count
-from pg_class c where c.oid = 'public.card_identity_aliases'::regclass;
+  -- E4. the resolution view projects exactly two columns.
+  if (select string_agg(column_name, ',' order by ordinal_position)
+        from information_schema.columns
+       where table_schema = 'public' and table_name = 'card_identity_resolution')
+     <> 'alias_card_id,canonical_card_id' then
+    raise exception 'FAIL E4: resolution view must project exactly alias_card_id,canonical_card_id';
+  end if;
 
--- E5. security properties of the three consumers are unchanged.
-select 'E5 security properties' as check_name, p.proname,
-       case when p.prosecdef then 'DEFINER' else 'INVOKER' end as security,
-       p.proconfig
-from pg_proc p
-join pg_namespace n on n.oid = p.pronamespace
-where n.nspname = 'public'
-  and p.proname in ('get_active_snapshot_owned_card_ids', 'get_active_import_snapshot_read_model')
-order by p.proname;
--- EXPECT: get_active_snapshot_owned_card_ids   = DEFINER, search_path=""
---         get_active_import_snapshot_read_model = INVOKER, search_path=""
+  -- E5. base table RLS enabled with NO policies (defence in depth behind E1).
+  if not (select relrowsecurity from pg_class where oid = 'public.card_identity_aliases'::regclass) then
+    raise exception 'FAIL E5: RLS must be enabled on card_identity_aliases';
+  end if;
+  if (select count(*) from pg_policies
+       where schemaname = 'public' and tablename = 'card_identity_aliases') <> 0 then
+    raise exception 'FAIL E5: card_identity_aliases must have NO RLS policies';
+  end if;
 
-select 'E5 view security_invoker' as check_name, c.relname, c.reloptions
-from pg_class c
-join pg_namespace n on n.oid = c.relnamespace
-where n.nspname = 'public'
-  and c.relname in ('cards_effective', 'illustrator_directory', 'card_identity_resolution')
-order by c.relname;
--- EXPECT: cards_effective and illustrator_directory  -> {security_invoker=true}
---         card_identity_resolution                   -> NULL (owner-rights, by design)
+  -- E6. security properties of the consumers are unchanged.
+  if not (select prosecdef from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname='public' and p.proname='get_active_snapshot_owned_card_ids') then
+    raise exception 'FAIL E6: ownership RPC must remain SECURITY DEFINER';
+  end if;
+  if (select prosecdef from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname='public' and p.proname='get_active_import_snapshot_read_model') then
+    raise exception 'FAIL E6: OL-0D must remain SECURITY INVOKER';
+  end if;
+
+  -- E7. OL-0D EXECUTE ACL matches the CAT-2D.0 recovered production contract.
+  foreach r in array array['postgres', 'anon', 'authenticated', 'service_role'] loop
+    if not has_function_privilege(r,
+         'public.get_active_import_snapshot_read_model(uuid,integer,integer,text,text,text,text,text)', 'EXECUTE') then
+      raise exception 'FAIL E7: % must have EXECUTE on get_active_import_snapshot_read_model (recovered production ACL)', r;
+    end if;
+    if not has_function_privilege(r, 'public.get_active_snapshot_owned_card_ids()', 'EXECUTE') then
+      raise exception 'FAIL E7: % must have EXECUTE on get_active_snapshot_owned_card_ids (recovered production ACL)', r;
+    end if;
+  end loop;
+
+  -- E8. cards_effective and illustrator_directory remain security_invoker; the
+  --     resolution view remains owner-rights (reloptions null / no invoker flag).
+  if (select coalesce(array_to_string(reloptions, ','), '')
+        from pg_class where oid='public.cards_effective'::regclass) not like '%security_invoker=true%' then
+    raise exception 'FAIL E8: cards_effective must remain security_invoker=true';
+  end if;
+  if (select coalesce(array_to_string(reloptions, ','), '')
+        from pg_class where oid='public.illustrator_directory'::regclass) not like '%security_invoker=true%' then
+    raise exception 'FAIL E8: illustrator_directory must remain security_invoker=true';
+  end if;
+  if (select coalesce(array_to_string(reloptions, ','), '')
+        from pg_class where oid='public.card_identity_resolution'::regclass) like '%security_invoker=true%' then
+    raise exception 'FAIL E8: card_identity_resolution must stay OWNER-RIGHTS, otherwise callers would need base-table access';
+  end if;
+
+  raise notice 'PHASE E PASSED — privileges are exactly as designed.';
+end $$;
+
+-- ── E9. NEGATIVE DML PROOFS — real attempts under the real roles ──────────
+-- Belt-and-braces behind E3: proves the grants behave as asserted, not merely
+-- that the catalog says so. Wrapped in a transaction that ROLLS BACK.
+
+begin;
+
+do $$
+declare
+  v_denied boolean;
+  v_role   text;
+  -- Restore to the SESSION role, not a hardcoded 'postgres': `set role` changes
+  -- current_user but never session_user, so this is correct whatever privileged
+  -- role the operator connected as.
+  v_orig   text := session_user;
+begin
+  foreach v_role in array array['anon', 'authenticated'] loop
+    -- INSERT through the auto-updatable view must be denied.
+    v_denied := false;
+    begin
+      perform set_config('role', v_role, true);
+      execute format(
+        'insert into public.card_identity_resolution (alias_card_id, canonical_card_id) values (%L, %L)',
+        '__cat2d1_probe__', '__cat2d1_probe_canonical__');
+    exception
+      when insufficient_privilege then v_denied := true;
+      when others then v_denied := false;
+    end;
+    perform set_config('role', v_orig, true);
+    if not v_denied then
+      raise exception 'FAIL E9: % was able to attempt INSERT through card_identity_resolution', v_role;
+    end if;
+
+    -- SELECT on the private base table must be denied.
+    v_denied := false;
+    begin
+      perform set_config('role', v_role, true);
+      execute 'select 1 from public.card_identity_aliases limit 1';
+    exception
+      when insufficient_privilege then v_denied := true;
+      when others then v_denied := false;
+    end;
+    perform set_config('role', v_orig, true);
+    if not v_denied then
+      raise exception 'FAIL E9: % was able to read the private card_identity_aliases table', v_role;
+    end if;
+
+    -- SELECT on the resolution view must SUCCEED (positive control: proves the
+    -- denials above are about privilege, not about a broken object).
+    begin
+      perform set_config('role', v_role, true);
+      execute 'select 1 from public.card_identity_resolution limit 1';
+      perform set_config('role', v_orig, true);
+    exception when others then
+      perform set_config('role', v_orig, true);
+      raise exception 'FAIL E9: % could NOT read card_identity_resolution — the read surface is broken', v_role;
+    end;
+  end loop;
+
+  raise notice 'PHASE E9 PASSED — DML denied, private table unreadable, read surface works.';
+end $$;
+
+rollback;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -424,7 +655,7 @@ order by c.relname;
 do $$
 declare v_pre jsonb; v_now jsonb;
 begin
-  select value into v_pre from cat2d1_pre where key = 'user_import_rows_checksum';
+  select value into v_pre from public.cat2d1_pre_capture where key = 'user_import_rows_checksum';
   select to_jsonb(md5(string_agg(
            md5(coalesce(card_id,'~') || '|' || coalesce(candidate_card_ids::text,'~') || '|' ||
                match_status || '|' || coalesce(match_reason,'~')),
@@ -434,21 +665,21 @@ begin
     raise exception 'FAIL F1: user_import_rows changed — historical evidence must be immutable';
   end if;
 
-  select value into v_pre from cat2d1_pre where key = 'card_overrides_checksum';
+  select value into v_pre from public.cat2d1_pre_capture where key = 'card_overrides_checksum';
   select to_jsonb(md5(coalesce(string_agg(md5(to_jsonb(o)::text), ',' order by o.user_id, o.card_id), '')))
     into v_now from public.card_overrides o;
   if v_pre is distinct from v_now then
     raise exception 'FAIL F2: card_overrides changed';
   end if;
 
-  select value into v_pre from cat2d1_pre where key = 'card_extras_checksum';
+  select value into v_pre from public.cat2d1_pre_capture where key = 'card_extras_checksum';
   select to_jsonb(md5(coalesce(string_agg(md5(to_jsonb(e)::text), ',' order by e.card_id), '')))
     into v_now from public.card_extras e;
   if v_pre is distinct from v_now then
     raise exception 'FAIL F3: card_extras changed';
   end if;
 
-  select value into v_pre from cat2d1_pre where key = 'cards_rows';
+  select value into v_pre from public.cat2d1_pre_capture where key = 'cards_rows';
   select to_jsonb(count(*)) into v_now from public.cards;
   if v_pre is distinct from v_now then
     raise exception 'FAIL F4: public.cards row count changed — CAT-2D.1 deletes and inserts nothing';
@@ -459,11 +690,19 @@ end $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- FINAL GATE
+-- FINAL GATE + PHASE G CLEANUP
 -- ═══════════════════════════════════════════════════════════════════════════
+
 select
-  (select count(*) from public.card_identity_aliases)                       as alias_rows_must_be_zero,
-  (select count(*) from public.cards_effective)                             as cards_effective_rows,
-  (select count(*) from public.cards)                                       as cards_rows,
+  (select count(*) from public.card_identity_aliases)              as alias_rows_must_be_zero,
+  (select count(*) from public.cards_effective)                    as cards_effective_rows,
+  (select count(*) from public.cards)                              as cards_rows,
   (select count(*) from information_schema.columns
-     where table_schema='public' and table_name='cards_effective')          as cards_effective_columns_must_be_14;
+     where table_schema='public' and table_name='cards_effective') as cards_effective_columns_must_be_14;
+
+-- PHASE G — remove the capture table. It holds this user's owned-card ids, so
+-- do not leave it behind. Run only after Phases C and F have passed.
+drop table if exists public.cat2d1_pre_capture;
+
+-- Clear the validation identity from the session.
+select set_config('request.jwt.claims', '', false);
