@@ -7,19 +7,19 @@ This document records a follow-up split out of CAT-2D.2 on production evidence.
 It is a scope record and an evidence brief, not a design — the design work has
 not been done.
 
-> ### ⚠ Numbering conflict, surfaced rather than resolved
+> ### CAT-2D slice numbering — resolved
 >
-> The private CAT-2D design doc (`illustrated-vault-notes/20 Research/CAT-2D
-> Identity Reconciliation Design.md`, §8 Phase 3) already uses **CAT-2D.3** for
-> **Family B — Trainer Galleries**. This document takes the name CAT-2D.3 as
-> instructed for the Celebrations remap.
+> | Slice | Scope | Status |
+> |---|---|---|
+> | **CAT-2D.1** | Alias schema, `cards_effective` exclusion, dark read-path resolution | **deployed** (PR #12) |
+> | **CAT-2D.2** | SV + GG set rename with a **stable local_id** — 192 aliases | **deployed and validated** |
+> | **CAT-2D.3** | **Celebrations historical identity + numbering remap** — this document | design item only |
+> | **CAT-2D.4** | Trainer Galleries / Family B | blocked on the maintenance-ingestion capability |
 >
-> Two slices cannot share a number. Per `AGENTS.md` this conflict is reported
-> rather than silently resolved: **Family B (Trainer Galleries) needs
-> renumbering**, and the design doc needs updating, as a deliberate decision at
-> CAT-2D.2 closeout. Family B remains blocked on the §7.3 maintenance-ingestion
-> capability either way, so nothing is urgent — but the two must not both be
-> called CAT-2D.3.
+> The CAT-2D design doc originally numbered Trainer Galleries CAT-2D.3 (§8
+> Phase 3). That has been corrected to **CAT-2D.4** in the design doc; the
+> capability requirements in its §7.3 are unchanged and still apply, and Family
+> B remains blocked on them.
 
 ---
 

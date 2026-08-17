@@ -8,7 +8,7 @@
 --
 -- So every phase below compares a POST value against a PRE value captured live,
 -- plus a predicted delta derived from real data. Nothing is hardcoded except
--- the 192 / 122 / 70 / 25 alias counts, which are the approval itself.
+-- the 192 / 122 / 70 alias counts, which are the approval itself.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- OPERATIONAL NOTES CARRIED FORWARD FROM CAT-2D.1
@@ -28,7 +28,7 @@
 --   * any mutable-reference merge collision (Q-3) — an explicit operator
 --     decision, never an automatic one;
 --   * any pair that would LOSE or CONTRADICT artist reachability (A-GATE 4);
---   * a derived map that is not exactly 192 / 122 / 70 / 25.
+--   * a derived map that is not exactly 192 = 122 + 70.
 -- If Phase A raises, DO NOT run the migration.
 --
 -- Phase A also writes public.cat2d2_pre_refs, which cat-2d2-1 §6 READS and

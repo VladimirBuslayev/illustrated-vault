@@ -64,6 +64,12 @@ const lf = (t) => t.split('\r\n').join('\n');
 const read = (p) => lf(readFileSync(p, 'utf8'));
 const sha256 = (t) => createHash('sha256').update(lf(t), 'utf8').digest('hex');
 
+// SQL with `--` line comments removed, lowercased. Used wherever an assertion
+// is about EXECUTABLE SQL rather than prose — the files are required to explain
+// themselves at length, and a check that could not tell the two apart would
+// force those explanations to be deleted.
+const sqlCode = (t) => t.split('\n').filter((l) => !/^\s*--/.test(l)).join('\n').toLowerCase();
+
 // RFC4180-ish parser: the artifact quotes any cell containing a comma or quote.
 function parseCsv(text) {
   const rows = [];
@@ -208,7 +214,7 @@ const validationSquished = squish(validation);
 for (const [family, exp] of Object.entries(EXPECTED_FAMILIES)) {
   ok(migrationSquished.includes(
     squish(`('${family}','${exp.parent}','${exp.canonical}','${exp.sqlPattern}',${exp.count})`)),
-    `migration §3 declares ${family}: ${exp.parent} -> ${exp.canonical} ${exp.sqlPattern} (${exp.count})`);
+    `migration §2 declares ${family}: ${exp.parent} -> ${exp.canonical} ${exp.sqlPattern} (${exp.count})`);
   // The validation file re-derives the map WITHOUT reading the allowlist, on
   // purpose (two independent derivations must agree). It must still use the
   // identical rename pair and pattern, or the agreement would be meaningless.
@@ -224,15 +230,74 @@ for (const [family, exp] of Object.entries(EXPECTED_FAMILIES)) {
 // cat2d2_norm_name — which looks like an improvement and would silently
 // diverge from src/utils/keys.js — this fails.
 console.log('\nfrozen normalisers');
-ok(migration.includes(
-  "regexp_replace(lower(btrim(coalesce(s, ''))), '[^a-z0-9[:space:]]', '', 'g'),\n           '[[:space:]]+', ' ', 'g')"),
-  'cat2d2_norm_name transcribes normName (lower, trim, strip, collapse — and NO trailing trim)');
-ok(migration.includes("btrim(regexp_replace(lower(btrim(coalesce(s, ''))), '/.*$', ''))"),
-  'cat2d2_norm_num transcribes normNum (lower, trim, cut at first slash, trim)');
+// Inlined in the §5 map (they were pg_temp functions until the migration became
+// a single `do`; `create function` would have needed dollar-quoting nested
+// inside the block's own). Still text-pinned: if someone "fixes" the missing
+// trailing btrim in the name transcription — which looks like an improvement
+// and would silently diverge from src/utils/keys.js — this fails.
+for (const side of ['o', 's']) {
+  ok(migrationSquished.includes(squish(
+    `regexp_replace(regexp_replace(lower(btrim(coalesce(${side}.name, ''))), '[^a-z0-9[:space:]]', '', 'g'), '[[:space:]]+', ' ', 'g')`)),
+    `normName transcription applied to the ${side === 'o' ? 'obsolete' : 'survivor'} stored name (lower, trim, strip, collapse — and NO trailing trim)`);
+  ok(migrationSquished.includes(squish(
+    `btrim(regexp_replace(lower(btrim(coalesce(${side}.local_id, ''))), '/.*$', ''))`)),
+    `normNum transcription applied to the ${side === 'o' ? 'obsolete' : 'survivor'} stored local_id`);
+}
+ok(/alias_norm_name <> canonical_norm_name/.test(migration),
+  'P5 compares the two normalised STORED names, not the artifact');
+ok(/alias_norm_num <> canonical_norm_num/.test(migration),
+  'P6 compares the two normalised STORED local_ids');
+ok(!/btrim\(regexp_replace\(regexp_replace\(lower\(btrim/.test(migration),
+  'the name transcription has no trailing btrim — matching normName exactly');
 ok(normName('Umbreon ☆') === 'umbreon ',
   'normName leaves the trailing space on \'Umbreon ☆\' — the behaviour the SQL copy must reproduce');
 ok(normNum('SV001') !== normNum('SV1'),
   'normNum does not strip leading zeros, so SV001 and SV1 are different printings (A2)');
+
+// ── One top-level statement (review finding: SQL Editor deployment) ─────────
+//
+// The first production run exposed the assumption that a top-level `begin;`,
+// `create temp table ... on commit drop`, further top-level statements and
+// `commit;` behave as one transaction/session. In the Supabase SQL Editor they
+// do not — the temp tables were gone before the later statements ran.
+//
+// These assertions make the corrected shape a structural property of the file,
+// so it cannot regress to a multi-statement, transaction-dependent deployment.
+console.log('\none top-level statement');
+const DOLLAR_TAG = '$cat2d2$';
+const segments = sqlCode(migration).split(DOLLAR_TAG);
+ok(segments.length === 3,
+  `the migration has exactly one ${DOLLAR_TAG}-quoted body (found ${segments.length - 1} delimiter pair halves)`);
+const outsideBody = (segments[0] ?? '') + (segments[2] ?? '');
+const topLevel = outsideBody.split(';').map((s) => s.trim()).filter(Boolean);
+ok(topLevel.length === 1 && topLevel[0] === 'do',
+  `exactly one executable top-level statement, and it is the DO (found ${topLevel.length}: ${JSON.stringify(topLevel).slice(0, 120)})`);
+ok(!/^\s*begin;\s*$/m.test(sqlCode(migration)),
+  'no top-level BEGIN; — the migration does not depend on the client holding a transaction');
+ok(!/^\s*commit;\s*$/m.test(sqlCode(migration)),
+  'no top-level COMMIT;');
+ok(!/\bexception\s+when\b/i.test(sqlCode(migration)),
+  'no exception handler anywhere in the block — catching would open a subtransaction and could let execution continue past a failed proof');
+
+// Every temp table must be created inside the DO body, and none referenced
+// outside it.
+const doBody = segments[1] ?? '';
+const tempTables = [...migration.matchAll(/create temporary table (\w+)/g)].map((m) => m[1]);
+ok(tempTables.length > 0, `the migration stages ${tempTables.length} temp table(s)`);
+for (const t of new Set(tempTables)) {
+  ok(doBody.includes(`create temporary table ${t}`),
+    `${t} is created inside the single DO body`);
+  ok(!outsideBody.includes(t),
+    `${t} is never referenced outside the DO body`);
+  ok(new RegExp(`create temporary table ${t}[^;]*on commit drop`).test(migration),
+    `${t} is ON COMMIT DROP, so a successful run cleans up and a failed one never committed it`);
+}
+// A trailing summary SELECT would be a second top-level statement; the summary
+// is emitted as notices instead.
+ok(/raise notice 'CAT-2D\.2 SUMMARY/.test(migration),
+  'the post-deploy summary is emitted as NOTICEs, not a trailing SELECT');
+ok(/one server-side transaction/.test(migration) && /implicit transaction/.test(migration),
+  'the file states its atomicity guarantee explicitly');
 
 // ── The editorial constant is swept, not spot-fixed ─────────────────────────
 console.log('\nartistEditorial sweep (CAT-2D §6.4 / Q-5)');
@@ -259,7 +324,6 @@ ok(gg19 && gg19.name === 'Altaria',
 // The check therefore strips SQL line comments and JS/CSV commentary first, and
 // asserts over what is left.
 console.log('\ncontainment');
-const sqlCode = (t) => t.split('\n').filter((l) => !/^\s*--/.test(l)).join('\n').toLowerCase();
 const migrationCode = sqlCode(migration);
 const validationCode = sqlCode(validation);
 

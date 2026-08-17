@@ -1,9 +1,13 @@
 # CAT-2D.2 — Family A provider identity reconciliation
 
-**Status: implemented, NOT deployed.** No production SQL has been executed. The
-sync schedule remains paused. This document is the slice record; canonical
-state documents (`CURRENT_STATE.md`, `DECISION_LOG.md`, `ARCHITECTURE.md`) are
-deliberately **not** updated until the deployment is validated.
+**Status: DEPLOYED AND VALIDATED IN PRODUCTION; PR not yet merged.** 192 alias
+rows are live, Phases C–G all passed, and the sync schedule remains paused. See
+**§8a** for the production record, including the SQL Editor deployment finding
+and the single-statement correction this PR now carries.
+
+This document is the slice record. `CURRENT_STATE.md`, `DECISION_LOG.md` and
+`ARCHITECTURE.md` are updated as a deliberate closeout step **after** the PR
+merges — see §10.
 
 Depends on **CAT-2D.1** (PR #12, merge `303ca4b`), which shipped the alias
 schema, the two-sided no-chain trigger, the `card_identity_resolution` read
@@ -410,11 +414,11 @@ if a reversal is still plausible.
 
 ## 8. Validation performed in this PR
 
-Static only — no database was touched.
+Static only — the PR itself touches no database.
 
 | Check | Result |
 |---|---|
-| `node scripts/cat2d2-family-a-alias-set.test.mjs` | **120 passed, 0 failed** |
+| `node scripts/cat2d2-family-a-alias-set.test.mjs` | **148 passed, 0 failed** |
 | `node scripts/cat2d2-owned-ids-collapse.test.mjs` | **32 passed, 0 failed** |
 | `node scripts/cat2d2-build-family-a-evidence.mjs --check` (384 live probes) | **ok — committed artifact matches upstream** |
 | `node scripts/cat2d1-owned-ids-contract.test.mjs` | 33 passed, 0 failed |
@@ -431,23 +435,99 @@ declared out of scope for this slice and left untouched.
 
 ---
 
-## 9. Closeout — after deployment
+## 8a. Production deployment record
 
-Once Phases C–G pass in production:
+Deployed and independently validated. Figures below are the production run;
+no validation-user identifier is recorded here or anywhere else in the repo.
 
-- record the measured Q-1/Q-2/Q-3/Q-6/Q-7 figures here;
-- update `CURRENT_STATE.md` (alias count 0 → 192, `cards_effective`
-  23,780 → 23,588 if the pre-count is unchanged, `cards` unchanged at 23,780);
-- record in `DECISION_LOG.md` that CAT-2D §3.4 rule 1 is satisfied for Family A
-  by A1+A2+A3+A4+A5 rather than by Tier-1 equality, and that CAT-2D §6.2's
-  silent-merge branches were replaced by a fail-closed refusal;
-- record that Celebrations Classic Collection was split out of Family A on
-  production evidence (§1a), reducing the slice from 217 to 192, and that the
-  CAT-2D design doc's Family A figure of 217 is superseded;
-- **resolve the slice-numbering conflict.** The private CAT-2D design doc §8
-  Phase 3 already calls Family B (Trainer Galleries) *CAT-2D.3*, and this PR
-  takes that name for the Celebrations remap as instructed. Two slices cannot
-  share a number — Family B needs renumbering, and the design doc needs updating,
-  as a deliberate decision. Family B is blocked on the §7.3
-  maintenance-ingestion capability either way, and the sync schedule remains
-  paused.
+**Phase A — gate passed**
+
+| Measure | Value |
+|---|---|
+| Derived map | **192** (`swsh4.5` 122, `swsh12.5` 70) |
+| Obsolete ids in `cards_effective` | 192 |
+| Canonical survivors in `cards_effective` | 192 |
+| Mutable references to migrate | **3** — `card_extras` 2, `card_overrides` 1 |
+| Merge collisions | **0** |
+| Obsolete rows carrying `artist_id` | 24 — **24 preserved, 0 would-lose, 0 conflicts** |
+| Ownership prediction | `matchedRows` 5572, `distinctMatched` 4998, `distinctResolved` 4998, **collapse 0** |
+
+The artist gate — the one most likely to refuse — passed cleanly: all 24
+obsolete rows carrying an `artist_id` have a survivor carrying the same one.
+
+**Phase B — deployment-tool finding**
+
+The migration as originally committed used a top-level `begin;`, then
+`create temporary table ... on commit drop`, then further **top-level**
+statements referencing those temp tables, then `commit;`.
+
+In the Supabase SQL Editor those top-level statements do **not** behave as one
+persistent transaction/session for this workflow. A harmless reproduction
+confirmed it: the temp tables were gone before the later statements ran.
+
+The durable CAT-2D.2 changes had nonetheless landed correctly —
+`card_identity_aliases` = 192 (all `slice = 'CAT-2D.2'`), `cards_effective` =
+23,588, the GG19 and GG69 `card_extras` rows migrated, the GG19 owned override
+migrated. **The migration was therefore neither re-run nor rolled back**, and
+independent post-deploy validation was run instead of guessing.
+
+**Phases C–G — all passed**
+
+| Phase | Result |
+|---|---|
+| C — catalog / alias topology / artist gate | ✓ |
+| D — ownership | ✓ |
+| E — OL-0D core | ✓ |
+| E7 — sort / filter / pagination smoke | ✓ |
+| F — mutable + untouched-data integrity | ✓ |
+| G — ACL / security | ✓ |
+
+Production state is accepted.
+
+**The correction carried in this PR**
+
+The committed migration is now **one top-level statement** — a single
+`do $cat2d2$ ... $cat2d2$;`. There is no top-level `begin;`/`commit;`, every
+temp table is created and consumed inside that one statement, and the locks,
+proofs, alias insert, reference migration and final invariants all run in one
+server-side transaction. Any exception anywhere in the block aborts the whole
+statement, and there is deliberately no `exception when ...` handler that could
+let execution continue past a failed proof.
+
+This is a **reproducibility fix for the artifact**, not a change to production —
+production is already migrated and correct, and this corrected file must not be
+run against it (P9 would refuse it anyway: the Family A ids are already
+aliased). A structural test asserts the single-statement shape so the file
+cannot regress.
+
+---
+
+## 9. Slice numbering — resolved
+
+| Slice | Scope | Status |
+|---|---|---|
+| **CAT-2D.1** | Alias schema, `cards_effective` exclusion, dark read-path resolution | deployed (PR #12) |
+| **CAT-2D.2** | SV + GG set rename with a **stable local_id** — 192 aliases | **deployed and validated** |
+| **CAT-2D.3** | Celebrations historical identity + numbering remap | design item only — `docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md` |
+| **CAT-2D.4** | Trainer Galleries / Family B | blocked on the maintenance-ingestion capability (CAT-2D §7.3) |
+
+The CAT-2D design doc originally numbered Trainer Galleries CAT-2D.3 (§8
+Phase 3); it has been corrected to **CAT-2D.4**. Its §7.3 capability
+requirements are unchanged and still apply.
+
+---
+
+## 10. Remaining closeout — after the PR merges
+
+- update `CURRENT_STATE.md`: aliases 0 → **192**, `cards_effective`
+  23,780 → **23,588**, `cards` unchanged at **23,780**, sync schedule still
+  **paused**;
+- record in `DECISION_LOG.md`:
+  - CAT-2D §3.4 rule 1 is satisfied for this slice by A1+A2+A3+A4+A5 rather
+    than by Tier-1 equality;
+  - CAT-2D §6.2's silent-merge branches were replaced by a fail-closed refusal;
+  - Celebrations was split out on production evidence (§1a), superseding the
+    design doc's Family A figure of 217;
+  - the slice numbering above;
+  - the SQL Editor deployment finding (§8a) — future migrations are authored as
+    a single top-level statement.
