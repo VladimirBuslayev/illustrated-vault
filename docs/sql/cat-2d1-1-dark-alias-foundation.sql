@@ -89,20 +89,38 @@ create index if not exists card_identity_aliases_canonical_idx
 comment on table public.card_identity_aliases is
   'CAT-2D. Evidence-backed map from an obsolete provider card id to the current canonical survivor. Private: no anon/authenticated grants. Read through public.card_identity_resolution.';
 
--- RLS on with NO policies. Combined with the absence of any grant below, this
--- table is unreachable by anon/authenticated by two independent mechanisms.
--- Service-role bypasses RLS for migrations.
+-- RLS on with NO policies. For anon/authenticated this is a second, independent
+-- mechanism behind the revoked grants below.
+--
+-- It is NOT a defence against service_role, which bypasses RLS entirely — that
+-- role is contained by the explicit REVOKE below and by nothing else. Do not
+-- treat RLS here as covering all runtime roles.
 alter table public.card_identity_aliases enable row level security;
 
 -- Explicit, fail-closed privilege state. Provenance (evidence, approved_by,
--- approved_at, slice, timestamps) must never be publicly queryable.
+-- approved_at, slice, timestamps) must never be reachable by a runtime role.
 --
--- PUBLIC is revoked as well as the named roles: a privilege held via PUBLIC is
--- held by every role, so revoking only anon/authenticated would leave a hole
--- that `has_table_privilege` would still report as granted. This also makes the
--- migration idempotent against a prior deployment or a blanket schema grant
--- (`grant ... on all tables in schema public`) having run at any point.
-revoke all on table public.card_identity_aliases from public, anon, authenticated;
+-- THE CONTRACT, STATED WITHOUT AMBIGUITY:
+--   PUBLIC, anon, authenticated AND service_role have ZERO privileges on this
+--   table. Alias population happens only through privileged migration-owner
+--   execution — never through a runtime role, and never through the resolution
+--   view.
+--
+-- Why each name is listed:
+--   * PUBLIC — a privilege held via PUBLIC is held by every role, so revoking
+--     only the named roles would leave a hole `has_table_privilege` still
+--     reports as granted.
+--   * service_role — LOAD-BEARING, and the reason this line was corrected.
+--     service_role BYPASSES RLS, so the "RLS enabled with no policies" defence
+--     below does not protect this table from it at all. Supabase also commonly
+--     grants service_role broadly across the public schema by default, so
+--     silence here is not absence. Leaving it unrevoked would have contradicted
+--     both the stated ACL and the migration-only-writer invariant.
+--
+-- REVOKE (not merely "don't grant") is what makes this idempotent against a
+-- prior deployment or a blanket `grant ... on all tables in schema public`
+-- having run at any point.
+revoke all on table public.card_identity_aliases from public, anon, authenticated, service_role;
 
 -- updated_at maintenance, mirroring card_extras' existing pattern.
 create or replace function public.set_card_identity_aliases_updated_at()
@@ -285,9 +303,11 @@ comment on view public.card_identity_resolution is
 -- cannot remove a privilege an earlier deployment or a blanket schema grant
 -- may already have left in place.
 --
--- service_role gets SELECT only. It has no operational need for DML here:
--- alias population is done by migrations running as the table owner, not
--- through this surface. Phase E asserts all of this rather than printing it.
+-- service_role gets SELECT only, and has ZERO privileges on the base table
+-- (see §1). It has no operational need for DML on either object: alias
+-- population is done by migrations running as the table OWNER, not by any
+-- runtime role and not through this surface. Phase E asserts all of this for
+-- all three runtime roles rather than printing it.
 revoke all on table public.card_identity_resolution from public, anon, authenticated, service_role;
 grant select on table public.card_identity_resolution to anon, authenticated, service_role;
 

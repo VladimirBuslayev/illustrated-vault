@@ -500,11 +500,15 @@ declare
   r text;
   p text;
 begin
-  -- E1. base table: anon/authenticated have NOTHING.
-  foreach r in array array['anon', 'authenticated'] loop
+  -- E1. base table: ALL THREE runtime roles have NOTHING.
+  --     service_role is included deliberately: it BYPASSES RLS, so the
+  --     "RLS enabled with no policies" defence does not protect this table from
+  --     it — the explicit REVOKE is the only thing that does. Alias population
+  --     is a migration-OWNER operation, never a runtime-role one.
+  foreach r in array array['anon', 'authenticated', 'service_role'] loop
     foreach p in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] loop
       if has_table_privilege(r, 'public.card_identity_aliases', p) then
-        raise exception 'FAIL E1: % must NOT have % on card_identity_aliases (provenance would be reachable)', r, p;
+        raise exception 'FAIL E1: % must NOT have % on card_identity_aliases (provenance/write path would be reachable)', r, p;
       end if;
     end loop;
   end loop;
@@ -599,7 +603,9 @@ declare
   -- role the operator connected as.
   v_orig   text := session_user;
 begin
-  foreach v_role in array array['anon', 'authenticated'] loop
+  -- service_role is included: it bypasses RLS, so only the explicit REVOKE
+  -- stands between it and the alias base table. Prove that, do not assume it.
+  foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
     -- INSERT through the auto-updatable view must be denied.
     v_denied := false;
     begin
@@ -642,7 +648,7 @@ begin
     end;
   end loop;
 
-  raise notice 'PHASE E9 PASSED — DML denied, private table unreadable, read surface works.';
+  raise notice 'PHASE E9 PASSED — for anon, authenticated AND service_role: view DML denied, base table unreadable, read surface works.';
 end $$;
 
 rollback;
