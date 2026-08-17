@@ -10,7 +10,7 @@
 //   condition that mattered then: ZERO aliases, output identical to production.
 //   Collapse was defensive, not load-bearing (CAT-2D §5.4).
 //
-//   CAT-2D.2 is the slice that makes collapse REAL. From the moment the 217
+//   CAT-2D.2 is the slice that makes collapse REAL. From the moment the 192
 //   alias rows land, any collector whose active batch matched BOTH a Family A
 //   historical id and its survivor — e.g. an older CSV row for swsh12.5-GG19
 //   and a newer one for swsh12.5gg-GG19 — produces
@@ -54,10 +54,12 @@ const pairs = lines.map((l) => {
   const c = l.split(',');
   return { family: c[0], alias: c[1], canonical: c[2] };
 });
-const pick = (family) => pairs.find((p) => p.family === family);
+const pickFamily = (family) => pairs.filter((p) => p.family === family);
 const GG = pairs.find((p) => p.alias === 'swsh12.5-GG19');
-const SV = pick('shining_fates_sv');
-const CC = pick('celebrations_cc');
+const SV = pickFamily('shining_fates_sv')[0];
+// A second Shining Fates pair, so the multi-collapse case still exercises three
+// simultaneous collapses now that Celebrations has been split out to CAT-2D.3.
+const SV2 = pickFamily('shining_fates_sv')[1];
 
 // An unrelated id that this slice never touches — every case carries one, so a
 // change that quietly rewrote the whole set would be visible.
@@ -66,9 +68,12 @@ const UNTOUCHED = 'swsh8-111';
 console.log('\nCAT-2D.2 — real Family A collapse through the ownership wrapper\n');
 
 console.log('fixtures');
+ok(pairs.length === 192, `artifact supplies 192 pairs (got ${pairs.length})`);
 ok(!!GG && GG.canonical === 'swsh12.5gg-GG19', 'artifact supplies the real swsh12.5-GG19 pair');
 ok(!!SV && SV.alias.startsWith('swsh4.5-SV'), 'artifact supplies a real Shining Fates SV pair');
-ok(!!CC && CC.alias.startsWith('cel25-CC'), 'artifact supplies a real Celebrations CC pair');
+ok(!!SV2 && SV2.alias !== SV.alias, 'artifact supplies a second, distinct Shining Fates SV pair');
+ok(!pairs.some((p) => p.family === 'celebrations_cc' || p.alias.startsWith('cel25')),
+  'artifact carries no Celebrations pair — that is CAT-2D.3, a separate evidence class');
 
 /**
  * Build the payload the RPC produces for a batch whose matched rows carry
@@ -121,9 +126,9 @@ function payloadFor(historicalIds, matchedRows) {
   ok(res.reconciliation.aliasCollapsedCount === 1, 'aliasCollapsedCount is reported as 1');
 }
 
-// ── 2. Collapse across all three families at once ───────────────────────────
+// ── 2. Three simultaneous collapses, across both families ───────────────────
 {
-  const historical = [GG.alias, GG.canonical, SV.alias, SV.canonical, CC.alias, CC.canonical, UNTOUCHED];
+  const historical = [GG.alias, GG.canonical, SV.alias, SV.canonical, SV2.alias, SV2.canonical, UNTOUCHED];
   const payload = payloadFor(historical, 20);
   ok(payload.reconciliation.aliasCollapsedCount === 3, 'fixture: three simultaneous collapses');
 
@@ -138,7 +143,7 @@ function payloadFor(historicalIds, matchedRows) {
 
 // ── 3. The common case: Family A ids present, but nothing collapses ─────────
 {
-  const historical = [GG.alias, SV.alias, CC.alias, UNTOUCHED];
+  const historical = [GG.alias, SV.alias, SV2.alias, UNTOUCHED];
   const payload = payloadFor(historical, 6);
   ok(payload.reconciliation.aliasCollapsedCount === 0,
     'fixture: obsolete ids with no survivor duplicate collapse nothing');
@@ -146,7 +151,7 @@ function payloadFor(historicalIds, matchedRows) {
   const res = await fetchActiveSnapshotOwnedCardIds({ client: mockClient(payload) });
   ok(res.state === 'ready', 'the no-collapse case is accepted');
   ok(res.ownedCardIds.size === 4, 'the owned count is unchanged — only the ids moved');
-  ok(res.ownedCardIds.has(GG.canonical) && res.ownedCardIds.has(SV.canonical) && res.ownedCardIds.has(CC.canonical),
+  ok(res.ownedCardIds.has(GG.canonical) && res.ownedCardIds.has(SV.canonical) && res.ownedCardIds.has(SV2.canonical),
     'each obsolete id is now owned under its survivor');
   ok(res.reconciliation.aliasCollapsedCount === 0, 'aliasCollapsedCount is 0');
 }

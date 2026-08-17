@@ -6,7 +6,7 @@
 //
 // WHAT THIS PROVES
 //
-//   The migration's embedded 217-row allowlist, the reviewed CSV artifact, the
+//   The migration's embedded 192-row allowlist, the reviewed CSV artifact, the
 //   manifest checksum and the editorial constant are ONE fact expressed in four
 //   places. Any two of them drifting is exactly the failure mode a hand-edited
 //   allowlist invites: a reviewer approves the CSV, someone patches the SQL,
@@ -24,7 +24,7 @@
 //   deliberate, not redundant.
 //
 // WHAT IT DOES NOT PROVE
-//   Nothing here touches the database. That the 217 obsolete ids actually exist
+//   Nothing here touches the database. That the 192 obsolete ids actually exist
 //   in public.cards, and that their stored names match their survivors', can
 //   only be established at deploy time — which is what §5 P2/P3/P5 do, and why
 //   they refuse rather than warn.
@@ -88,9 +88,20 @@ function parseCsv(text) {
 const EXPECTED_FAMILIES = {
   shining_fates_sv: { parent: 'swsh4.5',  canonical: 'swsh4.5sv',  count: 122, sqlPattern: '^SV[0-9]{3}$' },
   crown_zenith_gg:  { parent: 'swsh12.5', canonical: 'swsh12.5gg', count: 70,  sqlPattern: '^GG[0-9]{2}$' },
-  celebrations_cc:  { parent: 'cel25',    canonical: 'cel25cc',    count: 25,  sqlPattern: '^CC[0-9]{3}$' },
 };
-const TOTAL = 217;
+const TOTAL = 192;
+
+// Namespaces that MUST NOT appear anywhere in the executable mapping logic.
+// Celebrations was removed from CAT-2D.2 on production evidence: its historical
+// rows are stored as cel25-2A / cel25-15A1 / cel25-88A — legacy numbers from the
+// printings they reproduce — not cel25-CC###. The transition changed the
+// numbering as well as the set, so it cannot satisfy A2 and must not be
+// re-admitted by widening a rule. It is CAT-2D.3, a separate evidence class.
+const FORBIDDEN_NAMESPACES = [
+  { token: 'cel25', why: 'Celebrations — CAT-2D.3, changed numbering (A2 cannot hold)' },
+  { token: 'celebrations', why: 'Celebrations — CAT-2D.3' },
+  { token: 'tg-', why: 'Trainer Galleries — Family B, blocked on maintenance ingestion' },
+];
 
 console.log('\nCAT-2D.2 — Family A alias-set integrity\n');
 
@@ -112,7 +123,11 @@ ok(manifest.total_aliases === TOTAL, `manifest total_aliases is ${TOTAL}`);
 ok(manifest.proof === 'upstream_set_rename', 'manifest records the proof kind');
 ok(manifest.tier1_identity_equal === false,
   'manifest states Tier-1 identity is NOT equal — Family A cannot satisfy CAT-2D §3.4 rule 1 and must say so');
-ok(manifest.families.length === 3, 'manifest describes exactly three families');
+ok(manifest.families.length === 2, 'manifest describes exactly two families');
+ok(manifest.scope === 'set rename with STABLE local_id only',
+  'manifest states the narrowed scope: set rename with a stable local_id');
+ok(Array.isArray(manifest.excluded) && manifest.excluded.some((e) => e.family === 'celebrations_cc'),
+  'manifest records WHY Celebrations was excluded, rather than silently dropping it');
 
 for (const [family, exp] of Object.entries(EXPECTED_FAMILIES)) {
   const m = manifest.families.find((f) => f.family === family);
@@ -175,7 +190,7 @@ const embedded = valuesStart === -1
       migration.indexOf(';\n', valuesStart) + 1);
 ok(embedded !== null, 'the migration contains an allowlist VALUES block');
 ok(embedded === expectedValues,
-  'the migration\'s 217 VALUES rows are byte-identical to the reviewed CSV — no hand edit, no drift');
+  'the migration\'s 192 VALUES rows are byte-identical to the reviewed CSV — no hand edit, no drift');
 
 ok(migration.includes(manifest.csv_sha256),
   'the migration stamps every evidence payload with the manifest csv_sha256');
@@ -233,12 +248,38 @@ const gg19 = rows.find((r) => r.canonical_card_id === 'swsh12.5gg-GG19');
 ok(gg19 && gg19.name === 'Altaria',
   'the survivor swsh12.5gg-GG19 is still named Altaria, so the expectName guard passes');
 
-// ── Containment: Family B and unrelated namespaces are untouched ────────────
+// ── Containment: excluded namespaces appear in NO executable mapping logic ──
+//
+// "Executable mapping logic" means anything that can produce or select an alias
+// pair: the artifact, the migration's family table and allowlist, and the
+// validation file's independent derivations. Explanatory prose is exempt — the
+// files are REQUIRED to say why Celebrations is out, and a test that forbade
+// the word would force that explanation to be deleted.
+//
+// The check therefore strips SQL line comments and JS/CSV commentary first, and
+// asserts over what is left.
 console.log('\ncontainment');
-ok(rows.every((r) => !/-TG\d+$/i.test(r.alias_card_id) && !/tg-/i.test(r.canonical_card_id)),
-  'no Trainer Gallery id appears anywhere in the alias set (Family B stays blocked)');
-ok(rows.every((r) => ['swsh4.5', 'swsh12.5', 'cel25'].includes(r.alias_set_id)),
-  'every alias comes from one of the three approved parent sets');
+const sqlCode = (t) => t.split('\n').filter((l) => !/^\s*--/.test(l)).join('\n').toLowerCase();
+const migrationCode = sqlCode(migration);
+const validationCode = sqlCode(validation);
+
+for (const { token, why } of FORBIDDEN_NAMESPACES) {
+  ok(!rows.some((r) => (r.alias_card_id + r.canonical_card_id + r.family).toLowerCase().includes(token)),
+    `evidence artifact contains no "${token}" (${why})`);
+  ok(!migrationCode.includes(token),
+    `migration executable SQL contains no "${token}" (${why})`);
+  ok(!validationCode.includes(token),
+    `validation executable SQL contains no "${token}" (${why})`);
+}
+
+// The validation file SHOULD warn a future editor in prose. That is the
+// opposite of a violation, so it is asserted positively.
+ok(/cel25-2A|cel25-15A1/.test(validation),
+  'the validation file warns, in prose, why Celebrations cannot be derived this way');
+ok(rows.every((r) => ['swsh4.5', 'swsh12.5'].includes(r.alias_set_id)),
+  'every alias comes from one of the two approved parent sets');
+ok(new Set(rows.map((r) => r.family)).size === 2,
+  'the artifact carries exactly two families');
 ok(!/^\s*(delete|truncate|drop table public\.cards)\b/im.test(migration),
   'the migration contains no DELETE or TRUNCATE — reference migration is UPDATE-only');
 ok(/lock table public\.card_identity_aliases in share row exclusive mode;/.test(migration),
@@ -293,7 +334,7 @@ const iDrift = migration.indexOf('create temporary table cat2d2_current_refs');
 const iInsert = migration.indexOf('insert into public.card_identity_aliases\n  (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)');
 const iUpdate = migration.indexOf("'update public.%I t set card_id = m.canonical_card_id '");
 ok(iLock > 0 && iMap > iLock, 'the alias-topology lock is taken before the map is derived');
-ok(iDrift > iMap, 'the drift refusal runs after the 217 pairs are proven');
+ok(iDrift > iMap, 'the drift refusal runs after the 192 pairs are proven');
 ok(iInsert > iDrift, 'the drift refusal runs BEFORE any alias row is inserted');
 ok(iUpdate > iDrift, 'the drift refusal runs BEFORE any mutable reference is migrated');
 
@@ -346,7 +387,7 @@ ok(/FAIL C10 \(artist\)/.test(validation), 'the post-deploy artist assertion fai
 
 // ── Unaffected-checksum domain (review finding 2) ───────────────────────────
 //
-// The original domain excluded only the 217 obsolete ids, which was wrong: §9
+// The original domain excluded only the 192 obsolete ids, which was wrong: §9
 // moves card_extras onto the survivors, and cards_effective.illustrator is
 // coalesce(illustrator_override, cards.illustrator), so a survivor can
 // legitimately change. swsh12.5gg-GG69 MUST change — the override is migrated
@@ -368,14 +409,33 @@ ok(/cards_effective_untouched_survivors_checksum/.test(validation),
 
 // ── Capture tables (review finding 4) ───────────────────────────────────────
 console.log('\ncapture tables and rollback prose');
-ok(/create table if not exists public\.cat2d2_pre_map/.test(validation),
+ok(/create table public\.cat2d2_pre_map/.test(validation),
   'the derived map is materialised so Phase A and Phase C share one domain');
+
+// Phase A must be re-runnable. The first production attempt refused at A-GATE 1
+// having already created all three tables, so `create table if not exists`
+// would keep a previous revision's shape and contents — including rows for a
+// family that has since been removed from the slice. Phase A therefore DROPS
+// and rebuilds, and the operator never hand-edits an artifact.
+const phaseA = validation.slice(validation.indexOf('PHASE A — PRE-DEPLOY'),
+                               validation.indexOf('PHASE B — DEPLOY'));
+const phaseH = validation.slice(validation.indexOf('FINAL GATE + PHASE H'));
 for (const t of ['cat2d2_pre_refs', 'cat2d2_pre_map', 'cat2d2_pre_capture']) {
   ok(new RegExp(`revoke all on table public\\.${t} from public, anon, authenticated, service_role;`).test(validation),
     `${t} is privilege-locked on creation`);
-  ok(new RegExp(`drop table if exists public\\.${t};`).test(validation),
+  ok(new RegExp(`drop table if exists public\\.${t};[\\s\\S]{0,600}create table public\\.${t}`).test(phaseA),
+    `${t} is dropped and rebuilt by Phase A, so a re-run is always clean`);
+  ok(new RegExp(`drop table if exists public\\.${t};`).test(phaseH),
     `${t} is dropped in Phase H`);
+  ok(!new RegExp(`create table if not exists public\\.${t}`).test(validation),
+    `${t} is never created with "if not exists" — a stale shape must not survive a re-run`);
 }
+// The drops must be unreachable once aliases exist: cat2d2_pre_refs would be
+// the undo list for a deployed migration.
+const iGuard = phaseA.indexOf('card_identity_aliases holds % row(s)');
+const iDrop = phaseA.indexOf('drop table if exists public.cat2d2_pre_capture;');
+ok(iGuard > 0 && iDrop > iGuard,
+  'the alias-table-empty guard runs BEFORE the capture tables are dropped');
 const rollback = migration.slice(migration.indexOf('-- ROLLBACK'));
 ok(/THE EXACT UNDO LIST IS public\.cat2d2_pre_refs/.test(rollback),
   'the rollback section names cat2d2_pre_refs as the exact undo list');

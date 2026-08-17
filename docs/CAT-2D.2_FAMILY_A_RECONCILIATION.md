@@ -23,18 +23,68 @@ already exists in `public.cards`, so no sync run is required.
 |---|---|---|---|
 | Shining Fates Shiny Vault | `swsh4.5-SV###` | `swsh4.5sv-SV###` | **122** |
 | Crown Zenith Galarian Gallery | `swsh12.5-GG##` | `swsh12.5gg-GG##` | **70** |
-| Celebrations Classic Collection | `cel25-CC###` | `cel25cc-CC###` | **25** |
-| | | | **217** |
+| | | | **192** |
 
-217 reconciles exactly to the CAT-2D design's Family A figure (§2.1: 457
-obsolete rows total, of which 240 are the blocked Trainer Galleries).
+192 = 122 + 70, independently confirmed by production Phase A. The CAT-2D
+design's Family A figure of **217** also counted Celebrations Classic
+Collection; production has since shown that is a different evidence class — see
+**§1a**.
 
-**Explicitly out of scope and untouched:** Trainer Galleries (Family B), TG set
-ingestion, the sync schedule, any catalog sync, deletion of any `public.cards`
-row, any write to `user_import_rows`, importer normalisers, fuzzy /
-cross-language / artwork-only aliases, IV UUID printing identity, illustrator
-restoration, ownership semantics beyond the resolution CAT-2D.1 already shipped,
-CAT-2B2, CAT-2C, and the pre-existing OL-0C allowlist test debt.
+**Explicitly out of scope and untouched:** Celebrations Classic Collection
+(**§1a**), Trainer Galleries (Family B), TG set ingestion, the sync schedule, any
+catalog sync, deletion of any `public.cards` row, any write to
+`user_import_rows`, importer normalisers, fuzzy / cross-language / artwork-only
+aliases, IV UUID printing identity, illustrator restoration, ownership semantics
+beyond the resolution CAT-2D.1 already shipped, CAT-2B2, CAT-2C, and the
+pre-existing OL-0C allowlist test debt.
+
+---
+
+## 1a. Celebrations was split out — on production evidence
+
+An earlier revision of this slice proposed a third pair,
+`cel25-CC###` → `cel25cc-CC###`, derived from the **survivor** side and assumed
+to have a matching obsolete id. **Production Phase A refused it:**
+
+```
+FAIL A-GATE: derived Family A map holds 192 pairs, expected 217
+             — {"swsh4.5":122,"swsh12.5":70}
+```
+
+A read-only query over `public.cards WHERE set_id = 'cel25'` showed why. The 25
+historical Classic Collection rows are **not** stored as `cel25-CC001..CC025`.
+They carry **legacy local ids** — the numbers of the printings they reproduce:
+
+| Stored historical id | Name |
+|---|---|
+| `cel25-2A` | Blastoise |
+| `cel25-4A` | Charizard |
+| `cel25-15A1` | Venusaur |
+| `cel25-17A` | Umbreon Star |
+| `cel25-60A` | Tapu Lele GX |
+| `cel25-88A` | Mew ex |
+
+So the Celebrations transition changed the provider **set** *and* the provider
+**numbering**. It fails **A2** (`normNum` equality) outright — `2a` and `cc001`
+are different printings under the frozen normalisers — and it cannot lean on
+**A4** either, because the numbers did not move, they were replaced.
+
+**A2 was not loosened and no broad exception was added.** Dropping the number
+requirement would reduce the admission rule to name equality plus a set-rename
+pair, which is exactly the fuzzy matching CAT-2D §7.1 forbids — and several of
+these names (`Blastoise`, `Charizard`, `Venusaur`, `Mew ex`) are ambiguous
+across the wider catalog, so it would be unsound as well as against policy.
+
+Celebrations is therefore its own evidence class, recorded in
+**`docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md`** (design item only, not
+implemented, not in this PR). Its 25 rows remain in `public.cards` **and** in
+`cards_effective`, exactly as today — this slice changes nothing about them.
+
+CAT-2D.2 is now, exactly, the **set-rename-with-stable-local-id** slice.
+
+> **This is what fail-closed derivation is for.** The pattern selected
+> candidates; production evidence refused the claim. No alias row was written,
+> Phase B was never run, and the correction cost one refused Phase A run.
 
 ---
 
@@ -44,16 +94,20 @@ CAT-2B2, CAT-2C, and the pre-existing OL-0C allowlist test debt.
 
 `scripts/cat2d2-build-family-a-evidence.mjs` probes TCGdex read-only and writes
 `docs/cat-2d2-evidence/family-a-alias-set.csv` plus `manifest.json`. Every one
-of the 217 pairs was individually observed on **2026-08-17**:
+of the 192 pairs was individually observed on **2026-08-17**:
 
-- **434 upstream probes.** Every obsolete id returned **404**; every survivor
+- **384 upstream probes.** Every obsolete id returned **404**; every survivor
   returned **200**.
 - **Namespace departure confirmed per family.** `swsh4.5` now serves 73 cards
-  and **no** `SV###`; `swsh12.5` serves 160 and **no** `GG##`; `cel25` serves 25
-  and **no** `CC###`. The whole numbered range left the parent set together and
-  reappeared, intact and complete, under the new set id.
+  and **no** `SV###`; `swsh12.5` serves 160 and **no** `GG##`. The whole
+  numbered range left the parent set together and reappeared, intact and
+  complete, under the new set id.
 - Stored-row arithmetic agrees: CAT-0's per-set evidence records `swsh4.5` = 195
-  (73 + 122), `swsh12.5` = 230 (160 + 70), `cel25` = 50 (25 + 25).
+  (73 + 122) and `swsh12.5` = 230 (160 + 70).
+- **Production independently confirmed both families.** Phase A's derivation
+  reads `public.cards` and never touches this artifact; it returned
+  `{"swsh4.5":122,"swsh12.5":70}`, so the stored obsolete rows really do carry
+  the stable `SV###` / `GG##` local ids this slice depends on.
 
 `manifest.json` carries the CSV's SHA-256; the migration stamps that same hash
 into every `evidence` payload it writes.
@@ -75,9 +129,9 @@ around it.**
 
 `sync-cards.mjs :: mapCardToRow` writes `set_name` from the set the provider
 served the card under. These printings were ingested while they sat in the
-*parent* set, so the obsolete rows carry `Shining Fates` / `Crown Zenith` /
-`Celebrations` while the survivors carry the subset names. `normSet` of those
-differs, so the Tier-1 keys differ **by construction**.
+*parent* set, so the obsolete rows carry `Shining Fates` / `Crown Zenith` while
+the survivors carry the subset names. `normSet` of those differs, so the Tier-1
+keys differ **by construction**.
 
 That is also why Family A has never produced a Tier-1 collision and why the
 CAT-2B1 guard has never refused these sets: the defect here is a duplicated
@@ -120,9 +174,9 @@ time:
   that fires if the obsolete rows were stored as `swsh4.5-SV1` rather than
   `swsh4.5-SV001`. It is meant to fire loudly, not be worked around.
 - **P5/P6** — normalised name and number equality, stored vs stored.
-- **P7** — exact per-family counts, 122 / 70 / 25.
-- **P10** — all 217 obsolete ids are in `cards_effective` today, so the
-  expected delta really is 217.
+- **P7** — exact per-family counts, 122 / 70.
+- **P10** — all 192 obsolete ids are in `cards_effective` today, so the
+  expected delta really is 192.
 - **P11** — artist reachability is preserved on every survivor (§5a).
 
 The validation file re-derives the same map a **second time, independently**,
@@ -135,7 +189,7 @@ deliberately not refactored into one.
 |---|---|---|
 | **Q-1** | Does the active batch hold live-survivor ids alongside obsolete ones? | **Measured at deploy.** Validation Phase A computes `distinct_resolved_pred` and `collapse_pred` from real rows; Phase D asserts the RPC reproduces them exactly. |
 | **Q-2** | `price_history` rows referencing obsolete ids | **Measured at deploy.** Phase A inventories all six mutable tables including `price_history`, which the original evidence pass omitted. |
-| **Q-3** | Mutable-reference merge collisions | **Gated at deploy.** Phase A refuses if any exist, in any table, before the migration is run; migration §7 refuses again under lock. |
+| **Q-3** | Mutable-reference merge collisions | **Gated at deploy.** Phase A refuses if any exist, in any table, before the migration is run; migration §8 refuses again under lock. |
 | **Q-5** | Do other `artistEditorial.js` ids reference obsolete namespaces? | **CLOSED — statically, now.** All 169 `id:` entries swept: exactly **one** hit, `swsh12.5-GG19`, exactly as predicted. Fixed in this PR and pinned by a test. |
 | **Q-6** | Obsolete ids in `candidate_card_ids[]` | **Recorded at deploy, diagnostic only.** Never rewritten in either direction. |
 | **Q-7** | Are the non-obsolete `card_extras` rows on survivor ids? | **Gated at deploy** by the `card_extras` collision scan (PK conflict). |
@@ -193,7 +247,7 @@ migration re-counts under lock and refuses if the two disagree.
 
 - `user_import_rows.card_id` / `.candidate_card_ids` — immutable historical
   evidence. Resolution happens at read time. Proved untouched by checksum in
-  both the migration (§9, in-transaction) and Phase F.
+  both the migration (§10, in-transaction) and Phase F.
 - `user_binder_layout_items.binder_card_id` — references a *membership row id*,
   never a global card id (BP-3.1A). Structurally immune.
 - `user_collection.owned_keys` — `name::num` / `name::set` keys, not card ids.
@@ -284,7 +338,7 @@ migration **§5 P11** (in-transaction, under the locks), and validation
 **Phase C10** (re-asserted post-deploy).
 
 > **This gate may well fire.** CAT-0 per-set evidence records 100 of 122
-> `swsh4.5sv` rows, 48 of 70 `swsh12.5gg` rows and 23 of 25 `cel25cc` rows as
+> `swsh4.5sv` rows and 48 of 70 `swsh12.5gg` rows as
 > having an illustrator but a **NULL `artist_id`**, while the obsolete
 > `swsh12.5` rows that do carry one (GG19, GG69) are exactly the two with
 > `card_extras` overrides. Whether their survivors carry `artist_id` is
@@ -307,9 +361,9 @@ cleanup at the safe point.
 |---|---|---|
 | 1 | Independent review of PR #13 | — |
 | 2 | `cat-2d2-2-family-a-validation.sql` **Phase A0** — read off the validation user | one active batch |
-| 3 | Paste the UUID into the single marked `set_config` line; run **Phase A** | **REFUSES** on any merge collision, any artist-reachability loss or conflict, a non-empty alias table, or a derived map that is not 217 / 122 / 70 / 25 |
+| 3 | Paste the UUID into the single marked `set_config` line; run **Phase A** | **REFUSES** on any merge collision, any artist-reachability loss or conflict, a non-empty alias table, or a derived map that is not 192 / 122 / 70 |
 | 4 | **Phase B** — run `cat-2d2-1-family-a-reconciliation.sql` top to bottom, one transaction | §5 P1–P11, §6 drift refusal, §8, §10 all inside the transaction |
-| 5 | **Phase C** — catalog, alias topology, artist gate | 217 evidence-backed rows, depth 1, `cards` unchanged, `cards_effective` −217 exactly, predicted survivor illustrator changes only, artist reachability intact |
+| 5 | **Phase C** — catalog, alias topology, artist gate | 192 evidence-backed rows, depth 1, `cards` unchanged, `cards_effective` −192 exactly, predicted survivor illustrator changes only, artist reachability intact |
 | 6 | **Phase D** — ownership | `matchedRows` and `distinctMatchedCardIds` historical; resolved count and collapse equal Phase A's prediction; **no ownership added, none lost**; GG19 still owned |
 | 7 | **Phase E** — OL-0D | rows and matched quantity conserved, distinct cards −collapse, catalog-missing does not regress, pagination/filter/sort valid |
 | 8 | **Phase F** — mutable + untouched data | import evidence byte-identical, card_extras/card_overrides payloads unchanged, zero obsolete references remain |
@@ -337,7 +391,7 @@ Fully reversible; nothing is deleted and no schema object is created.
 1. Reverse the reference migration — `UPDATE ... SET card_id = a.alias_card_id
    FROM card_identity_aliases a WHERE a.slice = 'CAT-2D.2'`, per table, under
    the same locks. Safe because §8 proved no user held both rows.
-2. `DELETE FROM card_identity_aliases WHERE slice = 'CAT-2D.2'` — the 217
+2. `DELETE FROM card_identity_aliases WHERE slice = 'CAT-2D.2'` — the 192
    obsolete rows reappear in `cards_effective` byte-identical, because they were
    never deleted.
 
@@ -360,9 +414,9 @@ Static only — no database was touched.
 
 | Check | Result |
 |---|---|
-| `node scripts/cat2d2-family-a-alias-set.test.mjs` | **51 passed, 0 failed** |
-| `node scripts/cat2d2-owned-ids-collapse.test.mjs` | **30 passed, 0 failed** |
-| `node scripts/cat2d2-build-family-a-evidence.mjs --check` (434 live probes) | **ok — committed artifact matches upstream** |
+| `node scripts/cat2d2-family-a-alias-set.test.mjs` | **120 passed, 0 failed** |
+| `node scripts/cat2d2-owned-ids-collapse.test.mjs` | **32 passed, 0 failed** |
+| `node scripts/cat2d2-build-family-a-evidence.mjs --check` (384 live probes) | **ok — committed artifact matches upstream** |
 | `node scripts/cat2d1-owned-ids-contract.test.mjs` | 33 passed, 0 failed |
 | `node scripts/ol0d-active-snapshot-read-model.test.mjs` | 38 passed, 0 failed |
 | `node scripts/ol2b-verified-matching.test.mjs` | all 5 groups passed |
@@ -382,11 +436,18 @@ declared out of scope for this slice and left untouched.
 Once Phases C–G pass in production:
 
 - record the measured Q-1/Q-2/Q-3/Q-6/Q-7 figures here;
-- update `CURRENT_STATE.md` (alias count 0 → 217, `cards_effective`
-  23,780 → 23,563 if the pre-count is unchanged, `cards` unchanged at 23,780);
+- update `CURRENT_STATE.md` (alias count 0 → 192, `cards_effective`
+  23,780 → 23,588 if the pre-count is unchanged, `cards` unchanged at 23,780);
 - record in `DECISION_LOG.md` that CAT-2D §3.4 rule 1 is satisfied for Family A
   by A1+A2+A3+A4+A5 rather than by Tier-1 equality, and that CAT-2D §6.2's
   silent-merge branches were replaced by a fail-closed refusal;
-- note that CAT-2D.3 (Family B / Trainer Galleries) remains blocked on the
-  §7.3 maintenance-ingestion capability, and that the sync schedule is still
+- record that Celebrations Classic Collection was split out of Family A on
+  production evidence (§1a), reducing the slice from 217 to 192, and that the
+  CAT-2D design doc's Family A figure of 217 is superseded;
+- **resolve the slice-numbering conflict.** The private CAT-2D design doc §8
+  Phase 3 already calls Family B (Trainer Galleries) *CAT-2D.3*, and this PR
+  takes that name for the Celebrations remap as instructed. Two slices cannot
+  share a number — Family B needs renumbering, and the design doc needs updating,
+  as a deliberate decision. Family B is blocked on the §7.3
+  maintenance-ingestion capability either way, and the sync schedule remains
   paused.

@@ -34,10 +34,9 @@
 //   sync-cards.mjs :: mapCardToRow writes `set_name: card.set?.name`, i.e. the
 //   name of the set the provider served the card under. The obsolete rows were
 //   ingested while these printings sat in the PARENT set, so they carry
-//     'Shining Fates' / 'Crown Zenith' / 'Celebrations'
+//     'Shining Fates' / 'Crown Zenith'
 //   while their survivors carry
-//     'Shining Fates Shiny Vault' / 'Crown Zenith Galarian Gallery' /
-//     'Celebrations Classic Collection'.
+//     'Shining Fates Shiny Vault' / 'Crown Zenith Galarian Gallery'.
 //   normSet of those pairs differs, so the Tier-1 keys differ BY CONSTRUCTION.
 //
 // That is also precisely why Family A produces no Tier-1 collision in the
@@ -68,6 +67,35 @@
 //
 // No cross-language, cross-printing, artwork-level or name-only equivalence is
 // admitted by any of this.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY CELEBRATIONS IS NOT HERE — production evidence, not an oversight
+// ─────────────────────────────────────────────────────────────────────────────
+// An earlier revision of this slice included a third family,
+// cel25-CC### -> cel25cc-CC###, derived from the SURVIVOR side and assumed to
+// have a matching obsolete id. Production Phase A refused it, correctly:
+//
+//   derived Family A map holds 192 pairs, expected 217
+//   — {"swsh4.5":122,"swsh12.5":70}
+//
+// A read-only query over public.cards WHERE set_id = 'cel25' showed why. The 25
+// historical Classic Collection rows are NOT stored as cel25-CC001..CC025. They
+// carry LEGACY local ids — the numbers from the original printings they
+// reproduce — e.g.
+//
+//   cel25-2A    Blastoise        cel25-17A   Umbreon Star
+//   cel25-4A    Charizard        cel25-88A   Mew ex
+//   cel25-15A1  Venusaur         cel25-60A   Tapu Lele GX
+//
+// So Celebrations is not a set-id rename with a stable number: the provider
+// changed the SET and the NUMBERING. It cannot satisfy A2 (normNum equality) at
+// all, and no admission rule here should be widened to let it in — name
+// equality plus a changed number is exactly the fuzzy matching CAT-2D forbids.
+//
+// Celebrations is therefore split out as its own evidence class:
+//   docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md   (design only, not implemented)
+//
+// CAT-2D.2 is now, exactly, the SET-RENAME-WITH-STABLE-LOCAL-ID slice.
 //
 // Run: node scripts/cat2d2-build-family-a-evidence.mjs
 //      node scripts/cat2d2-build-family-a-evidence.mjs --check   (verify only)
@@ -107,14 +135,14 @@ const FAMILIES = [
     localIdPattern: /^GG\d{2}$/,
     expectedCount: 70,
   },
-  {
-    family: 'celebrations_cc',
-    parentSetId: 'cel25',
-    canonicalSetId: 'cel25cc',
-    localIdPattern: /^CC\d{3}$/,
-    expectedCount: 25,
-  },
+  // NO celebrations_cc — see "WHY CELEBRATIONS IS NOT HERE" in the header.
+  // Its historical rows carry legacy local ids (cel25-2A, cel25-15A1, ...), so
+  // the transition changed the numbering as well as the set and cannot be
+  // admitted under A2. It is CAT-2D.3, a separate evidence class.
 ];
+
+/** The approved total. Asserted, so a family cannot be added by accident. */
+const EXPECTED_TOTAL = 192;
 
 const CSV_COLUMNS = [
   'family',
@@ -279,6 +307,12 @@ async function build() {
     });
   }
 
+  // The approved total, asserted. A family added without re-approving the
+  // slice total is exactly the kind of silent widening this file must refuse.
+  if (rows.length !== EXPECTED_TOTAL) {
+    throw new Error(`expected ${EXPECTED_TOTAL} pairs across ${FAMILIES.length} families, built ${rows.length}`);
+  }
+
   // Structural invariants (INV-9 / INV-8 mirrors, on the artifact itself).
   const aliasIds = rows.map((r) => r.alias_card_id);
   const canonicalIds = rows.map((r) => r.canonical_card_id);
@@ -300,10 +334,21 @@ async function build() {
     source: 'TCGdex v2 (en) — read-only',
     observed_at: observedAt,
     proof: 'upstream_set_rename',
+    scope: 'set rename with STABLE local_id only',
     admission_rules: ['A1 approved set-rename pair', 'A2 normNum equal', 'A3 normName equal (asserted at deploy)', 'A4 namespace absent from parent set', 'A5 alias 404 / canonical 200'],
     tier1_identity_equal: false,
     tier1_note:
-      'Family A alias and canonical rows carry different set_name, so their Tier-1 identity keys differ by construction. See the header of the generator for why, and why A4 replaces the set component.',
+      'Alias and canonical rows carry different set_name, so their Tier-1 identity keys differ by construction. See the header of the generator for why, and why A4 replaces the set component.',
+    excluded: [
+      {
+        family: 'celebrations_cc',
+        parent_set_id: 'cel25',
+        canonical_set_id: 'cel25cc',
+        reason:
+          'The 25 historical Classic Collection rows are stored with LEGACY local ids (cel25-2A, cel25-4A, cel25-15A1, cel25-17A, cel25-60A, cel25-88A, ...), not cel25-CC###. The provider changed the numbering as well as the set, so the pairing cannot satisfy A2 (normNum equality). Split out as CAT-2D.3 — see docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md. Do not re-add without a separate, individually corroborated evidence class.',
+        observed_by: 'production Phase A refusal + read-only query over public.cards where set_id = cel25',
+      },
+    ],
     total_aliases: rows.length,
     families: perFamily,
     csv_sha256: sha256(csv),

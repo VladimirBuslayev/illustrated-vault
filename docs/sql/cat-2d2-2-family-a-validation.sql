@@ -8,7 +8,7 @@
 --
 -- So every phase below compares a POST value against a PRE value captured live,
 -- plus a predicted delta derived from real data. Nothing is hardcoded except
--- the 217 / 122 / 70 / 25 alias counts, which are the approval itself.
+-- the 192 / 122 / 70 / 25 alias counts, which are the approval itself.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- OPERATIONAL NOTES CARRIED FORWARD FROM CAT-2D.1
@@ -28,7 +28,7 @@
 --   * any mutable-reference merge collision (Q-3) — an explicit operator
 --     decision, never an automatic one;
 --   * any pair that would LOSE or CONTRADICT artist reachability (A-GATE 4);
---   * a derived map that is not exactly 217 / 122 / 70 / 25.
+--   * a derived map that is not exactly 192 / 122 / 70 / 25.
 -- If Phase A raises, DO NOT run the migration.
 --
 -- Phase A also writes public.cat2d2_pre_refs, which cat-2d2-1 §6 READS and
@@ -86,52 +86,15 @@ select set_config(
   false
 );
 
--- Capture tables. PERSISTENT, privilege-locked (cat2d2_pre_refs holds
--- user-owned card ids), all THREE dropped in Phase H.
-create table if not exists public.cat2d2_pre_capture (
-  key   text primary key,
-  value jsonb not null
-);
-revoke all on table public.cat2d2_pre_capture from public, anon, authenticated, service_role;
-
--- The exact pre-migration reference rows, i.e. the undo list for §9 of the
--- migration. row_key carries the non-card_id components of each table's unique
--- key, which is what makes a reversal addressable to the exact rows migrated.
+-- ── A-GUARD RUNS FIRST, BEFORE ANY CAPTURE TABLE IS TOUCHED ───────────────
 --
--- ⚠ THIS TABLE IS A HARD INPUT TO THE MIGRATION, NOT JUST A RECORD.
---   cat-2d2-1 §6 re-derives the same set under its locks and refuses unless the
---   two are IDENTICAL in both directions. Do not drop it before Phase B, and do
---   not edit it: a mismatch is the signal that a collector changed something
---   between the two SQL Editor runs, and the correct response is to re-run
---   Phase A, not to reconcile it by hand.
-create table if not exists public.cat2d2_pre_refs (
-  table_name text  not null,
-  row_key    jsonb not null,
-  card_id    text  not null
-);
-revoke all on table public.cat2d2_pre_refs from public, anon, authenticated, service_role;
-
--- The independently derived Family A map, MATERIALISED rather than merely
--- counted. Two things need the exact id set, not a total:
+-- Ordering is load-bearing. The capture tables are DROPPED and rebuilt below so
+-- a re-run cannot leave a stale artifact behind — but cat2d2_pre_refs is the
+-- undo list for a deployed migration, so dropping it after Phase B would
+-- destroy something irreplaceable.
 --
---   * the "unaffected catalog" checksum domain (A1 / Phase C8) must exclude
---     BOTH sides of every pair — see the comment there for why the canonical
---     side is not innocent;
---   * the artist-reachability gate (A-GATE 4 / Phase C10) compares artist_id
---     across each pair and must name the offenders.
---
--- Phase A and Phase C read the SAME rows from here, so the two checksums are
--- taken over provably the same domain rather than over two re-evaluations of a
--- predicate that could drift.
-create table if not exists public.cat2d2_pre_map (
-  alias_card_id       text primary key,
-  canonical_card_id   text not null,
-  alias_set_id        text not null,
-  alias_artist_id     text,
-  canonical_artist_id text
-);
-revoke all on table public.cat2d2_pre_map from public, anon, authenticated, service_role;
-
+-- The alias-table-empty check below is what makes the drop safe: if Phase B has
+-- run, the alias table is not empty, this block raises, and nothing is dropped.
 do $$
 declare
   v_uid      uuid;
@@ -159,16 +122,83 @@ begin
 
   -- CAT-2D.2 is the FIRST population of the alias table. If it is not empty,
   -- something else has written identity claims and this procedure's deltas
-  -- would be measured against an unknown baseline.
+  -- would be measured against an unknown baseline — and, critically, the drops
+  -- below would discard the undo list of a migration that has already run.
   select count(*) into v_aliases from public.card_identity_aliases;
   if v_aliases <> 0 then
     raise exception
-      'FAIL A-GUARD: card_identity_aliases holds % row(s) — CAT-2D.1 shipped it empty and CAT-2D.2 expects to be the first population. Investigate before proceeding.',
+      'FAIL A-GUARD: card_identity_aliases holds % row(s) — CAT-2D.1 shipped it empty and CAT-2D.2 expects to be the first population. Phase A will NOT rebuild the capture tables while alias rows exist, because cat2d2_pre_refs would be the undo list for them. Investigate before proceeding.',
       v_aliases;
   end if;
 
   raise notice 'PHASE A context OK — auth.uid() = %, one active batch, alias table empty.', v_uid;
 end $$;
+
+-- ── Capture tables — DROPPED AND REBUILT, so a re-run is always clean ─────
+--
+-- PERSISTENT (they must survive separate SQL Editor runs), privilege-locked
+-- (cat2d2_pre_refs holds user-owned card ids), all THREE dropped again in
+-- Phase H.
+--
+-- DROP rather than `create table if not exists`, deliberately. Phase A is
+-- expected to be re-run — the first production attempt refused at A-GATE 1 and
+-- had already created all three tables. A `create if not exists` would then
+-- KEEP whatever shape and contents the earlier revision left behind: stale
+-- capture keys that no longer apply, rows for a family that has since been
+-- removed from the slice, or a cat2d2_pre_map missing a column a later revision
+-- added. Every one of those failures is silent and every one corrupts a
+-- comparison that is supposed to be exact.
+--
+-- Rebuilding from scratch every time means the operator never has to reason
+-- about, or hand-edit, a previous run's leftovers. Nothing here is a source of
+-- truth — all three are derived, in this file, from live production state.
+
+drop table if exists public.cat2d2_pre_capture;
+create table public.cat2d2_pre_capture (
+  key   text primary key,
+  value jsonb not null
+);
+revoke all on table public.cat2d2_pre_capture from public, anon, authenticated, service_role;
+
+-- The exact pre-migration reference rows, i.e. the undo list for §9 of the
+-- migration. row_key carries the non-card_id components of each table's unique
+-- key, which is what makes a reversal addressable to the exact rows migrated.
+--
+-- ⚠ THIS TABLE IS A HARD INPUT TO THE MIGRATION, NOT JUST A RECORD.
+--   cat-2d2-1 §6 re-derives the same set under its locks and refuses unless the
+--   two are IDENTICAL in both directions. Do not drop it before Phase B, and do
+--   not edit it: a mismatch is the signal that a collector changed something
+--   between the two SQL Editor runs, and the correct response is to re-run
+--   Phase A — which rebuilds this table — not to reconcile it by hand.
+drop table if exists public.cat2d2_pre_refs;
+create table public.cat2d2_pre_refs (
+  table_name text  not null,
+  row_key    jsonb not null,
+  card_id    text  not null
+);
+revoke all on table public.cat2d2_pre_refs from public, anon, authenticated, service_role;
+
+-- The independently derived Family A map, MATERIALISED rather than merely
+-- counted. Two things need the exact id set, not a total:
+--
+--   * the "unaffected catalog" checksum domain (A2 / Phase C8) must exclude
+--     BOTH sides of every pair — see the comment there for why the canonical
+--     side is not innocent;
+--   * the artist-reachability gate (A-GATE 4 / Phase C10) compares artist_id
+--     across each pair and must name the offenders.
+--
+-- Phase A and Phase C read the SAME rows from here, so the two checksums are
+-- taken over provably the same domain rather than over two re-evaluations of a
+-- predicate that could drift.
+drop table if exists public.cat2d2_pre_map;
+create table public.cat2d2_pre_map (
+  alias_card_id       text primary key,
+  canonical_card_id   text not null,
+  alias_set_id        text not null,
+  alias_artist_id     text,
+  canonical_artist_id text
+);
+revoke all on table public.cat2d2_pre_map from public, anon, authenticated, service_role;
 
 -- ── A1. The independently derived Family A map, MATERIALISED ──────────────
 --
@@ -180,13 +210,28 @@ end $$;
 -- Materialised (not merely counted) because A2's checksum domain and A-GATE 4's
 -- artist comparison both need the exact id set, and because Phase C must use
 -- the IDENTICAL rows rather than re-evaluate a predicate that could drift.
+--
+-- ⚠ THE PATTERNS SELECT CANDIDATES; THEY PROVE NOTHING.
+--   Only families whose historical rows kept a STABLE local_id can be derived
+--   this way. Celebrations Classic Collection cannot: its historical rows are
+--   stored as cel25-2A / cel25-4A / cel25-15A1 / cel25-17A / cel25-60A /
+--   cel25-88A — the numbers of the originals they reproduce — not cel25-CC###.
+--   The provider changed the numbering as well as the set, so no A2-compliant
+--   pairing exists. It is CAT-2D.3, a separate evidence class, and must not be
+--   added here. See docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md.
+--
+--   This was found the right way round: an earlier revision assumed cel25-CC###
+--   from the survivor side, and production Phase A refused with
+--   "derived Family A map holds 192 pairs, expected 217". The fail-closed
+--   derivation did its job.
 
+-- Redundant after the DROP above, kept so this statement is individually
+-- re-runnable during an interactive session.
 delete from public.cat2d2_pre_map;
 
 with fam(alias_set_id, canonical_set_id, pat) as (values
   ('swsh4.5',  'swsh4.5sv',  '^SV[0-9]{3}$'),
-  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$'),
-  ('cel25',    'cel25cc',    '^CC[0-9]{3}$')
+  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$')
 )
 insert into public.cat2d2_pre_map
   (alias_card_id, canonical_card_id, alias_set_id, alias_artist_id, canonical_artist_id)
@@ -232,7 +277,7 @@ on conflict (key) do update set value = excluded.value;
 
 -- ── THE UNAFFECTED DOMAIN — why BOTH sides of every pair are excluded ─────
 --
--- An earlier revision excluded only the 217 OBSOLETE ids and claimed everything
+-- An earlier revision excluded only the 192 OBSOLETE ids and claimed everything
 -- else must be byte-identical. That claim was WRONG, and it would have made
 -- Phase C8 fail on a correct deployment:
 --
@@ -245,10 +290,10 @@ on conflict (key) do update set value = excluded.value;
 --   is migrated rather than retired is that its casing differs from the
 --   survivor's native value (CAT-2D §2.5).
 --
--- So "unaffected" means: NEITHER SIDE of any of the 217 approved pairs. The
+-- So "unaffected" means: NEITHER SIDE of any of the 192 approved pairs. The
 -- checksum below therefore asserts exactly one thing, and asserts it exactly:
 --
---   every effective catalog row unrelated to both sides of the 217 approved
+--   every effective catalog row unrelated to both sides of the 192 approved
 --   identity pairs is value-identical before and after.
 --
 -- The survivor-side changes are NOT hidden inside that exclusion — they are
@@ -309,8 +354,7 @@ on conflict (key) do update set value = excluded.value;
 insert into public.cat2d2_pre_capture (key, value)
 with fam(alias_set_id, canonical_set_id, pat) as (values
   ('swsh4.5',  'swsh4.5sv',  '^SV[0-9]{3}$'),
-  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$'),
-  ('cel25',    'cel25cc',    '^CC[0-9]{3}$')
+  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$')
 ),
 map as (
   select o.id as alias_card_id, s.id as canonical_card_id
@@ -345,7 +389,7 @@ on conflict (key) do update set value = excluded.value;
 -- so the number is on the record rather than unknown.
 insert into public.cat2d2_pre_capture (key, value)
 with fam(alias_set_id, pat) as (values
-  ('swsh4.5', '^SV[0-9]{3}$'), ('swsh12.5', '^GG[0-9]{2}$'), ('cel25', '^CC[0-9]{3}$')
+  ('swsh4.5', '^SV[0-9]{3}$'), ('swsh12.5', '^GG[0-9]{2}$')
 ),
 obsolete as (
   select o.id from public.cards o join fam f on f.alias_set_id = o.set_id and o.local_id ~ f.pat
@@ -399,8 +443,7 @@ delete from public.cat2d2_pre_refs;
 
 with fam(alias_set_id, canonical_set_id, pat) as (values
   ('swsh4.5',  'swsh4.5sv',  '^SV[0-9]{3}$'),
-  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$'),
-  ('cel25',    'cel25cc',    '^CC[0-9]{3}$')
+  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$')
 ),
 map as (
   select o.id as alias_card_id, s.id as canonical_card_id
@@ -432,8 +475,7 @@ union all
 insert into public.cat2d2_pre_capture (key, value)
 with fam(alias_set_id, canonical_set_id, pat) as (values
   ('swsh4.5',  'swsh4.5sv',  '^SV[0-9]{3}$'),
-  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$'),
-  ('cel25',    'cel25cc',    '^CC[0-9]{3}$')
+  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$')
 ),
 map as (
   select o.id as alias_card_id, s.id as canonical_card_id
@@ -483,7 +525,7 @@ select 'reference_inventory', jsonb_build_object(
 )
 on conflict (key) do update set value = excluded.value;
 
--- ── A6. ARTIST-FIRST GATE — artist reachability across the 217 pairs ──────
+-- ── A6. ARTIST-FIRST GATE — artist reachability across the 192 pairs ──────
 --
 -- Artist Page loads a curated artist's cards by EXACT public.cards.artist_id
 -- (cardService.fetchArtistCards, the FK-only branch). Once the obsolete row
@@ -496,8 +538,8 @@ on conflict (key) do update set value = excluded.value;
 -- silently drop that printing off its artist's page.
 --
 -- CAT-0 per-set evidence makes this a live risk rather than a hypothetical:
--- 100 of 122 swsh4.5sv rows, 48 of 70 swsh12.5gg rows and 23 of 25 cel25cc rows
--- carry an illustrator but a NULL artist_id.
+-- 100 of 122 swsh4.5sv rows and 48 of 70 swsh12.5gg rows carry an illustrator
+-- but a NULL artist_id.
 --
 -- Semantics:
 --   obsolete NULL                       -> allowed (nothing to lose)
@@ -550,22 +592,21 @@ begin
   -- A-GATE 1: the derived map must be exactly the approved shape. If it is not,
   -- the approval and the database disagree and the migration would refuse
   -- anyway — but it is far better to learn that here, before deploying.
-  if (v_map ->> 'total')::bigint <> 217 then
-    raise exception 'FAIL A-GATE: derived Family A map holds % pairs, expected 217 — %',
+  if (v_map ->> 'total')::bigint <> 192 then
+    raise exception 'FAIL A-GATE: derived Family A map holds % pairs, expected 192 — %',
       v_map ->> 'total', v_map ->> 'by_set';
   end if;
   if (v_map #>> '{by_set,swsh4.5}')  <> '122'
-     or (v_map #>> '{by_set,swsh12.5}') <> '70'
-     or (v_map #>> '{by_set,cel25}')    <> '25' then
-    raise exception 'FAIL A-GATE: per-set counts are % — expected swsh4.5=122, swsh12.5=70, cel25=25',
+     or (v_map #>> '{by_set,swsh12.5}') <> '70' then
+    raise exception 'FAIL A-GATE: per-set counts are % — expected swsh4.5=122, swsh12.5=70',
       v_map ->> 'by_set';
   end if;
-  if (v_map ->> 'obsolete_in_cards_effective')::bigint <> 217 then
-    raise exception 'FAIL A-GATE: only % of 217 obsolete ids are in cards_effective — the expected delta is not 217',
+  if (v_map ->> 'obsolete_in_cards_effective')::bigint <> 192 then
+    raise exception 'FAIL A-GATE: only % of 192 obsolete ids are in cards_effective — the expected delta is not 192',
       v_map ->> 'obsolete_in_cards_effective';
   end if;
-  if (v_map ->> 'survivors_in_cards_effective')::bigint <> 217 then
-    raise exception 'FAIL A-GATE: only % of 217 survivors are in cards_effective',
+  if (v_map ->> 'survivors_in_cards_effective')::bigint <> 192 then
+    raise exception 'FAIL A-GATE: only % of 192 survivors are in cards_effective',
       v_map ->> 'survivors_in_cards_effective';
   end if;
 
@@ -590,7 +631,7 @@ begin
       v_art ->> 'would_lose', v_art ->> 'would_conflict', jsonb_pretty(v_art -> 'first_offenders');
   end if;
 
-  raise notice 'PHASE A PASSED — 217 pairs derived, % reference row(s) will migrate, ZERO collisions, % obsolete row(s) carry an artist_id and all are preserved, predicted aliasCollapsedCount = %.',
+  raise notice 'PHASE A PASSED — 192 pairs derived, % reference row(s) will migrate, ZERO collisions, % obsolete row(s) carry an artist_id and all are preserved, predicted aliasCollapsedCount = %.',
     v_inv ->> 'refs_total', v_art ->> 'obsolete_with_artist_id', v_pred ->> 'collapse_pred';
 end $$;
 
@@ -628,14 +669,14 @@ begin
     raise exception 'FAIL C-GUARD: no capture found — run Phase A first';
   end if;
 
-  -- C1. Alias topology: exactly 217 Family A rows, and nothing else.
+  -- C1. Alias topology: exactly 192 Family A rows, and nothing else.
   select count(*) into v_n from public.card_identity_aliases;
-  if v_n <> 217 then
-    raise exception 'FAIL C1: card_identity_aliases holds % rows, expected 217', v_n;
+  if v_n <> 192 then
+    raise exception 'FAIL C1: card_identity_aliases holds % rows, expected 192', v_n;
   end if;
   select count(*) into v_n from public.card_identity_aliases where slice = 'CAT-2D.2';
-  if v_n <> 217 then
-    raise exception 'FAIL C1: % rows carry slice CAT-2D.2, expected 217', v_n;
+  if v_n <> 192 then
+    raise exception 'FAIL C1: % rows carry slice CAT-2D.2, expected 192', v_n;
   end if;
 
   select count(*) into v_n from public.card_identity_aliases
@@ -644,9 +685,6 @@ begin
   select count(*) into v_n from public.card_identity_aliases
    where evidence ->> 'family_token' = 'crown_zenith_gg';
   if v_n <> 70 then raise exception 'FAIL C1: crown_zenith_gg has % aliases, expected 70', v_n; end if;
-  select count(*) into v_n from public.card_identity_aliases
-   where evidence ->> 'family_token' = 'celebrations_cc';
-  if v_n <> 25 then raise exception 'FAIL C1: celebrations_cc has % aliases, expected 25', v_n; end if;
 
   -- C2. INV-9 — no self-alias, no chain in either direction, depth exactly 1.
   select count(*) into v_n from public.card_identity_aliases where alias_card_id = canonical_card_id;
@@ -699,11 +737,11 @@ begin
     raise exception 'FAIL C5 (INV-12): % obsolete row(s) left public.cards — they must be retained', v_n;
   end if;
 
-  -- C6. INV-13 — cards_effective shrank by EXACTLY 217.
+  -- C6. INV-13 — cards_effective shrank by EXACTLY 192.
   select value into v_pre from public.cat2d2_pre_capture where key = 'cards_effective_rows';
   select to_jsonb(count(*)) into v_now from public.cards_effective;
-  if (v_now #>> '{}')::bigint <> (v_pre #>> '{}')::bigint - 217 then
-    raise exception 'FAIL C6 (INV-13): cards_effective went % -> %, expected a decrease of exactly 217', v_pre, v_now;
+  if (v_now #>> '{}')::bigint <> (v_pre #>> '{}')::bigint - 192 then
+    raise exception 'FAIL C6 (INV-13): cards_effective went % -> %, expected a decrease of exactly 192', v_pre, v_now;
   end if;
 
   -- C7. INV-10 — no alias id in the effective catalog; cards unconstrained.
@@ -712,7 +750,7 @@ begin
   if v_n <> 0 then raise exception 'FAIL C7 (INV-10): % aliased id(s) still in cards_effective', v_n; end if;
 
   -- C8. No UNRELATED effective row changed — value-level, not count-level.
-  --     The domain is BOTH sides of every one of the 217 pairs, read from the
+  --     The domain is BOTH sides of every one of the 192 pairs, read from the
   --     same cat2d2_pre_map rows Phase A used. A canonical survivor is NOT
   --     unrelated: §9 moves card_extras onto it and cards_effective.illustrator
   --     is coalesce(illustrator_override, cards.illustrator), so a survivor can
@@ -727,7 +765,7 @@ begin
     where m.alias_card_id = ce.id or m.canonical_card_id = ce.id
   );
   if v_pre is distinct from v_now then
-    raise exception 'FAIL C8: an effective catalog row unrelated to BOTH sides of the 217 approved pairs changed';
+    raise exception 'FAIL C8: an effective catalog row unrelated to BOTH sides of the 192 approved pairs changed';
   end if;
 
   -- C8b. Survivors that received a migrated card_extras row report EXACTLY the
@@ -801,7 +839,7 @@ begin
     raise exception 'FAIL C11: cards_effective must remain security_invoker=true (found %)', coalesce(v_txt, '<none>');
   end if;
 
-  raise notice 'PHASE C PASSED — 217 evidence-backed aliases, depth 1, cards unchanged, cards_effective -217, % survivor(s) changed illustrator exactly as predicted, every other row identical, artist reachability intact.',
+  raise notice 'PHASE C PASSED — 192 evidence-backed aliases, depth 1, cards unchanged, cards_effective -192, % survivor(s) changed illustrator exactly as predicted, every other row identical, artist reachability intact.',
     (select count(*) from jsonb_object_keys(v_exp));
 end $$;
 
@@ -1208,7 +1246,7 @@ begin
     raise exception 'FAIL G8: card_identity_resolution must stay OWNER-RIGHTS';
   end if;
 
-  raise notice 'PHASE G PASSED — the CAT-2D.1 ACL contract is intact with 217 populated rows.';
+  raise notice 'PHASE G PASSED — the CAT-2D.1 ACL contract is intact with 192 populated rows.';
 end $$;
 
 -- G9. Negative DML proofs under the real roles. Rolled back.
@@ -1248,7 +1286,7 @@ begin
     end if;
 
     -- Positive control: the narrow read surface must still work, and must now
-    -- return the 217 real mappings.
+    -- return the 192 real mappings.
     begin
       perform set_config('role', v_role, true);
       execute 'select count(*) from public.card_identity_resolution';
@@ -1270,7 +1308,7 @@ rollback;
 -- ═══════════════════════════════════════════════════════════════════════════
 
 select
-  (select count(*) from public.card_identity_aliases)                       as alias_rows_must_be_217,
+  (select count(*) from public.card_identity_aliases)                       as alias_rows_must_be_192,
   (select count(*) from public.cards)                                       as cards_rows,
   (select count(*) from public.cards_effective)                             as cards_effective_rows,
   (select count(*) from public.cards_effective ce

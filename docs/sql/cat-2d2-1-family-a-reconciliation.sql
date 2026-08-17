@@ -2,22 +2,21 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 -- CAT-2D.2 — Family A provider identity reconciliation
 --
--- Populates public.card_identity_aliases with the 217 Family A renames whose
+-- Populates public.card_identity_aliases with the 192 Family A renames whose
 -- current TCGdex survivor ALREADY EXISTS in public.cards, and migrates the
 -- mutable user-facing references that point at the obsolete ids.
 --
 --   swsh4.5-SV###   -> swsh4.5sv-SV###     Shining Fates Shiny Vault        122
 --   swsh12.5-GG##   -> swsh12.5gg-GG##     Crown Zenith Galarian Gallery     70
---   cel25-CC###     -> cel25cc-CC###       Celebrations Classic Collection   25
 --                                                                          ───
---                                                                          217
+--                                                                          192
 --
 -- No sync run is required: every survivor is already stored.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- WHAT THIS FILE DOES NOT DO
 -- ─────────────────────────────────────────────────────────────────────────
---   * deletes NOTHING from public.cards — the 217 obsolete rows are retained
+--   * deletes NOTHING from public.cards — the 192 obsolete rows are retained
 --     raw provider history and simply stop appearing in cards_effective;
 --   * never writes user_import_rows — historical matching evidence stays
 --     byte-identical, and alias resolution happens at READ time (CAT-2D.1 §5);
@@ -50,7 +49,7 @@
 --   sync-cards.mjs :: mapCardToRow writes set_name from the set the provider
 --   served the card under. These printings were ingested while they sat in the
 --   PARENT set, so the obsolete rows carry 'Shining Fates' / 'Crown Zenith' /
---   'Celebrations' while their survivors carry the subset names. normSet of
+--   while their survivors carry the subset names. normSet of
 --   those differs, so the Tier-1 keys differ BY CONSTRUCTION.
 --
 -- That is also why Family A has never produced a Tier-1 collision and why the
@@ -107,7 +106,7 @@
 --   2. run docs/sql/cat-2d2-2-family-a-validation.sql PHASE A. It captures the
 --      pre-state, closes Q-1/Q-2/Q-3/Q-6/Q-7, and REFUSES on any merge
 --      collision or artist_id regression before this file is ever run.
---   3. run THIS FILE, top to bottom. One transaction: the 217 alias rows and
+--   3. run THIS FILE, top to bottom. One transaction: the 192 alias rows and
 --      every reference migration land together or not at all (CAT-2D §6.3 —
 --      swsh12.5-GG19 must never be unowned, not even mid-migration).
 --   4. run cat-2d2-2 PHASES C..G (post-deploy validation)
@@ -221,8 +220,8 @@ $fn$;
 -- The local-id patterns are ANCHORED and family-specific. They are the only
 -- thing separating an obsolete subset row from an ordinary parent-set row
 -- inside the same set_id — swsh4.5 also holds the 73 real Shining Fates cards,
--- swsh12.5 the 160 real Crown Zenith cards, cel25 the 25 real Celebrations
--- cards, and NONE of those may be touched. A loose pattern here would widen
+-- and swsh12.5 the 160 real Crown Zenith cards, and NONE of those may be
+-- touched. A loose pattern here would widen
 -- the slice silently, so §5 P7 pins the resulting counts exactly.
 --
 -- The SAME patterns appear in scripts/cat2d2-build-family-a-evidence.mjs and
@@ -238,12 +237,11 @@ create temporary table cat2d2_family (
 
 insert into cat2d2_family values
   ('shining_fates_sv', 'swsh4.5',  'swsh4.5sv',  '^SV[0-9]{3}$', 122),
-  ('crown_zenith_gg',  'swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$',  70),
-  ('celebrations_cc',  'cel25',    'cel25cc',    '^CC[0-9]{3}$',  25);
+  ('crown_zenith_gg',  'swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$',  70);
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- §4. THE APPROVED ALLOWLIST — 217 individually evidenced identity claims
+-- §4. THE APPROVED ALLOWLIST — 192 individually evidenced identity claims
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- Generated from docs/cat-2d2-evidence/family-a-alias-set.csv, which was in
@@ -469,39 +467,14 @@ values
     ('crown_zenith_gg', 'swsh12.5-GG67', 'swsh12.5gg-GG67', 'Origin Forme Palkia VSTAR', 'GG67', 404, 200),
     ('crown_zenith_gg', 'swsh12.5-GG68', 'swsh12.5gg-GG68', 'Origin Forme Dialga VSTAR', 'GG68', 404, 200),
     ('crown_zenith_gg', 'swsh12.5-GG69', 'swsh12.5gg-GG69', 'Giratina VSTAR', 'GG69', 404, 200),
-    ('crown_zenith_gg', 'swsh12.5-GG70', 'swsh12.5gg-GG70', 'Arceus VSTAR', 'GG70', 404, 200),
-    ('celebrations_cc', 'cel25-CC001', 'cel25cc-CC001', 'Blastoise', 'CC001', 404, 200),
-    ('celebrations_cc', 'cel25-CC002', 'cel25cc-CC002', 'Charizard', 'CC002', 404, 200),
-    ('celebrations_cc', 'cel25-CC003', 'cel25cc-CC003', 'Venusaur', 'CC003', 404, 200),
-    ('celebrations_cc', 'cel25-CC004', 'cel25cc-CC004', 'Imposter Professor Oak', 'CC004', 404, 200),
-    ('celebrations_cc', 'cel25-CC005', 'cel25cc-CC005', 'Dark Gyarados', 'CC005', 404, 200),
-    ('celebrations_cc', 'cel25-CC006', 'cel25cc-CC006', 'Here Comes Team Rocket!', 'CC006', 404, 200),
-    ('celebrations_cc', 'cel25-CC007', 'cel25cc-CC007', 'Rocket''s Zapdos', 'CC007', 404, 200),
-    ('celebrations_cc', 'cel25-CC008', 'cel25cc-CC008', '_____''s Pikachu', 'CC008', 404, 200),
-    ('celebrations_cc', 'cel25-CC009', 'cel25cc-CC009', 'Cleffa', 'CC009', 404, 200),
-    ('celebrations_cc', 'cel25-CC010', 'cel25cc-CC010', 'Shining Magikarp', 'CC010', 404, 200),
-    ('celebrations_cc', 'cel25-CC011', 'cel25cc-CC011', 'Team Magma''s Groudon', 'CC011', 404, 200),
-    ('celebrations_cc', 'cel25-CC012', 'cel25cc-CC012', 'Rocket''s Admin.', 'CC012', 404, 200),
-    ('celebrations_cc', 'cel25-CC013', 'cel25cc-CC013', 'Mew ex', 'CC013', 404, 200),
-    ('celebrations_cc', 'cel25-CC014', 'cel25cc-CC014', 'Gardevoir ex', 'CC014', 404, 200),
-    ('celebrations_cc', 'cel25-CC015', 'cel25cc-CC015', 'Umbreon ☆', 'CC015', 404, 200),
-    ('celebrations_cc', 'cel25-CC016', 'cel25cc-CC016', 'Claydol', 'CC016', 404, 200),
-    ('celebrations_cc', 'cel25-CC017', 'cel25cc-CC017', 'Luxray GL LV.X', 'CC017', 404, 200),
-    ('celebrations_cc', 'cel25-CC018', 'cel25cc-CC018', 'Garchomp C LV.X', 'CC018', 404, 200),
-    ('celebrations_cc', 'cel25-CC019', 'cel25cc-CC019', 'Donphan', 'CC019', 404, 200),
-    ('celebrations_cc', 'cel25-CC020', 'cel25cc-CC020', 'Reshiram', 'CC020', 404, 200),
-    ('celebrations_cc', 'cel25-CC021', 'cel25cc-CC021', 'Zekrom', 'CC021', 404, 200),
-    ('celebrations_cc', 'cel25-CC022', 'cel25cc-CC022', 'Mewtwo EX', 'CC022', 404, 200),
-    ('celebrations_cc', 'cel25-CC023', 'cel25cc-CC023', 'Xerneas EX', 'CC023', 404, 200),
-    ('celebrations_cc', 'cel25-CC024', 'cel25cc-CC024', 'M Rayquaza EX', 'CC024', 404, 200),
-    ('celebrations_cc', 'cel25-CC025', 'cel25cc-CC025', 'Tapu Lele GX', 'CC025', 404, 200);
+    ('crown_zenith_gg', 'swsh12.5-GG70', 'swsh12.5gg-GG70', 'Arceus VSTAR', 'GG70', 404, 200);
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- §5. DERIVE THE CANDIDATE PAIRS FROM STORED EVIDENCE, AND PROVE EVERY ONE
 -- ═══════════════════════════════════════════════════════════════════════════
 --
--- Nothing above has claimed that any of the 217 obsolete ids actually exists in
+-- Nothing above has claimed that any of the 192 obsolete ids actually exists in
 -- public.cards, or that the stored rows say what the artifact says. §5 does
 -- exactly that, against production data, and refuses on any discrepancy.
 --
@@ -572,8 +545,8 @@ declare
 begin
   -- ── P1. The allowlist is internally well formed ─────────────────────────
   select count(*) into v_n from cat2d2_allowlist;
-  if v_n <> 217 then
-    raise exception 'CAT-2D.2 REFUSED (P1): allowlist holds % rows, expected 217', v_n;
+  if v_n <> 192 then
+    raise exception 'CAT-2D.2 REFUSED (P1): allowlist holds % rows, expected 192', v_n;
   end if;
 
   select string_agg(format('%s(%s)', family, n), ', ' order by family) into v_detail
@@ -678,8 +651,8 @@ begin
   -- row for a reason P2/P3/P4 did not name — refuse rather than proceed on a
   -- partial map.
   select count(*) into v_n from cat2d2_map;
-  if v_n <> 217 then
-    raise exception 'CAT-2D.2 REFUSED (P4): proven map holds % pairs, expected 217', v_n;
+  if v_n <> 192 then
+    raise exception 'CAT-2D.2 REFUSED (P4): proven map holds % pairs, expected 192', v_n;
   end if;
 
   -- ── P5 (A3). normName equality, STORED vs STORED ────────────────────────
@@ -743,14 +716,14 @@ begin
       v_n;
   end if;
 
-  -- ── P10. All 217 obsolete ids are visible in cards_effective TODAY ──────
+  -- ── P10. All 192 obsolete ids are visible in cards_effective TODAY ──────
   --     This is what makes the §10 delta assertion meaningful: the effective
-  --     catalog must shrink by exactly 217, no more and no less.
+  --     catalog must shrink by exactly 192, no more and no less.
   select count(*) into v_n
   from cat2d2_map m join public.cards_effective ce on ce.id = m.alias_card_id;
-  if v_n <> 217 then
+  if v_n <> 192 then
     raise exception
-      'CAT-2D.2 REFUSED (P10): % of 217 obsolete ids are currently in cards_effective — the expected delta is not 217', v_n;
+      'CAT-2D.2 REFUSED (P10): % of 192 obsolete ids are currently in cards_effective — the expected delta is not 192', v_n;
   end if;
 
   -- ── P11. ARTIST-FIRST GATE — the survivor must not lose artist reachability
@@ -768,8 +741,8 @@ begin
   --   silently LEAVE its artist's page.
   --
   --   CAT-2A/CAT-0 evidence makes this a live possibility, not a hypothetical:
-  --   48 of 70 swsh12.5gg rows, 100 of 122 swsh4.5sv rows and 23 of 25 cel25cc
-  --   rows have an illustrator but a NULL artist_id.
+  --   48 of 70 swsh12.5gg rows and 100 of 122 swsh4.5sv rows have an
+  --   illustrator but a NULL artist_id.
   --
   --   Semantics, exactly:
   --     obsolete NULL                      -> allowed, whatever the survivor has
@@ -801,9 +774,9 @@ begin
   end if;
 
   select count(*) into v_n from cat2d2_map where alias_artist_id is not null;
-  raise notice 'CAT-2D.2 P11 PASSED — % of 217 obsolete rows carry an artist_id; every one is preserved on its survivor.', v_n;
+  raise notice 'CAT-2D.2 P11 PASSED — % of 192 obsolete rows carry an artist_id; every one is preserved on its survivor.', v_n;
 
-  raise notice 'CAT-2D.2 §5 PASSED — 217 pairs proven against stored rows.';
+  raise notice 'CAT-2D.2 §5 PASSED — 192 pairs proven against stored rows.';
 end $$;
 
 
@@ -953,7 +926,7 @@ end $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- §7. INSERT THE 217 ALIAS ROWS
+-- §7. INSERT THE 192 ALIAS ROWS
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- family = 'set_rename' is the value CAT-2D §3.1 defines for this column
@@ -994,9 +967,9 @@ select
     'tier1_note',                'Family A alias and canonical rows carry different set_name (parent set vs renamed subset), so their Tier-1 keys differ by construction. Admission rule A4 — the whole local-id namespace is absent from the parent set upstream — replaces the set component. See docs/sql/cat-2d2-1-family-a-reconciliation.sql header.',
     'alias_upstream_status',     m.alias_upstream_status,
     'canonical_upstream_status', m.canonical_upstream_status,
-    'observed_at',               '2026-08-17T14:10:16.557Z',
+    'observed_at',               '2026-08-17T15:37:20.244Z',
     'evidence_artifact',         'docs/cat-2d2-evidence/family-a-alias-set.csv',
-    'evidence_artifact_sha256',  'b5a2b074455dbbe95ec0638850dca5e912e97f43841c6218ecfb509a6e6c2128'
+    'evidence_artifact_sha256',  '9deca61b3403be13b773b475ebafabfbd2a16a64085a8e8907270a3596fb63ab'
   ),
   'CAT-2D.2 approved allowlist — docs/cat-2d2-evidence/manifest.json',
   'CAT-2D.2'
@@ -1185,21 +1158,21 @@ begin
     raise exception 'CAT-2D.2 FAIL (INV-12): public.cards moved from % to % rows', pre.cards_rows, v_now;
   end if;
 
-  -- 217 alias rows added, and no other alias row disturbed.
+  -- 192 alias rows added, and no other alias row disturbed.
   select count(*) into v_now from public.card_identity_aliases;
-  if v_now <> pre.alias_rows + 217 then
-    raise exception 'CAT-2D.2 FAIL: alias rows moved from % to %, expected %', pre.alias_rows, v_now, pre.alias_rows + 217;
+  if v_now <> pre.alias_rows + 192 then
+    raise exception 'CAT-2D.2 FAIL: alias rows moved from % to %, expected %', pre.alias_rows, v_now, pre.alias_rows + 192;
   end if;
   select count(*) into v_n from public.card_identity_aliases where slice = 'CAT-2D.2';
-  if v_n <> 217 then
-    raise exception 'CAT-2D.2 FAIL: % alias row(s) carry slice CAT-2D.2, expected 217', v_n;
+  if v_n <> 192 then
+    raise exception 'CAT-2D.2 FAIL: % alias row(s) carry slice CAT-2D.2, expected 192', v_n;
   end if;
 
   -- INV-13. cards_effective = raw − aliased, explained exactly.
   select count(*) into v_now from public.cards_effective;
-  if v_now <> pre.cards_effective_rows - 217 then
+  if v_now <> pre.cards_effective_rows - 192 then
     raise exception 'CAT-2D.2 FAIL (INV-13): cards_effective moved from % to %, expected %',
-      pre.cards_effective_rows, v_now, pre.cards_effective_rows - 217;
+      pre.cards_effective_rows, v_now, pre.cards_effective_rows - 192;
   end if;
 
   -- INV-10. No alias id appears in the effective catalog. cards itself is
@@ -1211,13 +1184,13 @@ begin
   end if;
   select count(*) into v_n
   from cat2d2_map m join public.cards c on c.id = m.alias_card_id;
-  if v_n <> 217 then
-    raise exception 'CAT-2D.2 FAIL (INV-12): % of 217 obsolete rows survive in public.cards — retention was violated', v_n;
+  if v_n <> 192 then
+    raise exception 'CAT-2D.2 FAIL (INV-12): % of 192 obsolete rows survive in public.cards — retention was violated', v_n;
   end if;
   select count(*) into v_n
   from cat2d2_map m join public.cards_effective ce on ce.id = m.canonical_card_id;
-  if v_n <> 217 then
-    raise exception 'CAT-2D.2 FAIL: % of 217 survivors are visible in cards_effective, expected all', v_n;
+  if v_n <> 192 then
+    raise exception 'CAT-2D.2 FAIL: % of 192 survivors are visible in cards_effective, expected all', v_n;
   end if;
 
   -- INV-8. No orphan aliases.
@@ -1263,8 +1236,8 @@ begin
     raise exception 'CAT-2D.2 FAIL (INV-7): user_import_rows changed — historical evidence must be immutable';
   end if;
 
-  raise notice 'CAT-2D.2 §10 PASSED — cards % (unchanged), cards_effective % -> %, aliases +217.',
-    pre.cards_rows, pre.cards_effective_rows, pre.cards_effective_rows - 217;
+  raise notice 'CAT-2D.2 §10 PASSED — cards % (unchanged), cards_effective % -> %, aliases +192.',
+    pre.cards_rows, pre.cards_effective_rows, pre.cards_effective_rows - 192;
 end $$;
 
 commit;
@@ -1281,9 +1254,7 @@ select
   (select count(*) from public.card_identity_aliases
      where evidence ->> 'family_token' = 'shining_fates_sv')            as sv_aliases,
   (select count(*) from public.card_identity_aliases
-     where evidence ->> 'family_token' = 'crown_zenith_gg')             as gg_aliases,
-  (select count(*) from public.card_identity_aliases
-     where evidence ->> 'family_token' = 'celebrations_cc')             as cc_aliases;
+     where evidence ->> 'family_token' = 'crown_zenith_gg')             as gg_aliases;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1345,7 +1316,7 @@ select
 --   --   price_history additionally needs
 --   --   (p.row_key ->> 'recorded_date')::date = t.recorded_date.
 --
---   -- 2. remove the alias rows. The 217 obsolete rows reappear in
+--   -- 2. remove the alias rows. The 192 obsolete rows reappear in
 --   --    cards_effective byte-identical, because they were never deleted.
 --   delete from public.card_identity_aliases where slice = 'CAT-2D.2';
 --
