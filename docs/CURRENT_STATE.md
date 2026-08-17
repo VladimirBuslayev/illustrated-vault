@@ -1,6 +1,6 @@
 Illustrated Vault — Current State
 
-Last updated: 2026-08-13
+Last updated: 2026-08-17
 
 Production
 
@@ -111,6 +111,24 @@ WF-1
 Development / knowledge workflow and agent contract
 
 ✓ Complete 2026-08-13
+
+CAT-2B0 / CAT-2B1
+
+Scheduled sync paused; write-time catalog identity collision guard
+
+✓ Guard live; schedule still paused
+
+CAT-2D.1
+
+Durable catalog identity alias architecture (shipped with the table empty)
+
+✓ Complete 2026-08-17 (PR #12)
+
+CAT-2D.2
+
+Family A stable-number provider identity reconciliation — 192 aliases
+
+✓ Complete 2026-08-17, production-validated and closed (PR #13)
 
 Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or deferred cleanup remains.
 
@@ -1289,6 +1307,47 @@ Authenticated collection surfaces — strict active-snapshot canonical IDs plus 
 SharedBinder — separate share-token loose owned_keys boundary; known and intentionally deferred.
 
 External-set cards — none render today; future set-path cards are override-only until a separately validated canonical mapping exists.
+
+CAT-2D — Catalog identity reconciliation — CAT-2D.2 complete and closed
+
+Status: ✓ CAT-2D.1 and CAT-2D.2 complete 2026-08-17, production-validated, merged (PR #12 and PR #13, merge commit d01c8ad). Full documents: /docs/CAT-2D.2_FAMILY_A_RECONCILIATION.md and /docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md.
+
+The problem. TCGdex periodically re-namespaces a subset out of its parent set, changing the canonical provider ID of a physical printing. The sync has no delete or rename pass, so a restructure leaves the old rows in place and adds the new ones — two catalog rows for one physical printing. Provider IDs are therefore mutable source identifiers, not permanent printing identity.
+
+CAT-2B0 — the scheduled sync remains PAUSED. .github/workflows/sync-cards.yml carries no schedule: trigger; only manual dispatch. Restoring it is a separate, later slice and is not authorized by CAT-2D.
+
+CAT-2B1 — the write-time collision guard remains live. sync-cards.mjs refuses any card write that would place two canonical IDs on one Tier-1 identity (normName / normSet / normNum). Since CAT-2D.1 the guard index is built from cards_effective, not raw cards, so an aliased row can never participate in collision detection.
+
+CAT-2D.1 — the durable alias architecture is live. public.card_identity_aliases maps an obsolete provider ID to its canonical survivor, carrying evidence, approver and slice. It is private: PUBLIC, anon, authenticated and service_role hold zero privileges, RLS is on with no policies, and the only public surface is the two-column owner-rights view public.card_identity_resolution (SELECT only). A two-sided trigger keeps resolution depth at exactly one — no chains, no cycles. Shipped with the table empty, so every contract change was provably a no-op at deploy time.
+
+CAT-2D.2 — 192 aliases live, production-validated and closed.
+
+Shining Fates Shiny Vault: swsh4.5-SV### → swsh4.5sv-SV### — 122 aliases.
+Crown Zenith Galarian Gallery: swsh12.5-GG## → swsh12.5gg-GG## — 70 aliases.
+
+Final production gate: card_identity_aliases = 192 · cards = 23,780 · cards_effective = 23,588 · aliased IDs remaining in cards_effective = 0 · cards_effective columns = 14.
+
+cards remains 23,780 raw provider-history rows. Nothing was deleted. The 192 obsolete rows are retained as raw provider history rather than deleted, and are excluded from the effective catalog by the alias exclusion. A retained row may preserve source metadata or assets that are absent from its current survivor, and there is still no durable image override channel — but CAT-2D.2 did NOT perform an image-difference census, so no claim is made about how many pairs actually differ, or in which direction. Retention is the reversible choice regardless: deletion is the only irreversible act available, and nothing about the retained rows had to be established to justify not destroying them.
+
+cards_effective = 23,588 canonical product-facing rows. It is the canonical Supabase-backed product catalog surface and the authority for the archive and ownership-facing catalog paths. It is not the only place card data can come from: cardService's set path still fetches from TCGdex via tcgdexService (the entry.isSet path), and that provider-backed path is not an identity or ownership authority. No external-set cards render in the current authenticated collection surfaces. The CAT-0 property that cards → cards_effective row loss is "structurally impossible" is superseded: row loss now happens, by exactly one rule, only for an ID with an approved alias row.
+
+Ownership and OL-0D resolve historical provider IDs at READ time. get_active_snapshot_owned_card_ids() returns the resolved canonical set and reports three counts — distinctMatchedCardIds (historical), distinctResolvedCardIds, and aliasCollapsedCount. The OL-0D read model aggregates by the resolved ID before joining cards_effective, so quantities from several historical IDs merge onto one canonical row rather than reporting catalog-missing. Measured collapse for the current active snapshot is 0.
+
+user_import_rows is never rewritten. Stored card_id and candidate_card_ids remain immutable historical matching evidence — the record of what the matcher concluded against the catalog as it existed at import time. Byte-identity was proven by checksum inside the migration transaction and again post-deploy.
+
+Mutable references were migrated to canonical survivor IDs by UPDATE only — never DELETE, INSERT or ON CONFLICT: card_extras 2 rows (swsh12.5-GG19, swsh12.5-GG69) and card_overrides 1 row (the swsh12.5-GG19 force-owned override). Zero merge collisions existed. user_binder_layout_items and user_collection.owned_keys are structurally immune — the first references a membership row id, the second name/number keys.
+
+Artist reachability was a hard migration gate. 24 of the 192 obsolete rows carry an artist_id; all 24 survivors carry the same one. Zero would have lost or contradicted artist reachability. public.cards.artist_id was not written by this slice.
+
+Phase H complete. The temporary deployment capture tables cat2d2_pre_refs, cat2d2_pre_map and cat2d2_pre_capture were dropped after validation and the production smoke test. They no longer exist, and with them the retained per-row undo list — a reversal would now have to be reconstructed from the alias table.
+
+Production smoke passed. The Asako Ito notable Altaria resolves the canonical swsh12.5gg-GG19, and GG19 remains force-owned and in collection. The missing GG19 image is a separate, pre-existing catalog-image-coverage issue and was deliberately not touched here. Note that it is NOT evidence that the retained obsolete swsh12.5-GG19 row holds that image — nothing in this slice established that, and it would need separate evidence.
+
+CAT-2D.3 — Celebrations Classic Collection historical identity + numbering remap. DESIGN ONLY, not started. Production stores those 25 historical rows under legacy local IDs (cel25-2A, cel25-4A, cel25-15A1, cel25-17A, cel25-60A, cel25-88A), so the provider changed the numbering as well as the set. It cannot satisfy the number half of the CAT-2D.2 admission rule and needs its own evidence class with 25 individually corroborated mappings. Those 25 rows remain in cards and in cards_effective, exactly as before.
+
+CAT-2D.4 — Trainer Galleries / Family B. BLOCKED on a separately reviewed maintenance-only ingestion capability; the sync refuses SYNC_SET_ID outside temporal mode by design, so it is not startable with today's tooling.
+
+Provider IDs are not permanent printing identity. No IV UUID printing identity has been introduced. The reason is NOT that every case is 1:1 — CAT-2D.1 deliberately permits MANY historical aliases → ONE survivor, and Family B is expected to need exactly that shape, with two obsolete generations resolving onto one live Trainer Gallery survivor. The reason is narrower: every currently known requirement remains expressible by depth-one alias → canonical-survivor resolution, including many-to-one; no known case requires a printing identity independent of a surviving canonical row; and no known case requires one physical printing to correspond to multiple simultaneously-live canonical survivors. A UUID identity layer becomes justified when one of those stops holding.
 
 Recommended next slice:
 

@@ -1,13 +1,16 @@
 # CAT-2D.2 — Family A provider identity reconciliation
 
-**Status: DEPLOYED AND VALIDATED IN PRODUCTION; PR not yet merged.** 192 alias
-rows are live, Phases C–G all passed, and the sync schedule remains paused. See
-**§8a** for the production record, including the SQL Editor deployment finding
-and the single-statement correction this PR now carries.
+**Status: ✅ CLOSED — 2026-08-17.** Deployed, independently validated (Phases
+C–G), merged to `main` as **`d01c8ada8e8c2838f5212aa8e28590b383460f9d`** (PR
+#13), production UI smoke passed, and Phase H cleanup complete. 192 alias rows
+are live and the sync schedule remains paused.
 
-This document is the slice record. `CURRENT_STATE.md`, `DECISION_LOG.md` and
-`ARCHITECTURE.md` are updated as a deliberate closeout step **after** the PR
-merges — see §10.
+See **§8a** for the production record, including the SQL Editor deployment
+finding and the single-statement correction the merged migration carries.
+
+This document is the slice record and is now historical. Canonical state lives
+in `CURRENT_STATE.md`, `DECISION_LOG.md` and `ARCHITECTURE.md`, all updated at
+closeout — see §10.
 
 Depends on **CAT-2D.1** (PR #12, merge `303ca4b`), which shipped the alias
 schema, the two-sided no-chain trigger, the `card_identity_resolution` read
@@ -81,7 +84,7 @@ across the wider catalog, so it would be unsound as well as against policy.
 
 Celebrations is therefore its own evidence class, recorded in
 **`docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md`** (design item only, not
-implemented, not in this PR). Its 25 rows remain in `public.cards` **and** in
+implemented, and not part of PR #13). Its 25 rows remain in `public.cards` **and** in
 `cards_effective`, exactly as today — this slice changes nothing about them.
 
 CAT-2D.2 is now, exactly, the **set-rename-with-stable-local-id** slice.
@@ -194,7 +197,7 @@ deliberately not refactored into one.
 | **Q-1** | Does the active batch hold live-survivor ids alongside obsolete ones? | **Measured at deploy.** Validation Phase A computes `distinct_resolved_pred` and `collapse_pred` from real rows; Phase D asserts the RPC reproduces them exactly. |
 | **Q-2** | `price_history` rows referencing obsolete ids | **Measured at deploy.** Phase A inventories all six mutable tables including `price_history`, which the original evidence pass omitted. |
 | **Q-3** | Mutable-reference merge collisions | **Gated at deploy.** Phase A refuses if any exist, in any table, before the migration is run; migration §8 refuses again under lock. |
-| **Q-5** | Do other `artistEditorial.js` ids reference obsolete namespaces? | **CLOSED — statically, now.** All 169 `id:` entries swept: exactly **one** hit, `swsh12.5-GG19`, exactly as predicted. Fixed in this PR and pinned by a test. |
+| **Q-5** | Do other `artistEditorial.js` ids reference obsolete namespaces? | **CLOSED — statically, now.** All 169 `id:` entries swept: exactly **one** hit, `swsh12.5-GG19`, exactly as predicted. Fixed in PR #13 and pinned by a test. |
 | **Q-6** | Obsolete ids in `candidate_card_ids[]` | **Recorded at deploy, diagnostic only.** Never rewritten in either direction. |
 | **Q-7** | Are the non-obsolete `card_extras` rows on survivor ids? | **Gated at deploy** by the `card_extras` collision scan (PK conflict). |
 
@@ -406,20 +409,25 @@ Fully reversible; nothing is deleted and no schema object is created.
    obsolete rows reappear in `cards_effective` byte-identical, because they were
    never deleted.
 
-**`public.cat2d2_pre_refs` is the exact undo list** — one row per migrated
-reference, `(table_name, row_key, card_id)`, and §6 has *proven* it is exactly
-the row set the migration changed. `cat2d2_pre_capture` is a different table
-(catalog / ownership / OL-0D fingerprints and the Phase A predictions) and
-cannot drive a reversal.
-
-If a collector has created a conflicting row since the deploy, narrow the
-reverse `UPDATE` with `cat2d2_pre_refs.row_key` — the migration's ROLLBACK
-section carries a worked example per key shape. Export the table before Phase H
-if a reversal is still plausible.
+> **⚠ There is no longer a retained exact undo list.** Phase H completed on
+> 2026-08-17 and dropped `cat2d2_pre_refs`, `cat2d2_pre_map` and
+> `cat2d2_pre_capture`. Those tables no longer exist in production.
+>
+> While it existed, `public.cat2d2_pre_refs` held one row per migrated reference
+> — `(table_name, row_key, card_id)` — and migration §6 had *proven* it was
+> exactly the row set the migration changed. That per-row precision is gone.
+>
+> A reversal is still possible, but it must now be reconstructed from
+> `card_identity_aliases` (`slice = 'CAT-2D.2'`), which identifies survivors but
+> **not** which individual rows moved onto them. Only three references were
+> migrated — `card_extras` 2 and `card_overrides` 1, all on `swsh12.5-GG19` /
+> `swsh12.5-GG69` — so the reconstruction is small and inspectable, but it is a
+> reconstruction rather than a record. Any reversal is now an explicit,
+> supervised operator decision with fresh pre-capture of its own.
 
 ---
 
-## 8. Validation performed in this PR
+## 8. Validation performed in PR #13
 
 Static only — the PR itself touches no database.
 
@@ -468,9 +476,15 @@ The migration as originally committed used a top-level `begin;`, then
 `create temporary table ... on commit drop`, then further **top-level**
 statements referencing those temp tables, then `commit;`.
 
-In the Supabase SQL Editor those top-level statements do **not** behave as one
-persistent transaction/session for this workflow. A harmless reproduction
-confirmed it: the temp tables were gone before the later statements ran.
+**Observed:** in the tested Supabase SQL Editor workflow the assumed
+cross-top-level-statement transaction / TEMP-table lifecycle did not hold. A
+harmless reproduction showed a TEMP table created by one top-level statement was
+unavailable to a subsequent one.
+
+**Not established:** whether the SQL Editor used separate sessions, committed
+between statements, or behaved that way for some other reason. The mechanism was
+not investigated, and the correction does not depend on it — the fix is to stop
+depending on client-held cross-statement state at all.
 
 The durable CAT-2D.2 changes had nonetheless landed correctly —
 `card_identity_aliases` = 192 (all `slice = 'CAT-2D.2'`), `cards_effective` =
@@ -491,7 +505,7 @@ independent post-deploy validation was run instead of guessing.
 
 Production state is accepted.
 
-**The correction carried in this PR**
+**The correction carried in PR #13**
 
 The committed migration is now **one top-level statement** — a single
 `do $cat2d2$ ... $cat2d2$;`. There is no top-level `begin;`/`commit;`, every
@@ -524,17 +538,41 @@ requirements are unchanged and still apply.
 
 ---
 
-## 10. Remaining closeout — after the PR merges
+## 10. Closeout — complete
 
-- update `CURRENT_STATE.md`: aliases 0 → **192**, `cards_effective`
-  23,780 → **23,588**, `cards` unchanged at **23,780**, sync schedule still
-  **paused**;
-- record in `DECISION_LOG.md`:
-  - CAT-2D §3.4 rule 1 is satisfied for this slice by A1+A2+A3+A4+A5 rather
-    than by Tier-1 equality;
-  - CAT-2D §6.2's silent-merge branches were replaced by a fail-closed refusal;
-  - Celebrations was split out on production evidence (§1a), superseding the
-    design doc's Family A figure of 217;
-  - the slice numbering above;
-  - the SQL Editor deployment finding (§8a) — future migrations are authored as
-    a single top-level statement.
+CAT-2D.2 is **closed**. Everything below is done.
+
+| Step | Outcome |
+|---|---|
+| PR #13 merged to `main` | `d01c8ada8e8c2838f5212aa8e28590b383460f9d` |
+| Production Phases C–G | all passed |
+| Production UI smoke | passed — the Asako Ito notable Altaria resolves the canonical `swsh12.5gg-GG19`; GG19 remains force-owned and in collection |
+| Phase H cleanup | complete — `cat2d2_pre_refs`, `cat2d2_pre_map` and `cat2d2_pre_capture` dropped |
+| Final production gate | `card_identity_aliases` 192 · `cards` 23,780 · `cards_effective` 23,588 · aliased ids in `cards_effective` 0 · `cards_effective` columns 14 |
+| Sync schedule | still **paused** |
+
+Canonical documentation updated at closeout:
+
+- **`CURRENT_STATE.md`** — CAT-2D section added (CAT-2B0 paused, CAT-2B1 guard
+  live, CAT-2D.1 architecture live, CAT-2D.2 complete with the figures above,
+  CAT-2D.3 and CAT-2D.4 as design items), gate-status rows added, *Last updated*
+  moved to 2026-08-17.
+- **`DECISION_LOG.md`** — 2026-08-17 CAT-2D.2 entry: provider IDs are mutable
+  source identifiers; alias-layer resolution with retained raw history;
+  A1+A2+A3+A4+A5 replacing Tier-1 equality for this evidence class; fail-closed
+  collisions instead of CAT-2D §6.2 silent merging; immutable
+  `user_import_rows` with read-time resolution; artist reachability as a hard
+  gate; the Celebrations split to CAT-2D.3; Trainer Galleries as CAT-2D.4; the
+  single-top-level-statement rule for atomic SQL-Editor artifacts; and no IV
+  UUID printing identity. Marked **Accepted / closed**.
+- **`ARCHITECTURE.md`** — the collection/ownership section repaired (it still
+  described `owned_keys` / `isCardOwned` as the authenticated ownership
+  authority, false since OWN-0B) and a *Catalog identity resolution* section
+  added. Deliberately narrow: remaining staleness in that file is recorded there
+  as documentation debt rather than fixed in the same pass.
+
+### Known, deliberately untouched
+
+The missing `swsh12.5gg-GG19` card image is a **pre-existing
+catalog-image-coverage issue**, not an identity defect and not caused by this
+slice. It was explicitly out of scope for the closeout and remains open.

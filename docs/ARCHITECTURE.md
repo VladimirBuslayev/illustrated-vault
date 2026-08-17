@@ -107,7 +107,7 @@ Pure functions. No Supabase. No network.
 | `cardUtils.js` | `isTcgPocketCard` | Image URL path test |
 | `format.js` | `fmtPrice`, `todayStr` | `fmtPrice` was `fmt$` in legacy; renamed for ESM clarity; behavior identical |
 | `imageUrl.js` | `imgSmall`, `imgLarge` | TCGdex image URL suffix builders |
-| `keys.js` | `normName`, `normNum`, `normSet`, `makeKeys`, `isCardOwned` | Ownership key builders; `makeKeys` output is persisted in Supabase; do not alter |
+| `keys.js` | `normName`, `normNum`, `normSet`, `makeKeys`, `isCardOwned` | Frozen normalisers; **not** the authenticated ownership authority — `makeKeys`/`isCardOwned` serve the SharedBinder share-token path only. `normName`/`normNum`/`normSet` define Tier-1 import identity and are consumed by the CAT-2B1 sync guard and CAT-2D alias admission. `makeKeys` output is persisted in Supabase; do not alter any of them |
 | `slug.js` | `toSlug` | URL-safe slug generator |
 | `sort.js` | `getBestPrice`, `sortCards` | Imports from `constants/config.js` and `constants/setOrder.js` |
 
@@ -153,17 +153,103 @@ invalidate stale ILIKE-based caches).
 
 ## Data flow — collection / ownership
 
-```
-App.useEffect (after auth) → loadUserData(userId)    [collectionService.js]
-  → supabase.from('user_collection').select('owned_keys')
-  → supabase.from('card_overrides').select(...)
-  → supabase.from('price_history').select(...)
-  → supabase.from('card_favorites').select(...)
-  → returns { ownedKeys, manualOwned, manualMissing, priceHistory, favorites }
+> **Corrected 2026-08-17 (CAT-2D.2 closeout).** This section previously
+> described `owned_keys` / `isCardOwned` as the authenticated ownership
+> authority. That has not been true since OWN-0B. The description below is the
+> current canonical behaviour; the rest of this file has NOT been modernised in
+> the same pass — see *Documentation debt* at the end.
 
-checkOwned(card) → isCardOwned(card, ownedKeySet, manualOwned, manualMissing)
-  → makeKeys(name, localId, setName).some(k => ownedKeySet.has(k))
+**Authenticated ownership authority is the active import snapshot, by canonical
+card ID.** `get_active_snapshot_owned_card_ids()` returns the distinct set of
+canonical IDs matched by the caller's one active batch. Every authenticated
+ownership decision routes through the single `checkOwned` seam in `App`, which
+consumes that set.
+
+The precedence ladder is explicit and ordered:
+
 ```
+force-missing override  →  force-owned override  →  active snapshot  →  missing
+```
+
+Manual force-owned / force-missing overrides (`card_overrides`) remain distinct
+explicit layers on top of snapshot authority — they are not merged into it.
+
+```
+App (after auth) → fetchActiveSnapshotOwnedCardIds()   [ownedLibraryService.js]
+  → supabase.rpc('get_active_snapshot_owned_card_ids')
+  → { state, batchId, ownedCardIds:Set<canonical id>,
+      reconciliation:{ distinctMatchedCardIds,      // historical, stored ids
+                       distinctResolvedCardIds,     // after alias resolution
+                       aliasCollapsedCount,         // matched − resolved, ≥ 0
+                       matchedRows } }
+
+checkOwned(card) → force-missing? → force-owned? → ownedCardIds.has(card.id)
+```
+
+The wrapper is strict and fails closed: the returned set size must equal
+`distinctResolvedCardIds`, resolved may never exceed matched, and
+`aliasCollapsedCount` must equal their difference. Alias resolution may MERGE
+two identities onto one printing; it may never INVENT ownership.
+
+`user_import_rows` is **immutable historical evidence** — the record of what the
+matcher concluded against the catalog as it existed at import time. It is never
+rewritten. Identity drift is handled at read time instead (below).
+
+`user_collection.owned_keys` / `isCardOwned` / `makeKeys` are **not** the
+authenticated ownership authority. They remain in use only on the unauthenticated
+SharedBinder share-token path, which is a separate, looser boundary and is
+deliberately deferred.
+
+**Collector ownership is exact-printing authority.** Owning one printing implies
+nothing about another printing, another language, or another card sharing the
+same artwork. Nothing in this pipeline may infer ownership across those axes.
+
+## Catalog identity resolution (CAT-2D)
+
+TCGdex periodically re-namespaces a subset out of its parent set, changing the
+canonical provider ID of a physical printing. **Provider IDs are mutable source
+identifiers, not permanent printing identity.** Three layers keep collector
+identity stable across that:
+
+| Layer | Contents | Read by |
+|---|---|---|
+| `public.cards` | raw provider history — everything ever ingested, including superseded identities | sync tooling only |
+| `public.card_identity_aliases` | evidence-backed obsolete ID → canonical survivor | resolution paths, via the view below |
+| `public.cards_effective` | canonical survivors only; alias IDs excluded | the archive / ownership-facing catalog paths |
+
+`cards_effective` is the **canonical Supabase-backed product catalog surface** and
+the authority for the archive and ownership-facing catalog paths. It is not the
+only place card data can come from: `cardService.fetchArtistCards` still has a
+separate provider-backed set path (`tcgdexService`, the `entry.isSet` branch).
+That path is **not an identity or ownership authority** — no external-set cards
+render in the current authenticated collection surfaces, and any future set-path
+card is override-only until a separately validated canonical mapping exists.
+
+- **Resolution depth is exactly one. No chains, no cycles.** A two-sided trigger
+  rejects both an alias whose target is itself obsolete and an alias that is
+  currently a survivor for other rows. Resolution is therefore a single lookup,
+  never a recursive walk. Depth one is **not** one-alias-per-survivor: MANY
+  historical aliases may resolve onto ONE canonical survivor, and Family B is
+  expected to need exactly that.
+- The alias table is **private**: `anon`, `authenticated` and `service_role` hold
+  zero privileges on it. The only public surface is the two-column owner-rights
+  view `public.card_identity_resolution` (SELECT only), so provenance —
+  evidence, approver, timestamps — is unreachable by any runtime role.
+- `public.cards` **retains** obsolete rows permanently — they are excluded from
+  `cards_effective`, not deleted. A retained row may preserve source metadata or
+  assets absent from its current survivor; CAT-2D.2 ran no image-difference
+  census, so nothing is claimed about how many actually differ. Retention is
+  justified by reversibility: deletion is the only irreversible act in the
+  design.
+- The ownership RPC and the OL-0D read model **resolve aliases at read time**.
+  OL-0D aggregates by the resolved ID *before* joining `cards_effective`, so
+  quantities from several historical IDs merge onto one canonical row rather
+  than reporting catalog-missing.
+- The CAT-2B1 sync collision guard builds its identity index from
+  `cards_effective`, so an aliased row cannot participate in collision detection.
+
+Live as of CAT-2D.2: 192 aliases; `cards` 23,780; `cards_effective` 23,588.
+See `CURRENT_STATE.md` and `CAT-2D.2_FAMILY_A_RECONCILIATION.md`.
 
 ## Data flow — hunt intent
 
@@ -308,3 +394,25 @@ See ROADMAP.md for the authoritative sequencing. Architecture-relevant notes:
 - Component extraction of `src/App.jsx` and shared hooks remain deferred and
   require explicit approval.
 - Freemium model / public collection pages remain deferred.
+
+## Documentation debt
+
+**This file is materially older than the system it describes.** The CAT-2D.2
+closeout (2026-08-17) repaired only the ownership/identity architecture that was
+actively wrong — it described `owned_keys` / `isCardOwned` as the authenticated
+ownership authority, which has been false since OWN-0B. Nothing else was
+modernised, deliberately, to keep that correction reviewable.
+
+Known-stale and NOT repaired here, recorded as follow-up documentation debt:
+
+- the module inventory and component-boundary sections predate OL-0A…OL-2B,
+  OWN-0A/0B, BP-1A, BP-3.1A–C, Artist Page 3.0, CAT-1 and CAT-2D, and do not
+  list their services or surfaces;
+- the Supabase read model and backend RPC tables omit the import-snapshot,
+  binder-layout and identity-resolution objects added since;
+- the data-flow diagrams for surfaces other than collection/ownership have not
+  been re-checked against current code.
+
+Until a dedicated documentation slice addresses that, treat production behaviour
+plus `CURRENT_STATE.md` and `DECISION_LOG.md` as authoritative wherever this
+file disagrees — as `AGENTS.md` already requires.
