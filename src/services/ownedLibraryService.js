@@ -281,8 +281,36 @@ export async function fetchActiveSnapshotReadModel(options = {}) {
 // Strictness matches the read-model client: Supabase/RPC errors throw (with the
 // PostgREST diagnostic fields preserved), malformed/unsupported contract responses
 // throw, and it NEVER soft-fails to an empty owned set. States are returned
-// explicitly. On "ready", ownedCardIds is a Set<string> and
-// ownedCardIds.size === reconciliation.distinctMatchedCardIds is enforced.
+// explicitly.
+//
+// CAT-2D.1 — alias-aware counts.
+//   The RPC now resolves each matched historical card id through the catalog
+//   identity alias map before returning it, so ownedCardIds carries distinct
+//   RESOLVED ids. Resolution can COLLAPSE two historical ids onto one canonical
+//   survivor, which means the returned array can legitimately be shorter than
+//   the distinct historical count.
+//
+//   The pre-CAT-2D.1 assertion was
+//       ownedCardIds.length === distinctMatchedCardIds
+//   and it is no longer correct: under a collapse it would throw, ownership
+//   would enter its fail-closed error state, and every ownership-dependent
+//   surface would gate. Three counts are now distinguished:
+//
+//     distinctMatchedCardIds   distinct historical stored matched ids
+//     distinctResolvedCardIds  distinct ids after alias resolution
+//     aliasCollapsedCount      distinctMatched - distinctResolved  (>= 0)
+//
+//   Strictness is PRESERVED, not relaxed — only the correct quantity is
+//   compared. All three fields are REQUIRED: a payload missing them is
+//   malformed and throws. It is not soft-defaulted, because a silently assumed
+//   collapse count would be an ownership guess.
+//
+//   Deployment ordering is therefore load-bearing: docs/sql/cat-2d1-1-dark-alias-foundation.sql
+//   must be deployed BEFORE this file reaches production.
+//
+//   With an empty alias table distinctResolved === distinctMatched,
+//   aliasCollapsedCount === 0, and the returned set is identical to
+//   pre-CAT-2D.1 production.
 
 const OWNED_IDS_RPC = 'get_active_snapshot_owned_card_ids';
 const OWNED_IDS_STATES = new Set([
@@ -292,7 +320,9 @@ const OWNED_IDS_STATES = new Set([
 // options: { client? }  (client injectable for unit tests; default lazy import)
 // Returns one of:
 //   { contractVersion, state:'ready', batchId, activatedAt, matcherVersion,
-//     ownedCardIds:Set<string>, reconciliation:{ distinctMatchedCardIds, matchedRows } }
+//     ownedCardIds:Set<string>,
+//     reconciliation:{ distinctMatchedCardIds, distinctResolvedCardIds,
+//                      aliasCollapsedCount, matchedRows } }
 //   { contractVersion, state:'no_active_batch' }
 //   { contractVersion, state:'multiple_active_batches' }
 //   { contractVersion, state:'error', reason }
@@ -337,15 +367,36 @@ export async function fetchActiveSnapshotOwnedCardIds(options = {}) {
 
   const r = data.reconciliation;
   if (!isObj(r)) fail('owned-ids: reconciliation missing or malformed');
-  const distinctMatchedCardIds = asInt(r.distinctMatchedCardIds, 'owned-ids.reconciliation.distinctMatchedCardIds');
-  const matchedRows = asInt(r.matchedRows, 'owned-ids.reconciliation.matchedRows');
+  const distinctMatchedCardIds  = asInt(r.distinctMatchedCardIds,  'owned-ids.reconciliation.distinctMatchedCardIds');
+  const distinctResolvedCardIds = asInt(r.distinctResolvedCardIds, 'owned-ids.reconciliation.distinctResolvedCardIds');
+  const aliasCollapsedCount     = asInt(r.aliasCollapsedCount,     'owned-ids.reconciliation.aliasCollapsedCount');
+  const matchedRows             = asInt(r.matchedRows,             'owned-ids.reconciliation.matchedRows');
 
-  if (rawIds.length !== distinctMatchedCardIds) {
-    fail(`owned-ids: ownedCardIds length (${rawIds.length}) must equal distinctMatchedCardIds (${distinctMatchedCardIds})`);
+  // The returned set is the RESOLVED id set, so it is measured against the
+  // resolved count. This is the CAT-2D.1 correction to the pre-alias assertion.
+  if (rawIds.length !== distinctResolvedCardIds) {
+    fail(`owned-ids: ownedCardIds length (${rawIds.length}) must equal distinctResolvedCardIds (${distinctResolvedCardIds})`);
   }
-  if (ownedCardIds.size !== distinctMatchedCardIds) {
-    fail(`owned-ids: distinct ownedCardIds (${ownedCardIds.size}) must equal distinctMatchedCardIds (${distinctMatchedCardIds})`);
+  if (ownedCardIds.size !== distinctResolvedCardIds) {
+    fail(`owned-ids: distinct ownedCardIds (${ownedCardIds.size}) must equal distinctResolvedCardIds (${distinctResolvedCardIds})`);
   }
+  // Resolution can only merge ids, never invent them.
+  if (distinctResolvedCardIds > distinctMatchedCardIds) {
+    fail(`owned-ids: distinctResolvedCardIds (${distinctResolvedCardIds}) must be <= distinctMatchedCardIds (${distinctMatchedCardIds})`);
+  }
+  if (aliasCollapsedCount < 0) {
+    fail(`owned-ids: aliasCollapsedCount (${aliasCollapsedCount}) must be >= 0`);
+  }
+  // Internal consistency: the server must not disagree with its own arithmetic.
+  if (aliasCollapsedCount !== distinctMatchedCardIds - distinctResolvedCardIds) {
+    fail(
+      `owned-ids: aliasCollapsedCount (${aliasCollapsedCount}) must equal ` +
+      `distinctMatchedCardIds - distinctResolvedCardIds (${distinctMatchedCardIds - distinctResolvedCardIds})`
+    );
+  }
+  // Unchanged: row count still reconciles against the HISTORICAL distinct count.
+  // Alias resolution collapses ids, never rows, so this comparison keeps its
+  // pre-CAT-2D.1 meaning.
   if (matchedRows < distinctMatchedCardIds) {
     fail(`owned-ids: matchedRows (${matchedRows}) must be >= distinctMatchedCardIds (${distinctMatchedCardIds})`);
   }
@@ -357,6 +408,11 @@ export async function fetchActiveSnapshotOwnedCardIds(options = {}) {
     activatedAt: asTimestamp(data.activatedAt, 'owned-ids.activatedAt'),
     matcherVersion: asStr(data.matcherVersion, 'owned-ids.matcherVersion', { allowEmpty: false }),
     ownedCardIds,
-    reconciliation: { distinctMatchedCardIds, matchedRows },
+    reconciliation: {
+      distinctMatchedCardIds,
+      distinctResolvedCardIds,
+      aliasCollapsedCount,
+      matchedRows,
+    },
   };
 }
