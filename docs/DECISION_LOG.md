@@ -1,5 +1,112 @@
 Illustrated Vault — Decision Log
 
+2026-08-17 — CAT-2D.2: catalog identity reconciliation (Family A, stable-number renames)
+
+Decision:
+
+Provider IDs are mutable source identifiers, not permanent printing identity.
+TCGdex re-namespaces subsets out of parent sets and changes the canonical ID of
+a physical printing. Collector identity must survive that; it therefore cannot
+be defined as "whatever string the provider used at import time".
+
+Durable resolution is an alias layer, not a rewrite. public.card_identity_aliases
+maps an obsolete provider ID to its canonical survivor with evidence, approver
+and slice. Raw obsolete rows STAY in public.cards as retained provider history —
+they hold images their survivors lack and there is still no durable image
+override channel. public.cards_effective exposes only canonical survivors, and
+it is the sole catalog surface any product path reads. Resolution depth is
+exactly one, enforced on both sides by trigger; there is deliberately no
+recursive resolver, because a resolver that tolerates chains eventually
+tolerates cycles.
+
+Family A admission is A1+A2+A3+A4+A5, explicitly replacing CAT-2D §3.4's Tier-1
+equality for this evidence class. Tier-1 equality cannot hold here: the sync
+writes set_name from the set the provider served the card under, so an obsolete
+row carries the PARENT set name by construction and normSet differs from its
+survivor's no matter what. The replacement keeps the name and number components
+strict — normName equal, normNum equal, stored row against stored row — and
+substitutes, for the set component only, an explicitly enumerated set-rename
+pair (A1) evidenced by the whole local-ID namespace being absent from the parent
+set upstream (A4) and by a per-pair 404/200 observation (A5). A4 is what makes
+it a rename rather than a same-name-same-number coincidence. Name equality alone
+remains explicitly insufficient. This departure is scoped to this evidence class
+and is recorded in every alias row's evidence payload.
+
+All mutable-reference collisions fail closed. CAT-2D §6.2 permitted silent
+merges for favorites, binder cards, price history and intent when a user already
+held both the obsolete and the survivor row. That branch was deliberately NOT
+implemented. A merge is the only information-destroying operation in the design,
+and it would have run unseen. Any collision, in any table, refuses the whole
+migration; resolving one is an explicit operator decision.
+
+user_import_rows remains immutable historical evidence. Stored card_id and
+candidate_card_ids are the record of what the matcher concluded against the
+catalog as it existed at import time. Rewriting them would falsify the audit
+trail and make superseded batches uninterpretable. Resolution happens at READ
+time instead — inside the ownership RPC and the OL-0D read model — so a batch
+records what was true then and the alias table records how to read it now.
+
+Artist reachability is a hard migration gate. Artist pages load by exact
+cards.artist_id, and aliasing makes the survivor the only row that can represent
+a printing. An obsolete row carrying an artist_id whose survivor does not would
+silently drop that printing off its artist's page. A non-null obsolete artist_id
+must equal the survivor's or the migration refuses. This slice does not repair
+cards.artist_id; that is illustrator/artist restoration and stays out of scope.
+
+Celebrations was split out as CAT-2D.3. Its provider transition changed both the
+set AND the numbering — production stores those 25 rows as cel25-2A, cel25-4A,
+cel25-15A1, cel25-17A, cel25-60A, cel25-88A rather than cel25-CC###. It cannot
+satisfy A2, and A2 was not loosened to admit it: dropping the number requirement
+would reduce the rule to name equality plus a set-rename pair, which is the fuzzy
+matching this architecture forbids, and several of those names are ambiguous
+across the wider catalog. It needs its own evidence class with 25 individually
+corroborated mappings.
+
+Trainer Galleries / Family B is CAT-2D.4, renumbered from the design doc's
+CAT-2D.3. It remains blocked on a separately reviewed maintenance-only ingestion
+capability.
+
+Deployment artifacts that require atomicity must be authored as a SINGLE
+top-level PostgreSQL statement. The first production run proved that a top-level
+BEGIN plus CREATE TEMP TABLE … ON COMMIT DROP plus further top-level statements
+referencing those temp tables is not one transaction or one session in the
+Supabase SQL Editor: the temp tables were gone before the later statements ran.
+Future migrations of this kind are written as one DO block, with no reliance on
+client-held transaction or cross-statement TEMP state.
+
+No IV UUID printing identity has been introduced. Every known case is a 1:1
+rename with exactly one live survivor, which an alias map expresses completely.
+A UUID identity layer becomes justified only when one printing legitimately maps
+to two simultaneously live canonical IDs, when identity must survive having no
+upstream row at all, when an artwork-vs-printing policy lands, or when language
+identity becomes real. None is true today.
+
+Reason:
+
+Without a durable identity layer, a provider rename silently converts a matched
+collector row into a missing card: ownership is keyed on the historical ID while
+the rendered card carries the new one. Deleting the obsolete rows would have
+been the smaller-looking fix and was rejected — it is the only irreversible act
+available, and it would discard the sole copy of imagery the survivors lack in a
+product whose stated spine is a visual archive.
+
+The strictness is deliberate and asymmetric: this architecture may MERGE two
+identities for one printing, and may never INVENT ownership. False-positive
+physical ownership is unacceptable, so every rule that could widen the alias set
+fails closed, and every count that could hide a widening is asserted rather than
+reported.
+
+Status:
+
+Accepted. CAT-2D.2 is CLOSED — deployed, independently validated (Phases C–G),
+merged as d01c8ada8e8c2838f5212aa8e28590b383460f9d, production smoke passed, and
+Phase H cleanup complete. 192 aliases live (Shining Fates SV 122, Crown Zenith
+GG 70); cards 23,780; cards_effective 23,588; zero aliased IDs in
+cards_effective. The scheduled sync remains PAUSED. CAT-2D.3 and CAT-2D.4 are
+design items only. Current state is recorded in CURRENT_STATE.md; the full slice
+account, including the deployment incident, is in
+CAT-2D.2_FAMILY_A_RECONCILIATION.md.
+
 2026-08-13 — WF-1: development authority and knowledge-promotion rule
 
 Decision:
