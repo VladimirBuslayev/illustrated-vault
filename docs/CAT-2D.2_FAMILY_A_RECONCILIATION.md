@@ -123,6 +123,7 @@ time:
 - **P7** — exact per-family counts, 122 / 70 / 25.
 - **P10** — all 217 obsolete ids are in `cards_effective` today, so the
   expected delta really is 217.
+- **P11** — artist reachability is preserved on every survivor (§5a).
 
 The validation file re-derives the same map a **second time, independently**,
 without reading the allowlist. Two derivations agreeing is the point; they are
@@ -139,7 +140,13 @@ deliberately not refactored into one.
 | **Q-6** | Obsolete ids in `candidate_card_ids[]` | **Recorded at deploy, diagnostic only.** Never rewritten in either direction. |
 | **Q-7** | Are the non-obsolete `card_extras` rows on survivor ids? | **Gated at deploy** by the `card_extras` collision scan (PK conflict). |
 
-Q-4, Q-8 and Q-9 are Family B / open-ended and out of scope here.
+Q-4 and Q-8 are Family B / open-ended and out of scope here.
+
+**Q-9 is partially forced open by this slice.** CAT-2D §2.6 left it
+[UNVERIFIED] whether an artist page currently shows the obsolete copy, the
+survivor, or both. Aliasing makes the survivor the only candidate, so the
+artist-reachability gate (§5a) now *measures* the relevant half of Q-9 against
+production and refuses if the answer is unsafe.
 
 ---
 
@@ -195,40 +202,131 @@ migration re-counts under lock and refuses if the two disagree.
 ### `swsh12.5-GG19` must never be unowned
 
 That override is the **sole** reason the printing is owned — it is not in the
-active snapshot. The alias insert (§6) and the reference migration (§8) are in
+active snapshot. The alias insert (§7) and the reference migration (§9) are in
 **one transaction**, so no committed state exists in which the obsolete id has
 left `cards_effective` but the survivor is not yet force-owned. Phase D10
 re-checks it after deploy.
 
+### The exact undo list is `public.cat2d2_pre_refs`
+
+One row per migrated reference, carrying `(table_name, row_key, card_id)`.
+`cat2d2_pre_capture` is a *different* table — catalog/ownership/OL-0D
+fingerprints and the Phase A predictions — and cannot drive a reversal.
+
 ---
 
-## 5. Serialization
+## 5. Serialization, and the Phase A → B drift refusal
 
 CAT-2D.1 §2 made this binding on every later slice: the two-sided R1/R2 trigger
 proves depth-1 topology only for *sequential* writers. The migration therefore
 takes `share row exclusive` on `card_identity_aliases` **before reading any
-alias row**, and on all six mutable-reference tables for the same reason — §7
-proves "no collision exists" and §8 acts on that proof, so nothing may move in
+alias row**, and on all six mutable-reference tables for the same reason — §8
+proves "no collision exists" and §9 acts on that proof, so nothing may move in
 between. Lock order is fixed and alphabetical.
+
+**The locks do not span the two SQL Editor runs.** Phase A captures
+`cat2d2_pre_refs`; the migration runs later, minutes or hours apart, with
+nothing held in between. In that window a collector can favourite a card, save a
+price point, set a hunt intent, add a binder row or clear an override.
+
+Counting references under the locks was not enough: the migration would have
+migrated whatever was there, and `cat2d2_pre_refs` — the undo list — would then
+describe a different row set than the one that actually changed. A row added in
+the window would be migrated and **not reversible from the capture**; a row
+deleted in the window would sit in an undo list that would silently do nothing.
+
+Migration **§6** closes this. Under the §1 locks, before a single alias row is
+inserted or a single reference is migrated, it re-derives the current obsolete
+reference set from the proven `cat2d2_map` — the same six branches, the same
+per-table `row_key` shape as Phase A — and compares it to `cat2d2_pre_refs` as
+an **exact set, in both directions**:
+
+| Direction | Meaning | Result |
+|---|---|---|
+| `current EXCEPT pre` | a reference **appeared** after the capture | refuse, `errcode 40001` |
+| `pre EXCEPT current` | a captured reference **vanished** | refuse, `errcode 40001` |
+| cardinality | a duplicate hiding behind set semantics | refuse |
+
+Totals alone are explicitly insufficient — one insert plus one delete leaves the
+count identical while both endpoints are wrong — so the identity compared is the
+full `(table_name, row_key, card_id)` triple. §8 additionally cross-checks its
+per-table dynamic count against the §6 derivation.
+
+Phase A is therefore a **hard prerequisite**: the migration refuses outright if
+`cat2d2_pre_refs` does not exist. A drift refusal is not a defect to be worked
+around — re-run Phase A and re-review.
+
+---
+
+## 5a. Artist-first gate — the survivor must not lose `artist_id`
+
+Artist Page loads a curated artist's cards by **exact `public.cards.artist_id`**
+(`cardService.fetchArtistCards`, the FK-only branch). Once the obsolete row
+leaves the effective catalog, the survivor is the only row that can carry the
+printing onto an artist page.
+
+Migrating `card_extras` changes the survivor's **effective illustrator** —
+`cards_effective.illustrator = coalesce(card_extras.illustrator_override,
+cards.illustrator)` — but it does **not** touch `public.cards.artist_id`, which
+only the sync writes. So a pair whose obsolete row carries an `artist_id` and
+whose survivor does not would silently drop that printing off its artist's page.
+
+| Obsolete `artist_id` | Canonical `artist_id` | Verdict |
+|---|---|---|
+| NULL | anything | allowed — nothing to lose |
+| non-NULL | equal | allowed |
+| non-NULL | NULL | **REFUSE** — reachability lost |
+| non-NULL | different non-NULL | **REFUSE** — two conflicting claims |
+
+Enforced in three places: validation **A-GATE 4** (pre-deploy, reports
+`preserved` / `would_lose` / `would_conflict` plus the first 20 offenders),
+migration **§5 P11** (in-transaction, under the locks), and validation
+**Phase C10** (re-asserted post-deploy).
+
+> **This gate may well fire.** CAT-0 per-set evidence records 100 of 122
+> `swsh4.5sv` rows, 48 of 70 `swsh12.5gg` rows and 23 of 25 `cel25cc` rows as
+> having an illustrator but a **NULL `artist_id`**, while the obsolete
+> `swsh12.5` rows that do carry one (GG19, GG69) are exactly the two with
+> `card_extras` overrides. Whether their survivors carry `artist_id` is
+> [UNVERIFIED] — CAT-2D §11 Q-9 left it open.
+>
+> **CAT-2D.2 does not repair `public.cards.artist_id`.** That is
+> illustrator/artist restoration, explicitly out of scope. A refusal stops the
+> deployment and becomes an evidence-backed follow-up decision. Neither SQL file
+> writes `cards.artist_id`, and a test asserts that.
 
 ---
 
 ## 6. Deployment sequence
 
+The established repository workflow: review → production Phase A gate → SQL
+migration → C–G validation → merge PR / deploy app → production smoke → H
+cleanup at the safe point.
+
 | Step | Action | Gate |
 |---|---|---|
-| 0 | Merge/deploy the app change (`artistEditorial.js`) — safe **before or after** the SQL, since the survivor is already in `cards_effective` today. App-first has zero regression window. | build green |
-| 1 | `cat-2d2-2-family-a-validation.sql` **Phase A0** — read off the validation user | one active batch |
-| 2 | Paste the UUID into the single marked `set_config` line; run **Phase A** | **REFUSES** on any collision, on a non-empty alias table, or if the derived map is not 217 / 122 / 70 / 25 |
-| 3 | **Phase B** — run `cat-2d2-1-family-a-reconciliation.sql` top to bottom, one transaction | §5 P1–P10, §7, §9 all inside the transaction |
-| 4 | **Phase C** — catalog + alias topology | 217 evidence-backed rows, depth 1, `cards` unchanged, `cards_effective` −217 exactly, nothing unrelated moved |
-| 5 | **Phase D** — ownership | `matchedRows` and `distinctMatchedCardIds` historical; resolved count and collapse equal Phase A's prediction; **no ownership added, none lost**; GG19 still owned |
-| 6 | **Phase E** — OL-0D | rows and matched quantity conserved, distinct cards −collapse, catalog-missing does not regress, pagination/filter/sort valid |
-| 7 | **Phase F** — mutable + untouched data | import evidence byte-identical, card_extras/card_overrides payloads unchanged, zero obsolete references remain |
-| 8 | **Phase G** — security | the CAT-2D.1 ACL contract intact, now with real provenance to protect |
-| 9 | **Phase H** — cleanup | **drop `cat2d2_pre_refs` and `cat2d2_pre_capture`** — `cat2d2_pre_refs` holds user-owned card ids and must not remain in production |
+| 1 | Independent review of PR #13 | — |
+| 2 | `cat-2d2-2-family-a-validation.sql` **Phase A0** — read off the validation user | one active batch |
+| 3 | Paste the UUID into the single marked `set_config` line; run **Phase A** | **REFUSES** on any merge collision, any artist-reachability loss or conflict, a non-empty alias table, or a derived map that is not 217 / 122 / 70 / 25 |
+| 4 | **Phase B** — run `cat-2d2-1-family-a-reconciliation.sql` top to bottom, one transaction | §5 P1–P11, §6 drift refusal, §8, §10 all inside the transaction |
+| 5 | **Phase C** — catalog, alias topology, artist gate | 217 evidence-backed rows, depth 1, `cards` unchanged, `cards_effective` −217 exactly, predicted survivor illustrator changes only, artist reachability intact |
+| 6 | **Phase D** — ownership | `matchedRows` and `distinctMatchedCardIds` historical; resolved count and collapse equal Phase A's prediction; **no ownership added, none lost**; GG19 still owned |
+| 7 | **Phase E** — OL-0D | rows and matched quantity conserved, distinct cards −collapse, catalog-missing does not regress, pagination/filter/sort valid |
+| 8 | **Phase F** — mutable + untouched data | import evidence byte-identical, card_extras/card_overrides payloads unchanged, zero obsolete references remain |
+| 9 | **Phase G** — security | the CAT-2D.1 ACL contract intact, now with real provenance to protect |
+| 10 | Merge PR #13; deploy the application change | build green |
+| 11 | Production smoke test | ownership, Owned Library, artist pages |
+| 12 | **Phase H** — cleanup, at the safe point | **drop `cat2d2_pre_refs`, `cat2d2_pre_map`, `cat2d2_pre_capture`** — `cat2d2_pre_refs` holds user-owned card ids and must not remain in production |
 
-Do not run step 3 if step 2 raised.
+Do not run step 4 if step 3 raised. Do not drop `cat2d2_pre_refs` before step 4
+— the migration reads it.
+
+**The app constant lands after the SQL, deliberately.** Between step 4 and step
+10, `swsh12.5-GG19` no longer resolves, so the Asako Ito notable Altaria is
+omitted with a console warning — the `expectName` guard *failing safe*, never
+substituting a different card. That brief, cosmetic, self-healing gap is
+accepted; splitting the constant into an earlier PR would buy nothing and cost a
+review boundary. Nothing else in the application reads the obsolete id.
 
 ---
 
@@ -238,13 +336,21 @@ Fully reversible; nothing is deleted and no schema object is created.
 
 1. Reverse the reference migration — `UPDATE ... SET card_id = a.alias_card_id
    FROM card_identity_aliases a WHERE a.slice = 'CAT-2D.2'`, per table, under
-   the same locks. Safe because §7 proved no user held both rows.
+   the same locks. Safe because §8 proved no user held both rows.
 2. `DELETE FROM card_identity_aliases WHERE slice = 'CAT-2D.2'` — the 217
    obsolete rows reappear in `cards_effective` byte-identical, because they were
    never deleted.
 
-`cat2d2_pre_refs` is the exact pre-migration `(table, key, card_id)` list.
-Export it before Phase H if a reversal is still plausible.
+**`public.cat2d2_pre_refs` is the exact undo list** — one row per migrated
+reference, `(table_name, row_key, card_id)`, and §6 has *proven* it is exactly
+the row set the migration changed. `cat2d2_pre_capture` is a different table
+(catalog / ownership / OL-0D fingerprints and the Phase A predictions) and
+cannot drive a reversal.
+
+If a collector has created a conflicting row since the deploy, narrow the
+reverse `UPDATE` with `cat2d2_pre_refs.row_key` — the migration's ROLLBACK
+section carries a worked example per key shape. Export the table before Phase H
+if a reversal is still plausible.
 
 ---
 

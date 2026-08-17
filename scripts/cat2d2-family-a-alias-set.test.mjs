@@ -246,6 +246,158 @@ ok(/lock table public\.card_identity_aliases in share row exclusive mode;/.test(
 ok(!/update\s+public\.user_import_rows/i.test(migration),
   'the migration never writes user_import_rows — historical evidence stays immutable');
 
+// ── §6 pre-state drift refusal (review finding 1) ───────────────────────────
+//
+// Phase A and the migration are separate SQL Editor runs with no lock held in
+// between. A collector can favourite a card, save a price point, set an intent,
+// add a binder row or clear an override in that window. Without an exact
+// comparison the migration would happily migrate rows Phase A never captured,
+// leaving public.cat2d2_pre_refs — the undo list — describing a different row
+// set than the one that actually changed.
+//
+// These assertions pin the shape of the fix, not merely its presence: BOTH
+// directions, on the full (table_name, row_key, card_id) identity, under the
+// locks, before anything is written.
+console.log('\n§6 pre-state drift refusal');
+ok(/to_regclass\('public\.cat2d2_pre_refs'\) is null/.test(migration),
+  'the migration refuses outright if Phase A never ran (cat2d2_pre_refs absent)');
+ok(migrationSquished.includes(squish('create temporary table cat2d2_current_refs')),
+  'the migration re-derives the current reference set under its own locks');
+
+const exceptCurrentMinusPre = squish(
+  'select table_name, row_key, card_id from cat2d2_current_refs except select table_name, row_key, card_id from public.cat2d2_pre_refs');
+const exceptPreMinusCurrent = squish(
+  'select table_name, row_key, card_id from public.cat2d2_pre_refs except select table_name, row_key, card_id from cat2d2_current_refs');
+ok(migrationSquished.includes(exceptCurrentMinusPre),
+  'direction 1: a reference that APPEARED after the capture is detected (current EXCEPT pre)');
+ok(migrationSquished.includes(exceptPreMinusCurrent),
+  'direction 2: a captured reference that VANISHED is detected (pre EXCEPT current)');
+ok(/REFUSED \(§6\)[\s\S]{0,400}appeared AFTER the Phase A capture/.test(migration),
+  'the APPEARED case refuses with a diagnostic that names the drift');
+ok(/REFUSED \(§6\)[\s\S]{0,400}no longer exist/.test(migration),
+  'the VANISHED case refuses with a diagnostic that names the drift');
+ok((migration.match(/errcode = '40001'/g) || []).length === 2,
+  'both drift refusals raise serialization_failure (40001), not a generic error');
+
+// The identity compared must be all three columns. A count-only comparison
+// would pass on one insert plus one delete.
+ok(/select count\(\*\) into v_appeared from \(\s*select table_name, row_key, card_id/.test(migration),
+  'the comparison is on (table_name, row_key, card_id), not on totals');
+ok(/Comparing totals is not sufficient/.test(migration),
+  'the file records WHY a count comparison would be insufficient');
+
+// Ordering: locks -> map proven -> drift refusal -> alias insert -> reference UPDATE.
+const iLock = migration.indexOf('lock table public.card_identity_aliases in share row exclusive mode;');
+const iMap = migration.indexOf('create temporary table cat2d2_map');
+const iDrift = migration.indexOf('create temporary table cat2d2_current_refs');
+const iInsert = migration.indexOf('insert into public.card_identity_aliases\n  (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)');
+const iUpdate = migration.indexOf("'update public.%I t set card_id = m.canonical_card_id '");
+ok(iLock > 0 && iMap > iLock, 'the alias-topology lock is taken before the map is derived');
+ok(iDrift > iMap, 'the drift refusal runs after the 217 pairs are proven');
+ok(iInsert > iDrift, 'the drift refusal runs BEFORE any alias row is inserted');
+ok(iUpdate > iDrift, 'the drift refusal runs BEFORE any mutable reference is migrated');
+
+// row_key must be built identically on both sides or the comparison is noise.
+console.log('\nrow_key shapes match Phase A');
+const ROW_KEYS = {
+  card_extras: 'jsonb_build_object()',
+  card_favorites: "jsonb_build_object('user_id', t.user_id)",
+  card_overrides: "jsonb_build_object('user_id', t.user_id)",
+  price_history: "jsonb_build_object('user_id', t.user_id, 'recorded_date', t.recorded_date)",
+  user_binder_cards: "jsonb_build_object('binder_id', t.binder_id)",
+  user_card_intent: "jsonb_build_object('user_id', t.user_id)",
+};
+for (const [table, builder] of Object.entries(ROW_KEYS)) {
+  const b = squish(builder);
+  ok(migrationSquished.includes(b) && validationSquished.includes(b),
+    `${table}: row_key built as ${builder} in BOTH the migration and Phase A`);
+  ok(migrationSquished.includes(squish(`from public.${table} t`)) &&
+     validationSquished.includes(squish(`from public.${table} t`)),
+    `${table}: scanned by both files`);
+}
+
+// ── Artist-first gate (review finding 3) ────────────────────────────────────
+//
+// cards_effective.illustrator = coalesce(card_extras.illustrator_override,
+// cards.illustrator), but Artist Page loads by EXACT cards.artist_id. Moving
+// card_extras onto the survivor therefore changes the rendered illustrator
+// WITHOUT giving the survivor artist reachability. Once the obsolete row leaves
+// the effective catalog the survivor is the only row that can represent the
+// printing, so a survivor with a NULL artist_id would drop it off the page.
+console.log('\nartist-first gate');
+ok(/P11\. ARTIST-FIRST GATE/.test(migration), 'the migration carries the P11 artist gate');
+ok(/alias_artist_id is not null\s*\n\s*and \(m?\.?canonical_artist_id is null or m?\.?canonical_artist_id <> m?\.?alias_artist_id\)/.test(migration.replace(/m\./g, 'm.')),
+  'P11 refuses obsolete-non-null -> survivor NULL and obsolete-non-null -> different');
+ok(/REFUSED \(P11\)/.test(migration), 'P11 refuses rather than warns');
+ok(/does not repair cards\.artist_id|not repair public\.cards\.artist_id/.test(migration),
+  'the migration states it does NOT repair cards.artist_id (no illustrator restoration)');
+ok(!/update\s+public\.cards\s+set[\s\S]{0,80}artist_id/i.test(migration),
+  'the migration never writes public.cards.artist_id');
+ok(!/update\s+public\.cards\s+set[\s\S]{0,80}artist_id/i.test(validation),
+  'the validation file never writes public.cards.artist_id either');
+
+ok(/A-GATE 4: artist reachability/.test(validation), 'Phase A carries the pre-deploy artist gate');
+ok(/'would_lose'/.test(validation) && /'would_conflict'/.test(validation) && /'preserved'/.test(validation),
+  'Phase A reports preserved / would_lose / would_conflict counts');
+ok(/'first_offenders'/.test(validation), 'Phase A reports the first offenders, not just a count');
+ok(/C10\. ARTIST-FIRST GATE, re-asserted after deployment/.test(validation),
+  'Phase C re-asserts the same invariant after deployment');
+ok(/FAIL C10 \(artist\)/.test(validation), 'the post-deploy artist assertion fails closed');
+
+// ── Unaffected-checksum domain (review finding 2) ───────────────────────────
+//
+// The original domain excluded only the 217 obsolete ids, which was wrong: §9
+// moves card_extras onto the survivors, and cards_effective.illustrator is
+// coalesce(illustrator_override, cards.illustrator), so a survivor can
+// legitimately change. swsh12.5gg-GG69 MUST change — the override is migrated
+// precisely because its casing differs from the survivor's native value.
+console.log('\nunaffected-checksum domain');
+const domain = squish('where not exists (\n  select 1 from public.cat2d2_pre_map m\n  where m.alias_card_id = ce.id or m.canonical_card_id = ce.id\n)');
+ok((validationSquished.match(new RegExp(domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length >= 2,
+  'both the Phase A capture and the Phase C re-check exclude BOTH sides of every pair');
+ok(!/cards_effective_unaffected_checksum[\s\S]{0,400}ce\.local_id ~ '\^SV/.test(validation),
+  'the old pattern-only exclusion is gone from the unaffected checksum');
+ok(/expected_survivor_illustrator/.test(validation),
+  'the expected survivor illustrator effects are captured, not hidden by the exclusion');
+ok(/C8b\./.test(validation) && /do not report the predicted illustrator/.test(validation),
+  'Phase C validates each migrated survivor against its predicted illustrator');
+ok(/C8c\./.test(validation) && /received NO migrated card_extras row changed value/.test(validation),
+  'Phase C proves every OTHER survivor is value-identical');
+ok(/cards_effective_untouched_survivors_checksum/.test(validation),
+  'a separate checksum covers the survivors that receive no override');
+
+// ── Capture tables (review finding 4) ───────────────────────────────────────
+console.log('\ncapture tables and rollback prose');
+ok(/create table if not exists public\.cat2d2_pre_map/.test(validation),
+  'the derived map is materialised so Phase A and Phase C share one domain');
+for (const t of ['cat2d2_pre_refs', 'cat2d2_pre_map', 'cat2d2_pre_capture']) {
+  ok(new RegExp(`revoke all on table public\\.${t} from public, anon, authenticated, service_role;`).test(validation),
+    `${t} is privilege-locked on creation`);
+  ok(new RegExp(`drop table if exists public\\.${t};`).test(validation),
+    `${t} is dropped in Phase H`);
+}
+const rollback = migration.slice(migration.indexOf('-- ROLLBACK'));
+ok(/THE EXACT UNDO LIST IS public\.cat2d2_pre_refs/.test(rollback),
+  'the rollback section names cat2d2_pre_refs as the exact undo list');
+ok(!/cat2d2_pre_capture[\s\S]{0,120}\(table, key, card_id\)/.test(rollback),
+  'the rollback section no longer attributes the per-row undo list to cat2d2_pre_capture');
+ok(/cat2d2_pre_capture is a different thing/.test(rollback),
+  'the rollback section says explicitly what cat2d2_pre_capture is instead');
+ok(/restrict the update with\s*\n--\s*--\s*public\.cat2d2_pre_refs/.test(rollback),
+  'the narrowing example uses cat2d2_pre_refs');
+
+// ── Deployment sequencing (review finding 5) ────────────────────────────────
+console.log('\ndeployment sequencing');
+const migrationHeader = migration.slice(0, migration.indexOf('begin;'));
+ok(/merge the PR and deploy the application change/.test(migrationHeader),
+  'the documented order is SQL first, then merge/deploy the app');
+ok(!/is best\s*\n--\s*deployed FIRST/.test(migrationHeader),
+  'the app-first recommendation is gone');
+ok(/FAILING SAFE, never substituting/.test(migrationHeader),
+  'the brief notable-card omission is documented as an accepted fail-safe gap');
+ok(/PHASE H \(cleanup\) at the appropriate safe point/.test(migrationHeader),
+  'Phase H is sequenced after merge and smoke test, not immediately after validation');
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) {
   for (const f of failures) console.error(`  - ${f}`);

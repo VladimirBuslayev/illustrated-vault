@@ -88,7 +88,7 @@
 -- obsolete and the survivor row.
 --
 -- THIS MIGRATION IMPLEMENTS NO MERGE BRANCH AT ALL. Every collision in every
--- mutable table REFUSES the whole transaction (§7). Rationale:
+-- mutable table REFUSES the whole transaction (§8). Rationale:
 --
 --   * a merge is the only operation in the entire CAT-2D design that destroys
 --     information (§10), and it would do so without a human ever seeing it;
@@ -101,23 +101,32 @@
 -- approved operator decision — not a side effect of running this file.
 --
 -- ─────────────────────────────────────────────────────────────────────────
--- DEPLOYMENT ORDER
+-- DEPLOYMENT ORDER — the established repository workflow
 -- ─────────────────────────────────────────────────────────────────────────
---   1. run docs/sql/cat-2d2-2-family-a-validation.sql PHASE A (pre-capture,
---      collision analysis). It REFUSES if any collision exists, before this
---      file is ever run.
---   2. run THIS FILE, top to bottom. One transaction: the 217 alias rows and
+--   1. independent review of the PR
+--   2. run docs/sql/cat-2d2-2-family-a-validation.sql PHASE A. It captures the
+--      pre-state, closes Q-1/Q-2/Q-3/Q-6/Q-7, and REFUSES on any merge
+--      collision or artist_id regression before this file is ever run.
+--   3. run THIS FILE, top to bottom. One transaction: the 217 alias rows and
 --      every reference migration land together or not at all (CAT-2D §6.3 —
 --      swsh12.5-GG19 must never be unowned, not even mid-migration).
---   3. run cat-2d2-2 PHASES C..G (post-validation and cleanup).
+--   4. run cat-2d2-2 PHASES C..G (post-deploy validation)
+--   5. merge the PR and deploy the application change
+--   6. production smoke test
+--   7. run cat-2d2-2 PHASE H (cleanup) at the appropriate safe point
 --
--- The application change in this slice (src/constants/artistEditorial.js,
--- swsh12.5-GG19 -> swsh12.5gg-GG19) is SAFE IN EITHER ORDER but is best
--- deployed FIRST or simultaneously: the survivor is already in cards_effective
--- today, so the new id resolves before this file runs, and the old id stops
--- resolving after it. Deploying SQL first leaves a cosmetic gap in which the
--- Asako Ito notable card is omitted with a console warning — the expectName
--- guard failing safe, never substituting.
+-- ⚠ PHASE A IS A HARD PREREQUISITE, NOT A COURTESY. §6 of this file reads
+--   public.cat2d2_pre_refs and refuses if it is absent — see §6 for why the
+--   captured pre-state must be compared, not merely trusted.
+--
+-- THE APPLICATION CHANGE DELIBERATELY LANDS AFTER THE SQL.
+--   src/constants/artistEditorial.js moves swsh12.5-GG19 -> swsh12.5gg-GG19.
+--   Between step 3 and step 5 the old id no longer resolves, so the Asako Ito
+--   notable Altaria is omitted with a console warning — the expectName guard
+--   FAILING SAFE, never substituting a different card. That brief, cosmetic,
+--   self-healing omission is accepted rather than reordered around: splitting
+--   the app constant into its own earlier PR would buy nothing and cost a
+--   review boundary. Nothing else in the application reads the obsolete id.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 begin;
@@ -142,7 +151,7 @@ begin;
 lock table public.card_identity_aliases in share row exclusive mode;
 
 -- The mutable-reference tables are locked in the same mode for the same
--- reason: §7 proves "no collision exists", then §8 acts on that proof. Without
+-- reason: §8 proves "no collision exists", then §9 acts on that proof. Without
 -- a lock a concurrent INSERT could create the colliding row in between, and
 -- the UPDATE would fail on a unique violation — or, worse, a future edit that
 -- softened the refusal into a merge would silently destroy a row written
@@ -154,9 +163,9 @@ lock table public.card_identity_aliases in share row exclusive mode;
 --
 -- If any of these six relations does not exist, this statement aborts the
 -- transaction before a single row has been read. That is the intended outcome:
--- the reference inventory in §7 would be stale, and a stale inventory is the
+-- the reference inventory in §8 would be stale, and a stale inventory is the
 -- one condition under which this migration could leave a live reference
--- pointing at an id that has left the effective catalog. §7 repeats the check
+-- pointing at an id that has left the effective catalog. §8 repeats the check
 -- with a named diagnostic for the case where the relation exists but has been
 -- replaced by something unexpected.
 lock table public.card_extras        in share row exclusive mode;
@@ -505,7 +514,7 @@ values
 --     rows were stored as 'swsh4.5-SV1' rather than 'swsh4.5-SV001'. It is
 --     meant to fire loudly rather than be worked around.
 
--- In-transaction pre-state, for the §9 deltas. Captured after the §1 locks, so
+-- In-transaction pre-state, for the §10 deltas. Captured after the §1 locks, so
 -- nothing can move underneath it.
 create temporary table cat2d2_txn_pre on commit drop as
 select
@@ -538,14 +547,16 @@ select
   a.canonical_card_id,
   a.alias_upstream_status,
   a.canonical_upstream_status,
-  o.name     as alias_name,
-  o.set_id   as alias_set_id,
-  o.set_name as alias_set_name,
-  o.local_id as alias_local_id,
-  s.name     as canonical_name,
-  s.set_id   as canonical_set_id,
-  s.set_name as canonical_set_name,
-  s.local_id as canonical_local_id
+  o.name      as alias_name,
+  o.set_id    as alias_set_id,
+  o.set_name  as alias_set_name,
+  o.local_id  as alias_local_id,
+  o.artist_id as alias_artist_id,
+  s.name      as canonical_name,
+  s.set_id    as canonical_set_id,
+  s.set_name  as canonical_set_name,
+  s.local_id  as canonical_local_id,
+  s.artist_id as canonical_artist_id
 from cat2d2_allowlist a
 join public.cards o on o.id = a.alias_card_id
 join public.cards s on s.id = a.canonical_card_id;
@@ -733,7 +744,7 @@ begin
   end if;
 
   -- ── P10. All 217 obsolete ids are visible in cards_effective TODAY ──────
-  --     This is what makes the §9 delta assertion meaningful: the effective
+  --     This is what makes the §10 delta assertion meaningful: the effective
   --     catalog must shrink by exactly 217, no more and no less.
   select count(*) into v_n
   from cat2d2_map m join public.cards_effective ce on ce.id = m.alias_card_id;
@@ -742,12 +753,207 @@ begin
       'CAT-2D.2 REFUSED (P10): % of 217 obsolete ids are currently in cards_effective — the expected delta is not 217', v_n;
   end if;
 
+  -- ── P11. ARTIST-FIRST GATE — the survivor must not lose artist reachability
+  --
+  --   Artist Page loads a curated artist's cards by EXACT public.cards.artist_id
+  --   (cardService.fetchArtistCards, the FK-only branch). Aliasing removes the
+  --   obsolete row from the effective catalog, so from that moment the ONLY row
+  --   that can represent this printing on an artist page is the survivor.
+  --
+  --   Migrating card_extras (§9) changes the survivor's EFFECTIVE illustrator —
+  --   cards_effective.illustrator is coalesce(card_extras.illustrator_override,
+  --   cards.illustrator) — but it does NOT touch public.cards.artist_id, which
+  --   is written only by the sync at card-write time. So a printing whose
+  --   obsolete row carries an artist_id and whose survivor does not would
+  --   silently LEAVE its artist's page.
+  --
+  --   CAT-2A/CAT-0 evidence makes this a live possibility, not a hypothetical:
+  --   48 of 70 swsh12.5gg rows, 100 of 122 swsh4.5sv rows and 23 of 25 cel25cc
+  --   rows have an illustrator but a NULL artist_id.
+  --
+  --   Semantics, exactly:
+  --     obsolete NULL                      -> allowed, whatever the survivor has
+  --     obsolete NOT NULL, survivor equal  -> allowed
+  --     obsolete NOT NULL, survivor NULL   -> REFUSE (reachability would be lost)
+  --     obsolete NOT NULL, survivor differs-> REFUSE (two artist claims)
+  --
+  --   This slice does NOT repair public.cards.artist_id. CAT-2D.2 is identity
+  --   reconciliation, not illustrator/artist restoration (CAT-2D §13 out of
+  --   scope). A refusal here stops the deployment and becomes an evidence-backed
+  --   follow-up decision — which is the correct outcome, not an obstacle.
+  select count(*) into v_n
+  from cat2d2_map m
+  where m.alias_artist_id is not null
+    and (m.canonical_artist_id is null or m.canonical_artist_id <> m.alias_artist_id);
+  if v_n <> 0 then
+    select string_agg(format('%s artist_id=%s -> %s artist_id=%s',
+             alias_card_id, alias_artist_id, canonical_card_id,
+             coalesce(canonical_artist_id, '<null>')), '; ') into v_detail
+    from (
+      select * from cat2d2_map
+      where alias_artist_id is not null
+        and (canonical_artist_id is null or canonical_artist_id <> alias_artist_id)
+      order by alias_card_id limit 10
+    ) q;
+    raise exception
+      'CAT-2D.2 REFUSED (P11): % pair(s) would lose or contradict artist reachability. Aliasing removes the obsolete row from the effective catalog, and this slice does not repair cards.artist_id. First 10: %',
+      v_n, v_detail;
+  end if;
+
+  select count(*) into v_n from cat2d2_map where alias_artist_id is not null;
+  raise notice 'CAT-2D.2 P11 PASSED — % of 217 obsolete rows carry an artist_id; every one is preserved on its survivor.', v_n;
+
   raise notice 'CAT-2D.2 §5 PASSED — 217 pairs proven against stored rows.';
 end $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- §6. INSERT THE 217 ALIAS ROWS
+-- §6. PRE-STATE DRIFT REFUSAL — the captured undo list must still be exact
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- THE GAP THIS CLOSES.
+--   Validation PHASE A persists public.cat2d2_pre_refs: the exact
+--   (table_name, row_key, card_id) list of every mutable reference pointing at
+--   a Family A obsolete id at capture time. That list is the slice's undo list
+--   (§ROLLBACK), and Phase F re-checks it.
+--
+--   But Phase A and this file are SEPARATE SQL Editor runs, minutes or hours
+--   apart, with NO lock held in between. In that window a collector can
+--   favourite a card, save a price point, set a hunt intent, add a binder row,
+--   or clear an override. Nothing in the original design noticed:
+--     * §8 counts references as they are NOW, under the locks — a count that
+--       silently includes rows Phase A never saw;
+--     * §9 then migrates exactly those rows.
+--   The result would commit cleanly while cat2d2_pre_refs — the thing a
+--   rollback depends on — no longer described what was actually changed.
+--   A row added in the window would be migrated and NOT be reversible from the
+--   capture; a row deleted in the window would be listed in an undo that would
+--   silently do nothing.
+--
+--   Comparing totals is not sufficient: one insert plus one delete leaves the
+--   count identical while both endpoints are wrong. So the comparison is an
+--   EXACT SET comparison on (table_name, row_key, card_id), in BOTH directions.
+--
+-- WHY IT IS SAFE TO DO IT HERE.
+--   The §1 locks are already held, so the set derived below cannot move again
+--   before §9 migrates it. From this point the captured list, the scanned list
+--   and the migrated list are provably the same rows.
+--
+-- row_key MUST be built exactly as Phase A builds it — same key columns, same
+-- jsonb shape, per table — or the comparison would report drift that is really
+-- a formatting difference. The six branches below are deliberately written out
+-- rather than generated, so a reviewer can diff them against Phase A by eye.
+-- card_extras is keyed by card_id alone, so its row_key is the empty object.
+
+do $$
+begin
+  if to_regclass('public.cat2d2_pre_refs') is null then
+    raise exception
+      'CAT-2D.2 REFUSED (§6): public.cat2d2_pre_refs does not exist. PHASE A of docs/sql/cat-2d2-2-family-a-validation.sql is a HARD PREREQUISITE — it captures the pre-state this migration is required to prove it is still acting on. Run Phase A, then re-run this file.';
+  end if;
+end $$;
+
+create temporary table cat2d2_current_refs on commit drop as
+  select 'card_extras'::text       as table_name,
+         jsonb_build_object()                                              as row_key,
+         t.card_id
+    from public.card_extras t       join cat2d2_map m on m.alias_card_id = t.card_id
+union all
+  select 'card_favorites',
+         jsonb_build_object('user_id', t.user_id),
+         t.card_id
+    from public.card_favorites t    join cat2d2_map m on m.alias_card_id = t.card_id
+union all
+  select 'card_overrides',
+         jsonb_build_object('user_id', t.user_id),
+         t.card_id
+    from public.card_overrides t    join cat2d2_map m on m.alias_card_id = t.card_id
+union all
+  select 'price_history',
+         jsonb_build_object('user_id', t.user_id, 'recorded_date', t.recorded_date),
+         t.card_id
+    from public.price_history t     join cat2d2_map m on m.alias_card_id = t.card_id
+union all
+  select 'user_binder_cards',
+         jsonb_build_object('binder_id', t.binder_id),
+         t.card_id
+    from public.user_binder_cards t join cat2d2_map m on m.alias_card_id = t.card_id
+union all
+  select 'user_card_intent',
+         jsonb_build_object('user_id', t.user_id),
+         t.card_id
+    from public.user_card_intent t  join cat2d2_map m on m.alias_card_id = t.card_id;
+
+do $$
+declare
+  v_appeared bigint;
+  v_vanished bigint;
+  v_pre      bigint;
+  v_now      bigint;
+  v_detail   text;
+begin
+  select count(*) into v_pre from public.cat2d2_pre_refs;
+  select count(*) into v_now from cat2d2_current_refs;
+
+  -- Each table's unique key makes (table_name, row_key, card_id) unique within
+  -- it, so EXCEPT is a faithful set difference here. The count equality below
+  -- is asserted as well, so a duplicate that somehow existed could not hide.
+
+  -- D1. APPEARED — a reference exists now that Phase A did not capture.
+  select count(*) into v_appeared from (
+    select table_name, row_key, card_id from cat2d2_current_refs
+    except
+    select table_name, row_key, card_id from public.cat2d2_pre_refs
+  ) q;
+  if v_appeared <> 0 then
+    select string_agg(format('%s %s -> %s', table_name, row_key::text, card_id), '; ') into v_detail
+    from (
+      select table_name, row_key, card_id from cat2d2_current_refs
+      except
+      select table_name, row_key, card_id from public.cat2d2_pre_refs
+      order by 1, 3 limit 10
+    ) q;
+    raise exception
+      'CAT-2D.2 REFUSED (§6): % mutable reference(s) appeared AFTER the Phase A capture. Migrating them would leave public.cat2d2_pre_refs describing a different row set than the one this migration changed, so the undo list would be wrong. Re-run Phase A and re-review. First 10: %',
+      v_appeared, v_detail
+      using errcode = '40001';
+  end if;
+
+  -- D2. VANISHED — Phase A captured a reference that is no longer there.
+  select count(*) into v_vanished from (
+    select table_name, row_key, card_id from public.cat2d2_pre_refs
+    except
+    select table_name, row_key, card_id from cat2d2_current_refs
+  ) q;
+  if v_vanished <> 0 then
+    select string_agg(format('%s %s -> %s', table_name, row_key::text, card_id), '; ') into v_detail
+    from (
+      select table_name, row_key, card_id from public.cat2d2_pre_refs
+      except
+      select table_name, row_key, card_id from cat2d2_current_refs
+      order by 1, 3 limit 10
+    ) q;
+    raise exception
+      'CAT-2D.2 REFUSED (§6): % captured mutable reference(s) no longer exist. The user changed them between Phase A and now, so the undo list is stale. Re-run Phase A and re-review. First 10: %',
+      v_vanished, v_detail
+      using errcode = '40001';
+  end if;
+
+  -- D3. Cardinality, as a third statement of the same fact. Two symmetric
+  --     EXCEPTs both empty already implies set equality; this also catches a
+  --     duplicate row that set semantics would have absorbed.
+  if v_pre <> v_now then
+    raise exception
+      'CAT-2D.2 REFUSED (§6): Phase A captured % reference row(s) but % exist now, with no set difference — a duplicate row exists in one of the two lists',
+      v_pre, v_now;
+  end if;
+
+  raise notice 'CAT-2D.2 §6 PASSED — the % captured reference row(s) are exactly the rows now locked for migration.', v_now;
+end $$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §7. INSERT THE 217 ALIAS ROWS
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- family = 'set_rename' is the value CAT-2D §3.1 defines for this column
@@ -799,7 +1005,7 @@ order by m.alias_card_id;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- §7. MUTABLE-REFERENCE COLLISION ANALYSIS   (fail-closed; no merge branch)
+-- §8. MUTABLE-REFERENCE COLLISION ANALYSIS   (fail-closed; no merge branch)
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- Six mutable tables carry a card_id that may point at a Family A obsolete id.
@@ -849,6 +1055,7 @@ declare
   i            int;
   v_join       text;
   v_refs       bigint;
+  v_pre_refs   bigint;
   v_coll       bigint;
   v_total_coll bigint := 0;
   v_report     text   := '';
@@ -858,7 +1065,7 @@ begin
     -- missing table is a named refusal rather than an opaque runtime error.
     if to_regclass('public.' || quote_ident(r.table_name)) is null then
       raise exception
-        'CAT-2D.2 REFUSED (§7): expected mutable-reference table public.% does not exist — the reference inventory is stale and this migration must not proceed on it',
+        'CAT-2D.2 REFUSED (§8): expected mutable-reference table public.% does not exist — the reference inventory is stale and this migration must not proceed on it',
         r.table_name;
     end if;
 
@@ -866,6 +1073,16 @@ begin
       'select count(*) from public.%I t join cat2d2_map m on m.alias_card_id = t.card_id',
       r.table_name
     ) into v_refs;
+
+    -- Third statement of the same fact: this dynamic per-table count must agree
+    -- with the static six-branch derivation §6 compared against the capture.
+    -- If the two ever disagreed, one of them is addressing the wrong rows.
+    select count(*) into v_pre_refs from cat2d2_current_refs c where c.table_name = r.table_name;
+    if v_refs <> v_pre_refs then
+      raise exception
+        'CAT-2D.2 REFUSED (§8): public.% has % obsolete reference(s) by the dynamic scan but % by the §6 derivation — the two disagree and neither can be trusted',
+        r.table_name, v_refs, v_pre_refs;
+    end if;
 
     -- `is not distinct from` rather than `=`: a NULL peer column (e.g. a
     -- nullable user_id) must still count as the same owner, otherwise a real
@@ -885,32 +1102,32 @@ begin
     update cat2d2_ref_tables set refs = v_refs, collisions = v_coll where ord = r.ord;
     v_total_coll := v_total_coll + v_coll;
     v_report := v_report || format('%s refs=%s collisions=%s; ', r.table_name, v_refs, v_coll);
-    raise notice 'CAT-2D.2 §7 % obsolete refs = %, collisions = %', rpad(r.table_name, 18), v_refs, v_coll;
+    raise notice 'CAT-2D.2 §8 % obsolete refs = %, collisions = %', rpad(r.table_name, 18), v_refs, v_coll;
   end loop;
 
   if v_total_coll <> 0 then
     raise exception
-      'CAT-2D.2 REFUSED (§7): % merge collision(s) found — a user already holds BOTH the obsolete and the survivor row. Resolving a collision destroys information and is an explicit operator decision, never an automatic one. Scan: %',
+      'CAT-2D.2 REFUSED (§8): % merge collision(s) found — a user already holds BOTH the obsolete and the survivor row. Resolving a collision destroys information and is an explicit operator decision, never an automatic one. Scan: %',
       v_total_coll, v_report
       using errcode = '23505';
   end if;
 
-  raise notice 'CAT-2D.2 §7 PASSED — zero collisions. %', v_report;
+  raise notice 'CAT-2D.2 §8 PASSED — zero collisions. %', v_report;
 end $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- §8. MIGRATE THE MUTABLE REFERENCES
+-- §9. MIGRATE THE MUTABLE REFERENCES
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- UPDATE only. Never DELETE, never INSERT, never ON CONFLICT.
 --
 -- CAT-2D §6.3: the override on swsh12.5-GG19 is the SOLE reason that printing
--- is owned — it is not in the active snapshot. Because §6 and §8 are in ONE
+-- is owned — it is not in the active snapshot. Because §7 and §9 are in ONE
 -- transaction, there is no committed state in which the obsolete id has left
 -- cards_effective while the survivor is not yet force-owned.
 --
--- The per-table row_count is compared against §7's scan. Under the §1 locks
+-- The per-table row_count is compared against §8's scan. Under the §1 locks
 -- these cannot differ; the assertion exists so that a future edit which
 -- weakens the locking cannot silently migrate a different row set than the one
 -- that was proven collision-free.
@@ -931,22 +1148,22 @@ begin
 
     if v_n <> r.refs then
       raise exception
-        'CAT-2D.2 REFUSED (§8): public.% migrated % row(s) but §7 proved % — the table changed under the migration',
+        'CAT-2D.2 REFUSED (§9): public.% migrated % row(s) but §8 proved % — the table changed under the migration',
         r.table_name, v_n, r.refs;
     end if;
 
     v_total := v_total + v_n;
     if v_n > 0 then
-      raise notice 'CAT-2D.2 §8 % migrated % row(s) to canonical ids', rpad(r.table_name, 18), v_n;
+      raise notice 'CAT-2D.2 §9 % migrated % row(s) to canonical ids', rpad(r.table_name, 18), v_n;
     end if;
   end loop;
 
-  raise notice 'CAT-2D.2 §8 PASSED — % mutable reference row(s) migrated.', v_total;
+  raise notice 'CAT-2D.2 §9 PASSED — % mutable reference row(s) migrated.', v_total;
 end $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- §9. IN-TRANSACTION INVARIANTS   (CAT-2D §9 INV-8..INV-13)
+-- §10. IN-TRANSACTION INVARIANTS   (CAT-2D §9 INV-8..INV-13)
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- Asserted before COMMIT so a violation rolls the whole slice back rather than
@@ -1030,7 +1247,7 @@ begin
       r.table_name
     ) into v_n;
     if v_n <> 0 then
-      raise exception 'CAT-2D.2 FAIL (§8): public.% still holds % obsolete reference(s)', r.table_name, v_n;
+      raise exception 'CAT-2D.2 FAIL (§9): public.% still holds % obsolete reference(s)', r.table_name, v_n;
     end if;
   end loop;
 
@@ -1046,7 +1263,7 @@ begin
     raise exception 'CAT-2D.2 FAIL (INV-7): user_import_rows changed — historical evidence must be immutable';
   end if;
 
-  raise notice 'CAT-2D.2 §9 PASSED — cards % (unchanged), cards_effective % -> %, aliases +217.',
+  raise notice 'CAT-2D.2 §10 PASSED — cards % (unchanged), cards_effective % -> %, aliases +217.',
     pre.cards_rows, pre.cards_effective_rows, pre.cards_effective_rows - 217;
 end $$;
 
@@ -1077,11 +1294,19 @@ select
 -- alias table; every reference change is an UPDATE of card_id whose inverse is
 -- the same map read backwards.
 --
--- ⚠ Run PHASE A of cat-2d2-2 BEFORE deploying, and do NOT drop
---   public.cat2d2_pre_capture until you are certain no rollback is wanted:
---   it holds the exact pre-migration (table, key, card_id) list. The reverse
---   UPDATE below reconstructs the same result from the alias table, but the
---   capture is the independent record.
+-- ⚠ THE EXACT UNDO LIST IS public.cat2d2_pre_refs — one row per migrated
+--   reference, carrying (table_name, row_key, card_id). §6 has PROVEN that
+--   list is exactly the row set this migration changed, so it is authoritative
+--   rather than merely indicative.
+--
+--   public.cat2d2_pre_capture is a different thing: catalog/ownership/OL-0D
+--   fingerprints and the Phase A predictions. It contains NO per-row reference
+--   list and cannot drive a reversal.
+--
+--   Do not run PHASE H of cat-2d2-2 (which drops both) until you are certain no
+--   rollback is wanted. Export cat2d2_pre_refs first if there is any doubt: the
+--   reverse UPDATE below reconstructs the same result from the alias table, but
+--   only cat2d2_pre_refs identifies the individual rows.
 --
 --   begin;
 --
@@ -1094,7 +1319,7 @@ select
 --   lock table public.user_card_intent   in share row exclusive mode;
 --
 --   -- 1. reverse the reference migration, for THIS slice's rows only.
---   --    Safe because §7 proved no user held both rows, so no obsolete row
+--   --    Safe because §8 proved no user held both rows, so no obsolete row
 --   --    can exist to conflict with.
 --   update public.card_extras       t set card_id = a.alias_card_id
 --     from public.card_identity_aliases a
@@ -1103,10 +1328,22 @@ select
 --   --     user_binder_cards, user_card_intent.
 --   --
 --   -- ⚠ This reverses EVERY row now pointing at a survivor, including any row
---   --   that already pointed there before the migration. Because §7 proved
+--   --   that already pointed there before the migration. Because §8 proved
 --   --   zero collisions, no such row existed for a migrated owner — but if a
---   --   user has created one SINCE the deploy, use cat2d2_pre_capture to
---   --   restrict the update to the exact keys that were migrated.
+--   --   user has created one SINCE the deploy, restrict the update with
+--   --   public.cat2d2_pre_refs, e.g. for the user_id-keyed tables:
+--   --
+--   --     update public.card_favorites t set card_id = a.alias_card_id
+--   --       from public.card_identity_aliases a
+--   --       join public.cat2d2_pre_refs p
+--   --         on p.table_name = 'card_favorites'
+--   --        and p.card_id    = a.alias_card_id
+--   --        and (p.row_key ->> 'user_id')::uuid = t.user_id
+--   --      where a.slice = 'CAT-2D.2' and t.card_id = a.canonical_card_id;
+--   --
+--   --   card_extras is keyed by card_id alone (row_key is '{}'), and
+--   --   price_history additionally needs
+--   --   (p.row_key ->> 'recorded_date')::date = t.recorded_date.
 --
 --   -- 2. remove the alias rows. The 217 obsolete rows reappear in
 --   --    cards_effective byte-identical, because they were never deleted.

@@ -21,26 +21,39 @@
 --       phase is independently runnable in any session after A.
 --
 -- ─────────────────────────────────────────────────────────────────────────
--- ⚠ PHASE A IS A GATE, NOT A SNAPSHOT
+-- ⚠ PHASE A IS A GATE AND AN INPUT, NOT JUST A SNAPSHOT
 -- ─────────────────────────────────────────────────────────────────────────
 -- Phase A closes CAT-2D §11 Q-1, Q-2, Q-3, Q-6 and Q-7 against production, and
--- REFUSES if any mutable-reference merge collision exists. If Phase A raises,
--- DO NOT run the migration — a collision is an explicit operator decision.
+-- REFUSES on:
+--   * any mutable-reference merge collision (Q-3) — an explicit operator
+--     decision, never an automatic one;
+--   * any pair that would LOSE or CONTRADICT artist reachability (A-GATE 4);
+--   * a derived map that is not exactly 217 / 122 / 70 / 25.
+-- If Phase A raises, DO NOT run the migration.
+--
+-- Phase A also writes public.cat2d2_pre_refs, which cat-2d2-1 §6 READS and
+-- compares as an exact set, in both directions, under its locks. The two runs
+-- are separated in time with no lock held between them, so that comparison is
+-- what makes the persistent undo list genuinely exact rather than merely
+-- indicative. Do not drop cat2d2_pre_refs before Phase B.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- PHASES
 -- ─────────────────────────────────────────────────────────────────────────
 --   A0  discover the validation user                      (read-only)
---   A   PRE-DEPLOY capture + evidence gate                 (creates 2 tables)
+--   A   PRE-DEPLOY capture + evidence gate                 (creates 3 tables)
 --   B   DEPLOY                          (run cat-2d2-1-family-a-reconciliation)
---   C   POST-DEPLOY catalog + alias topology              (read-only)
+--   C   POST-DEPLOY catalog, alias topology + artist gate  (read-only)
 --   D   POST-DEPLOY ownership                             (read-only)
 --   E   POST-DEPLOY OL-0D                                 (read-only)
 --   F   POST-DEPLOY mutable + untouched data              (read-only)
 --   G   security — CAT-2D.1 ACL contract unchanged        (read-only)
---   H   cleanup — drop both capture tables
+--   H   cleanup — drop all three capture tables
 --
--- Run A0 → A → B → C → D → E → F → G → H in order. Each may be its own Run.
+-- Run A0 → A → B → C → D → E → F → G in order; each may be its own Run.
+-- H runs later, at the safe point in the deployment sequence — after the PR is
+-- merged, the application change is deployed and the production smoke test has
+-- passed. See the DEPLOYMENT ORDER header of cat-2d2-1.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -74,22 +87,50 @@ select set_config(
 );
 
 -- Capture tables. PERSISTENT, privilege-locked (cat2d2_pre_refs holds
--- user-owned card ids), both dropped in Phase H.
+-- user-owned card ids), all THREE dropped in Phase H.
 create table if not exists public.cat2d2_pre_capture (
   key   text primary key,
   value jsonb not null
 );
 revoke all on table public.cat2d2_pre_capture from public, anon, authenticated, service_role;
 
--- The exact pre-migration reference rows, i.e. the undo list for §8 of the
+-- The exact pre-migration reference rows, i.e. the undo list for §9 of the
 -- migration. row_key carries the non-card_id components of each table's unique
 -- key, which is what makes a reversal addressable to the exact rows migrated.
+--
+-- ⚠ THIS TABLE IS A HARD INPUT TO THE MIGRATION, NOT JUST A RECORD.
+--   cat-2d2-1 §6 re-derives the same set under its locks and refuses unless the
+--   two are IDENTICAL in both directions. Do not drop it before Phase B, and do
+--   not edit it: a mismatch is the signal that a collector changed something
+--   between the two SQL Editor runs, and the correct response is to re-run
+--   Phase A, not to reconcile it by hand.
 create table if not exists public.cat2d2_pre_refs (
   table_name text  not null,
   row_key    jsonb not null,
   card_id    text  not null
 );
 revoke all on table public.cat2d2_pre_refs from public, anon, authenticated, service_role;
+
+-- The independently derived Family A map, MATERIALISED rather than merely
+-- counted. Two things need the exact id set, not a total:
+--
+--   * the "unaffected catalog" checksum domain (A1 / Phase C8) must exclude
+--     BOTH sides of every pair — see the comment there for why the canonical
+--     side is not innocent;
+--   * the artist-reachability gate (A-GATE 4 / Phase C10) compares artist_id
+--     across each pair and must name the offenders.
+--
+-- Phase A and Phase C read the SAME rows from here, so the two checksums are
+-- taken over provably the same domain rather than over two re-evaluations of a
+-- predicate that could drift.
+create table if not exists public.cat2d2_pre_map (
+  alias_card_id       text primary key,
+  canonical_card_id   text not null,
+  alias_set_id        text not null,
+  alias_artist_id     text,
+  canonical_artist_id text
+);
+revoke all on table public.cat2d2_pre_map from public, anon, authenticated, service_role;
 
 do $$
 declare
@@ -129,7 +170,47 @@ begin
   raise notice 'PHASE A context OK — auth.uid() = %, one active batch, alias table empty.', v_uid;
 end $$;
 
--- ── A1. Catalog fingerprints ──────────────────────────────────────────────
+-- ── A1. The independently derived Family A map, MATERIALISED ──────────────
+--
+-- Derived here a SECOND time, straight from public.cards, without reading the
+-- migration's allowlist. If this derivation and the migration's §5 derivation
+-- ever disagree, the migration or Phase C fails — two independent derivations
+-- agreeing is the point, so do not refactor them into one.
+--
+-- Materialised (not merely counted) because A2's checksum domain and A-GATE 4's
+-- artist comparison both need the exact id set, and because Phase C must use
+-- the IDENTICAL rows rather than re-evaluate a predicate that could drift.
+
+delete from public.cat2d2_pre_map;
+
+with fam(alias_set_id, canonical_set_id, pat) as (values
+  ('swsh4.5',  'swsh4.5sv',  '^SV[0-9]{3}$'),
+  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$'),
+  ('cel25',    'cel25cc',    '^CC[0-9]{3}$')
+)
+insert into public.cat2d2_pre_map
+  (alias_card_id, canonical_card_id, alias_set_id, alias_artist_id, canonical_artist_id)
+select o.id, s.id, f.alias_set_id, o.artist_id, s.artist_id
+from public.cards o
+join fam f on f.alias_set_id = o.set_id and o.local_id ~ f.pat
+join public.cards s on s.set_id = f.canonical_set_id
+                   and upper(btrim(s.local_id)) = upper(btrim(o.local_id));
+
+insert into public.cat2d2_pre_capture (key, value)
+select 'derived_map', jsonb_build_object(
+  'total',      (select count(*) from public.cat2d2_pre_map),
+  'by_set',     (select jsonb_object_agg(alias_set_id, n)
+                   from (select alias_set_id, count(*) as n from public.cat2d2_pre_map group by alias_set_id) q),
+  'obsolete_in_cards_effective',
+                (select count(*) from public.cat2d2_pre_map m
+                   join public.cards_effective ce on ce.id = m.alias_card_id),
+  'survivors_in_cards_effective',
+                (select count(*) from public.cat2d2_pre_map m
+                   join public.cards_effective ce on ce.id = m.canonical_card_id)
+)
+on conflict (key) do update set value = excluded.value;
+
+-- ── A2. Catalog fingerprints ──────────────────────────────────────────────
 
 insert into public.cat2d2_pre_capture (key, value)
 select 'validation_user', to_jsonb(current_setting('cat2d2.validation_user'))
@@ -149,49 +230,60 @@ from information_schema.columns
 where table_schema = 'public' and table_name = 'cards_effective'
 on conflict (key) do update set value = excluded.value;
 
--- Row fingerprint over the ids that must be UNAFFECTED: everything except the
--- 217 obsolete ids. Phase C re-computes it, so "no unrelated effective id
--- changed" becomes an exact claim rather than a row-count argument.
+-- ── THE UNAFFECTED DOMAIN — why BOTH sides of every pair are excluded ─────
+--
+-- An earlier revision excluded only the 217 OBSOLETE ids and claimed everything
+-- else must be byte-identical. That claim was WRONG, and it would have made
+-- Phase C8 fail on a correct deployment:
+--
+--   cards_effective.illustrator = coalesce(card_extras.illustrator_override,
+--                                          cards.illustrator)
+--
+--   §9 of the migration moves card_extras rows from the obsolete id ONTO the
+--   canonical survivor. The survivor's `illustrator` therefore LEGITIMATELY
+--   changes — for swsh12.5gg-GG69 it must, since the whole reason that override
+--   is migrated rather than retired is that its casing differs from the
+--   survivor's native value (CAT-2D §2.5).
+--
+-- So "unaffected" means: NEITHER SIDE of any of the 217 approved pairs. The
+-- checksum below therefore asserts exactly one thing, and asserts it exactly:
+--
+--   every effective catalog row unrelated to both sides of the 217 approved
+--   identity pairs is value-identical before and after.
+--
+-- The survivor-side changes are NOT hidden inside that exclusion — they are
+-- captured immediately below and validated positively in Phase C, so an
+-- unexpected survivor change is a failure rather than an untested gap.
 insert into public.cat2d2_pre_capture (key, value)
 select 'cards_effective_unaffected_checksum',
        to_jsonb(md5(coalesce(string_agg(md5(to_jsonb(ce)::text), ',' order by ce.id), '')))
 from public.cards_effective ce
-where not (
-  (ce.set_id = 'swsh4.5'  and ce.local_id ~ '^SV[0-9]{3}$') or
-  (ce.set_id = 'swsh12.5' and ce.local_id ~ '^GG[0-9]{2}$') or
-  (ce.set_id = 'cel25'    and ce.local_id ~ '^CC[0-9]{3}$')
+where not exists (
+  select 1 from public.cat2d2_pre_map m
+  where m.alias_card_id = ce.id or m.canonical_card_id = ce.id
 )
 on conflict (key) do update set value = excluded.value;
 
--- ── A2. The independently derived Family A map ────────────────────────────
---
--- Derived here a SECOND time, straight from public.cards, without reading the
--- migration's allowlist. If this derivation and the migration's §5 derivation
--- ever disagree, Phase C fails — two independent derivations agreeing is the
--- point, so do not refactor them into one.
-
+-- The survivors that WILL receive a migrated card_extras row, and the exact
+-- illustrator value cards_effective must report for each afterwards. NULL
+-- override means the survivor keeps its own cards.illustrator.
 insert into public.cat2d2_pre_capture (key, value)
-with fam(alias_set_id, canonical_set_id, pat) as (values
-  ('swsh4.5',  'swsh4.5sv',  '^SV[0-9]{3}$'),
-  ('swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$'),
-  ('cel25',    'cel25cc',    '^CC[0-9]{3}$')
-),
-map as (
-  select f.alias_set_id, o.id as alias_card_id, s.id as canonical_card_id
-  from public.cards o
-  join fam f on f.alias_set_id = o.set_id and o.local_id ~ f.pat
-  join public.cards s on s.set_id = f.canonical_set_id
-                     and upper(btrim(s.local_id)) = upper(btrim(o.local_id))
-)
-select 'derived_map', jsonb_build_object(
-  'total',      (select count(*) from map),
-  'by_set',     (select jsonb_object_agg(alias_set_id, n)
-                   from (select alias_set_id, count(*) as n from map group by alias_set_id) q),
-  'obsolete_in_cards_effective',
-                (select count(*) from map m join public.cards_effective ce on ce.id = m.alias_card_id),
-  'survivors_in_cards_effective',
-                (select count(*) from map m join public.cards_effective ce on ce.id = m.canonical_card_id)
-)
+select 'expected_survivor_illustrator',
+       coalesce(jsonb_object_agg(m.canonical_card_id,
+         coalesce(to_jsonb(e.illustrator_override), to_jsonb(s.illustrator), 'null'::jsonb)), '{}'::jsonb)
+from public.cat2d2_pre_map m
+join public.card_extras e on e.card_id = m.alias_card_id
+join public.cards s on s.id = m.canonical_card_id
+on conflict (key) do update set value = excluded.value;
+
+-- Every OTHER survivor must be value-identical after the migration: it is not
+-- receiving an override, and nothing else in this slice can touch it.
+insert into public.cat2d2_pre_capture (key, value)
+select 'cards_effective_untouched_survivors_checksum',
+       to_jsonb(md5(coalesce(string_agg(md5(to_jsonb(ce)::text), ',' order by ce.id), '')))
+from public.cards_effective ce
+join public.cat2d2_pre_map m on m.canonical_card_id = ce.id
+where not exists (select 1 from public.card_extras e where e.card_id = m.alias_card_id)
 on conflict (key) do update set value = excluded.value;
 
 -- ── A3. Ownership + OL-0D pre-state, and the PREDICTED collapse ───────────
@@ -391,17 +483,69 @@ select 'reference_inventory', jsonb_build_object(
 )
 on conflict (key) do update set value = excluded.value;
 
+-- ── A6. ARTIST-FIRST GATE — artist reachability across the 217 pairs ──────
+--
+-- Artist Page loads a curated artist's cards by EXACT public.cards.artist_id
+-- (cardService.fetchArtistCards, the FK-only branch). Once the obsolete row
+-- leaves the effective catalog, the survivor is the ONLY row that can carry
+-- this printing onto an artist page.
+--
+-- Migrating card_extras changes the survivor's EFFECTIVE illustrator; it does
+-- NOT change public.cards.artist_id, which only the sync writes. So a pair
+-- whose obsolete row has an artist_id and whose survivor does not would
+-- silently drop that printing off its artist's page.
+--
+-- CAT-0 per-set evidence makes this a live risk rather than a hypothetical:
+-- 100 of 122 swsh4.5sv rows, 48 of 70 swsh12.5gg rows and 23 of 25 cel25cc rows
+-- carry an illustrator but a NULL artist_id.
+--
+-- Semantics:
+--   obsolete NULL                       -> allowed (nothing to lose)
+--   obsolete NOT NULL, survivor equal   -> allowed
+--   obsolete NOT NULL, survivor NULL    -> REFUSE — reachability would be lost
+--   obsolete NOT NULL, survivor differs -> REFUSE — two conflicting claims
+--
+-- CAT-2D.2 does NOT repair public.cards.artist_id. That is illustrator/artist
+-- restoration, explicitly out of scope. A refusal here STOPS THE DEPLOYMENT and
+-- becomes an evidence-backed follow-up decision — the correct outcome.
+insert into public.cat2d2_pre_capture (key, value)
+select 'artist_id_gate', jsonb_build_object(
+  'pairs',                    (select count(*) from public.cat2d2_pre_map),
+  'obsolete_with_artist_id',  (select count(*) from public.cat2d2_pre_map where alias_artist_id is not null),
+  'canonical_with_artist_id', (select count(*) from public.cat2d2_pre_map where canonical_artist_id is not null),
+  'preserved',                (select count(*) from public.cat2d2_pre_map
+                                 where alias_artist_id is not null
+                                   and canonical_artist_id = alias_artist_id),
+  'would_lose',               (select count(*) from public.cat2d2_pre_map
+                                 where alias_artist_id is not null and canonical_artist_id is null),
+  'would_conflict',           (select count(*) from public.cat2d2_pre_map
+                                 where alias_artist_id is not null
+                                   and canonical_artist_id is not null
+                                   and canonical_artist_id <> alias_artist_id),
+  'first_offenders',          coalesce((select jsonb_agg(jsonb_build_object(
+                                   'alias', alias_card_id, 'alias_artist_id', alias_artist_id,
+                                   'canonical', canonical_card_id, 'canonical_artist_id', canonical_artist_id))
+                                 from (select * from public.cat2d2_pre_map
+                                        where alias_artist_id is not null
+                                          and (canonical_artist_id is null
+                                               or canonical_artist_id <> alias_artist_id)
+                                        order by alias_card_id limit 20) q), '[]'::jsonb)
+)
+on conflict (key) do update set value = excluded.value;
+
 do $$
 declare
   v_map      jsonb;
   v_inv      jsonb;
   v_pred     jsonb;
+  v_art      jsonb;
   v_state    text;
   v_coll     bigint;
 begin
   select value into v_map  from public.cat2d2_pre_capture where key = 'derived_map';
   select value into v_inv  from public.cat2d2_pre_capture where key = 'reference_inventory';
   select value into v_pred from public.cat2d2_pre_capture where key = 'active_batch_prediction';
+  select value into v_art  from public.cat2d2_pre_capture where key = 'artist_id_gate';
 
   -- A-GATE 1: the derived map must be exactly the approved shape. If it is not,
   -- the approval and the database disagree and the migration would refuse
@@ -439,8 +583,15 @@ begin
     raise exception 'FAIL A-GATE: captured ownership state is % — expected ready', v_state;
   end if;
 
-  raise notice 'PHASE A PASSED — 217 pairs derived, % reference row(s) will migrate, ZERO collisions, predicted aliasCollapsedCount = %.',
-    v_inv ->> 'refs_total', v_pred ->> 'collapse_pred';
+  -- A-GATE 4: artist reachability. See A6 above for the full reasoning.
+  if (v_art ->> 'would_lose')::bigint <> 0 or (v_art ->> 'would_conflict')::bigint <> 0 then
+    raise exception
+      'FAIL A-GATE (artist): % pair(s) would LOSE artist reachability (obsolete has artist_id, survivor NULL) and % would CONFLICT (different artist_id). DO NOT DEPLOY. CAT-2D.2 does not repair cards.artist_id — this is an evidence-backed follow-up decision. Offenders: %',
+      v_art ->> 'would_lose', v_art ->> 'would_conflict', jsonb_pretty(v_art -> 'first_offenders');
+  end if;
+
+  raise notice 'PHASE A PASSED — 217 pairs derived, % reference row(s) will migrate, ZERO collisions, % obsolete row(s) carry an artist_id and all are preserved, predicted aliasCollapsedCount = %.',
+    v_inv ->> 'refs_total', v_art ->> 'obsolete_with_artist_id', v_pred ->> 'collapse_pred';
 end $$;
 
 -- Human-readable evidence dump. Report these figures with the deployment.
@@ -455,6 +606,13 @@ from public.cat2d2_pre_refs group by table_name order by table_name;
 --   Run docs/sql/cat-2d2-1-family-a-reconciliation.sql now, top to bottom.
 --   It is one transaction and needs owner privileges. No JWT context required.
 --   Do NOT proceed if Phase A raised.
+--
+--   ⚠ Do NOT drop public.cat2d2_pre_refs first. The migration's §6 reads it and
+--     refuses unless the reference set it is about to migrate is IDENTICAL, in
+--     both directions, to what Phase A captured. If a collector changed a
+--     favourite / price point / intent / binder row / override in between, §6
+--     refuses with errcode 40001 — re-run Phase A and re-review rather than
+--     editing the capture.
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -463,7 +621,7 @@ from public.cat2d2_pre_refs group by table_name order by table_name;
 
 do $$
 declare
-  v_pre jsonb; v_now jsonb; v_map jsonb; v_n bigint; v_txt text;
+  v_pre jsonb; v_now jsonb; v_map jsonb; v_exp jsonb; v_n bigint; v_txt text;
 begin
   select value into v_map from public.cat2d2_pre_capture where key = 'derived_map';
   if v_map is null then
@@ -554,34 +712,97 @@ begin
   if v_n <> 0 then raise exception 'FAIL C7 (INV-10): % aliased id(s) still in cards_effective', v_n; end if;
 
   -- C8. No UNRELATED effective row changed — value-level, not count-level.
+  --     The domain is BOTH sides of every one of the 217 pairs, read from the
+  --     same cat2d2_pre_map rows Phase A used. A canonical survivor is NOT
+  --     unrelated: §9 moves card_extras onto it and cards_effective.illustrator
+  --     is coalesce(illustrator_override, cards.illustrator), so a survivor can
+  --     legitimately change value. Those changes are validated positively in
+  --     C8b/C8c rather than hidden inside this exclusion.
   select value into v_pre from public.cat2d2_pre_capture where key = 'cards_effective_unaffected_checksum';
   select to_jsonb(md5(coalesce(string_agg(md5(to_jsonb(ce)::text), ',' order by ce.id), '')))
     into v_now
   from public.cards_effective ce
-  where not (
-    (ce.set_id = 'swsh4.5'  and ce.local_id ~ '^SV[0-9]{3}$') or
-    (ce.set_id = 'swsh12.5' and ce.local_id ~ '^GG[0-9]{2}$') or
-    (ce.set_id = 'cel25'    and ce.local_id ~ '^CC[0-9]{3}$')
+  where not exists (
+    select 1 from public.cat2d2_pre_map m
+    where m.alias_card_id = ce.id or m.canonical_card_id = ce.id
   );
   if v_pre is distinct from v_now then
-    raise exception 'FAIL C8: an effective catalog row OUTSIDE the Family A namespaces changed';
+    raise exception 'FAIL C8: an effective catalog row unrelated to BOTH sides of the 217 approved pairs changed';
   end if;
 
-  -- C9. The 14-column contract and security_invoker are untouched by this slice.
+  -- C8b. Survivors that received a migrated card_extras row report EXACTLY the
+  --      illustrator Phase A predicted — no more, no less. This is where
+  --      swsh12.5gg-GG69 must show the migrated override rather than its own
+  --      differently-cased native value (CAT-2D §2.5).
+  select value into v_exp from public.cat2d2_pre_capture where key = 'expected_survivor_illustrator';
+  select count(*) into v_n
+  from jsonb_each_text(v_exp) exp(card_id, expected)
+  left join public.cards_effective ce on ce.id = exp.card_id
+  where ce.id is null or ce.illustrator is distinct from exp.expected;
+  if v_n <> 0 then
+    select string_agg(format('%s expected "%s" got "%s"',
+             exp.card_id, exp.expected, coalesce(ce.illustrator, '<no effective row>')), '; ') into v_txt
+    from jsonb_each_text(v_exp) exp(card_id, expected)
+    left join public.cards_effective ce on ce.id = exp.card_id
+    where ce.id is null or ce.illustrator is distinct from exp.expected;
+    raise exception 'FAIL C8b: % survivor(s) do not report the predicted illustrator after card_extras migration: %', v_n, v_txt;
+  end if;
+
+  -- C8c. Every OTHER survivor is value-identical. The domain is the exact
+  --      complement of C8b within the survivor set, so C8 + C8b + C8c account
+  --      for every effective-catalog row exactly once, with no gap.
+  --
+  --      The predicate is expressed against the CAPTURED expectation rather
+  --      than against card_extras: after §9 the overrides no longer sit on the
+  --      obsolete ids, so Phase A's original predicate is not re-computable
+  --      here, and re-deriving it from the post-state would beg the question.
+  select value into v_pre from public.cat2d2_pre_capture where key = 'cards_effective_untouched_survivors_checksum';
+  select to_jsonb(md5(coalesce(string_agg(md5(to_jsonb(ce)::text), ',' order by ce.id), '')))
+    into v_now
+  from public.cards_effective ce
+  join public.cat2d2_pre_map m on m.canonical_card_id = ce.id
+  where not (v_exp ? ce.id);
+  if v_pre is distinct from v_now then
+    raise exception 'FAIL C8c: a canonical survivor that received NO migrated card_extras row changed value';
+  end if;
+
+  -- C10. ARTIST-FIRST GATE, re-asserted after deployment. A-GATE 4 proved this
+  --      before the migration; this proves the migration did not change it —
+  --      it must not, since nothing here writes public.cards.artist_id.
+  select count(*) into v_n
+  from public.cat2d2_pre_map m
+  join public.cards s on s.id = m.canonical_card_id
+  where m.alias_artist_id is not null
+    and (s.artist_id is null or s.artist_id <> m.alias_artist_id);
+  if v_n <> 0 then
+    select string_agg(format('%s artist_id=%s -> %s artist_id=%s',
+             m.alias_card_id, m.alias_artist_id, m.canonical_card_id, coalesce(s.artist_id, '<null>')), '; ')
+      into v_txt
+    from public.cat2d2_pre_map m
+    join public.cards s on s.id = m.canonical_card_id
+    where m.alias_artist_id is not null
+      and (s.artist_id is null or s.artist_id <> m.alias_artist_id);
+    raise exception
+      'FAIL C10 (artist): % pair(s) lost or contradict artist reachability after deployment. The survivor is now the only effective row for the printing, so it must carry the artist_id. %',
+      v_n, v_txt;
+  end if;
+
+  -- C11. The 14-column contract and security_invoker are untouched by this slice.
   select value into v_pre from public.cat2d2_pre_capture where key = 'cards_effective_columns';
   select jsonb_agg(column_name order by ordinal_position) into v_now
   from information_schema.columns
   where table_schema = 'public' and table_name = 'cards_effective';
   if v_pre is distinct from v_now then
-    raise exception 'FAIL C9: cards_effective column list changed: % -> %', v_pre, v_now;
+    raise exception 'FAIL C11: cards_effective column list changed: % -> %', v_pre, v_now;
   end if;
   select unnest(reloptions) into v_txt
   from pg_class where oid = 'public.cards_effective'::regclass and reloptions is not null limit 1;
   if coalesce(v_txt, '') <> 'security_invoker=true' then
-    raise exception 'FAIL C9: cards_effective must remain security_invoker=true (found %)', coalesce(v_txt, '<none>');
+    raise exception 'FAIL C11: cards_effective must remain security_invoker=true (found %)', coalesce(v_txt, '<none>');
   end if;
 
-  raise notice 'PHASE C PASSED — 217 evidence-backed aliases, depth 1, cards unchanged, cards_effective -217, nothing unrelated moved.';
+  raise notice 'PHASE C PASSED — 217 evidence-backed aliases, depth 1, cards unchanged, cards_effective -217, % survivor(s) changed illustrator exactly as predicted, every other row identical, artist reachability intact.',
+    (select count(*) from jsonb_object_keys(v_exp));
 end $$;
 
 
@@ -1057,16 +1278,23 @@ select
   (select count(*) from information_schema.columns
      where table_schema='public' and table_name='cards_effective')          as cards_effective_columns_must_be_14;
 
--- ⚠ PHASE H — run ONLY after C, D, E, F and G have all passed AND you are
---   certain no rollback is wanted. cat2d2_pre_refs is the exact undo list for
---   the reference migration; once dropped, a reversal must be reconstructed
---   from the alias table instead (see the ROLLBACK section of cat-2d2-1).
+-- ⚠ PHASE H — run at the appropriate safe point in the deployment sequence:
+--   AFTER C, D, E, F and G have all passed, AFTER the PR is merged and the
+--   application change is deployed, AFTER the production smoke test, and only
+--   once you are certain no rollback is wanted.
 --
---   Both tables MUST be dropped before this deployment is considered closed:
---   cat2d2_pre_refs holds user-owned card ids and must not remain in
+--   public.cat2d2_pre_refs is the EXACT undo list for the reference migration —
+--   one row per migrated reference, proven identical to the migrated set by §6
+--   of cat-2d2-1. Once it is dropped, a reversal can only be reconstructed from
+--   the alias table, which identifies survivors but not the individual rows
+--   that moved onto them. Export it first if there is any doubt.
+--
+--   All THREE tables MUST be dropped before this deployment is considered
+--   closed: cat2d2_pre_refs holds user-owned card ids and must not remain in
 --   production.
 
 drop table if exists public.cat2d2_pre_refs;
+drop table if exists public.cat2d2_pre_map;
 drop table if exists public.cat2d2_pre_capture;
 
 -- Clear the validation identity from the session.
