@@ -50,8 +50,9 @@ begin;
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- Maps an obsolete provider card ID to the current canonical survivor. Written
--- only by service-role migrations carrying evidence; never by users, never at
--- runtime, never by the sync.
+-- only by privileged migration-owner execution, carrying evidence; never by a
+-- runtime role (anon, authenticated and service_role all hold zero privileges
+-- here — see the REVOKE below), never by users, never by the sync.
 --
 -- canonical_card_id REFERENCES public.cards(id) ON DELETE RESTRICT:
 --   * the FK proves the survivor EXISTS;
@@ -169,8 +170,9 @@ create trigger card_identity_aliases_set_updated_at
 --   concurrency system, because alias population is a SINGLE-WRITER,
 --   SERIALIZED MIGRATION OPERATION by construction:
 --     * the table is never user-authored — there is no runtime write path;
---     * the only grant on it is none (see below): writes require the table
---       owner or service_role running a migration;
+--     * no runtime role holds any grant on it — PUBLIC, anon, authenticated
+--       and service_role are all revoked — so writes require the table OWNER,
+--       i.e. privileged migration-owner execution;
 --     * CAT-2D.1 populates nothing at all.
 --
 --   BINDING REQUIREMENT ON CAT-2D.2 AND LATER: any migration that changes alias
