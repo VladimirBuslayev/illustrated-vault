@@ -17,8 +17,39 @@
 --       so `request.jwt.claims` is set explicitly and then ASSERTED before
 --       anything is captured.
 --   P2  A temp table cannot survive separate Dashboard runs. Captures go into
---       PERSISTENT, privilege-locked tables that every phase re-reads, so each
---       phase is independently runnable in any session after A.
+--       PERSISTENT, privilege-locked tables that every phase re-reads.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- "INDEPENDENTLY RUNNABLE AFTER A" — NOW ACTUALLY TRUE
+-- ─────────────────────────────────────────────────────────────────────────
+-- An earlier revision of this file CLAIMED each phase was independently
+-- runnable in any session after A, and it was not: Phase D established
+-- `request.jwt.claims` with a session-scoped, TOP-LEVEL `select set_config(...)`
+-- and Phases E and E7 then relied on it still being there. Running E on its own
+-- would have raised 28000 "not authenticated", or — worse for E7, which merely
+-- PRINTED its variants — rendered a tidy table of `no_active_batch` rows that
+-- looked fine at a glance.
+--
+-- Production validation did not use that dependency; it ran self-contained E
+-- and E7 statements. The committed procedure now matches the path that was
+-- actually validated:
+--
+--   * every auth-scoped phase (D, E, E7) reads `validation_user` from
+--     public.cat2d2_pre_capture, establishes `request.jwt.claims` INSIDE its own
+--     DO with `is_local => true`, and ASSERTS auth.uid() before calling any RPC;
+--   * no phase depends on session state an earlier phase left behind;
+--   * no phase depends on a top-level BEGIN/COMMIT/ROLLBACK wrapper — G9 lost
+--     its own for the same reason the Phase B migration did.
+--
+-- `is_local => true` also means each phase leaves the session as it found it,
+-- so there is no validation identity to forget to clear afterwards.
+--
+-- Every phase after A is therefore genuinely self-contained: any session, any
+-- order, any number of times.
+--
+-- scripts/cat2d2-family-a-alias-set.test.mjs asserts this structurally, so
+-- these phases cannot regress to relying on prior-session JWT state or on a
+-- transaction wrapper.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- ⚠ PHASE A IS A GATE AND AN INPUT, NOT JUST A SNAPSHOT
@@ -853,15 +884,11 @@ end $$;
 -- alone: the post-migration owned set must be exactly the pre-migration set
 -- with Family A historical ids REPLACED by their survivors — no addition, no
 -- unexplained removal.
-
-select set_config(
-  'request.jwt.claims',
-  json_build_object(
-    'sub', (select value #>> '{}' from public.cat2d2_pre_capture where key = 'validation_user'),
-    'role', 'authenticated'
-  )::text,
-  false
-);
+--
+-- SELF-CONTAINED. The JWT context is recovered from the capture table and
+-- established INSIDE this DO, then asserted, so this phase depends on nothing
+-- an earlier phase left behind in the session. See the header note on why that
+-- matters for this file.
 
 do $$
 declare
@@ -874,6 +901,19 @@ declare
   v_lost   text[];
 begin
   select value #>> '{}' into v_exp from public.cat2d2_pre_capture where key = 'validation_user';
+  if v_exp is null then
+    raise exception 'FAIL D-GUARD: no capture found — run Phase A first';
+  end if;
+
+  -- Establish the authenticated identity this phase needs, here, from the
+  -- capture. `is_local => true` scopes it to the surrounding transaction, so
+  -- this DO leaves no identity behind in the session either.
+  perform set_config(
+    'request.jwt.claims',
+    json_build_object('sub', v_exp, 'role', 'authenticated')::text,
+    true
+  );
+
   v_uid := auth.uid();
   if v_uid is null or v_uid::text <> v_exp then
     raise exception 'FAIL D-GUARD: auth.uid() is % but the capture was taken as %', v_uid, v_exp;
@@ -996,13 +1036,34 @@ select
 -- PHASE E — POST-DEPLOY OL-0D   (read-only)
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- SELF-CONTAINED. OL-0D is SECURITY INVOKER and auth.uid()-scoped, so this
+-- phase needs an authenticated identity — and it establishes its own from the
+-- capture rather than inheriting whatever Phase D happened to leave in the
+-- session. Without this, running E on its own raises 28000 "not authenticated",
+-- which is a confusing way to discover a session assumption.
+
 do $$
 declare
   v_pre jsonb; v_now jsonb; v_pred jsonb;
   v_pre_missing bigint; v_now_missing bigint;
   v_pre_distinct bigint; v_now_distinct bigint;
   v_pre_qty bigint; v_now_qty bigint;
+  v_exp text; v_uid uuid;
 begin
+  select value #>> '{}' into v_exp from public.cat2d2_pre_capture where key = 'validation_user';
+  if v_exp is null then
+    raise exception 'FAIL E-GUARD: no capture found — run Phase A first';
+  end if;
+  perform set_config(
+    'request.jwt.claims',
+    json_build_object('sub', v_exp, 'role', 'authenticated')::text,
+    true
+  );
+  v_uid := auth.uid();
+  if v_uid is null or v_uid::text <> v_exp then
+    raise exception 'FAIL E-GUARD: auth.uid() is % but the capture was taken as %', v_uid, v_exp;
+  end if;
+
   select value into v_pre  from public.cat2d2_pre_capture where key = 'ol0d_payload';
   select value into v_pred from public.cat2d2_pre_capture where key = 'active_batch_prediction';
   v_now := public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'name_asc');
@@ -1055,20 +1116,96 @@ begin
     v_pred ->> 'collapse_pred', v_pre_missing, v_now_missing;
 end $$;
 
--- E7. Pagination, filtering and sorting still behave. Every variant must
---     answer 'ready' and, for the unfiltered variants, agree on totalItems.
-select variant, payload ->> 'state' as state, payload #>> '{page,totalItems}' as total_items
-from (
-  select 'sort=name_asc'      as variant, public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'name_asc') as payload
-  union all select 'sort=set_asc',        public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'set_asc')
-  union all select 'sort=quantity_desc',  public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'all', 'quantity_desc')
-  union all select 'status=available',    public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'available', 'name_asc')
-  union all select 'status=missing',      public.get_active_import_snapshot_read_model(null, 60, 0, null, null, null, 'missing', 'name_asc')
-  union all select 'offset page 2',       public.get_active_import_snapshot_read_model(null, 60, 60, null, null, null, 'all', 'name_asc')
-  union all select 'set_id=swsh12.5gg',   public.get_active_import_snapshot_read_model(null, 60, 0, null, 'swsh12.5gg', null, 'all', 'name_asc')
-  union all select 'set_id=swsh12.5',     public.get_active_import_snapshot_read_model(null, 60, 0, null, 'swsh12.5', null, 'all', 'name_asc')
-) q
-order by variant;
+-- ── E7. Pagination, filtering and sorting still behave ────────────────────
+--
+-- This was a bare SELECT that PRINTED eight rows for a human to eyeball. It is
+-- now a DO that ASSERTS, because printing is not validation: a variant that
+-- came back 'no_active_batch' — which is exactly what an OL-0D call answers
+-- with no JWT — would have rendered as a tidy row nobody looked at twice.
+--
+-- Two assertions, matching what production actually checked:
+--   1. all EIGHT variants answer 'ready';
+--   2. the four UNFILTERED variants (name_asc, set_asc, quantity_desc and the
+--      offset page) agree on totalItems. Sorting must not change how many rows
+--      exist, and neither must paging — totalItems is the count BEFORE
+--      LIMIT/OFFSET. The filtered variants legitimately differ and are checked
+--      for 'ready' only.
+--
+-- Self-contained, like D and E: it recovers the validation user from the
+-- capture and establishes its own transaction-local JWT.
+
+do $$
+declare
+  v_exp     text;
+  v_uid     uuid;
+  r         record;
+  v_payload jsonb;
+  v_total   bigint;
+  v_unfiltered_total bigint := null;
+  v_variants int := 0;
+  v_report  text := '';
+begin
+  select value #>> '{}' into v_exp from public.cat2d2_pre_capture where key = 'validation_user';
+  if v_exp is null then
+    raise exception 'FAIL E7-GUARD: no capture found — run Phase A first';
+  end if;
+  perform set_config(
+    'request.jwt.claims',
+    json_build_object('sub', v_exp, 'role', 'authenticated')::text,
+    true
+  );
+  v_uid := auth.uid();
+  if v_uid is null or v_uid::text <> v_exp then
+    raise exception 'FAIL E7-GUARD: auth.uid() is % but the capture was taken as %', v_uid, v_exp;
+  end if;
+
+  for r in
+    select * from (values
+      (1, 'sort=name_asc',      60,  0, null::text,   'all',       'name_asc',      true),
+      (2, 'sort=set_asc',       60,  0, null,         'all',       'set_asc',       true),
+      (3, 'sort=quantity_desc', 60,  0, null,         'all',       'quantity_desc', true),
+      (4, 'offset page 2',      60, 60, null,         'all',       'name_asc',      true),
+      (5, 'status=available',   60,  0, null,         'available', 'name_asc',      false),
+      (6, 'status=missing',     60,  0, null,         'missing',   'name_asc',      false),
+      (7, 'set_id=swsh12.5gg',  60,  0, 'swsh12.5gg', 'all',       'name_asc',      false),
+      (8, 'set_id=swsh12.5',    60,  0, 'swsh12.5',   'all',       'name_asc',      false)
+    ) t(ord, label, lim, ofs, set_id, status, sort, unfiltered)
+    order by ord
+  loop
+    select public.get_active_import_snapshot_read_model(
+             null, r.lim, r.ofs, null, r.set_id, null, r.status, r.sort)
+      into v_payload;
+
+    if (v_payload ->> 'state') <> 'ready' then
+      raise exception 'FAIL E7: variant "%" answered state=% — expected ready', r.label, v_payload ->> 'state';
+    end if;
+
+    v_total := (v_payload #>> '{page,totalItems}')::bigint;
+
+    if r.unfiltered then
+      if v_unfiltered_total is null then
+        v_unfiltered_total := v_total;
+      elsif v_total <> v_unfiltered_total then
+        raise exception
+          'FAIL E7: unfiltered variant "%" reports totalItems=% but the other unfiltered variants report % — sorting and paging must not change how many rows exist',
+          r.label, v_total, v_unfiltered_total;
+      end if;
+    end if;
+
+    v_variants := v_variants + 1;
+    v_report := v_report || format('%s=%s; ', r.label, v_total);
+  end loop;
+
+  if v_variants <> 8 then
+    raise exception 'FAIL E7: % variants exercised, expected 8', v_variants;
+  end if;
+  if v_unfiltered_total is null then
+    raise exception 'FAIL E7: no unfiltered variant ran — the totalItems agreement was never tested';
+  end if;
+
+  raise notice 'PHASE E7 PASSED — 8/8 variants ready; the 4 unfiltered variants all report totalItems=%. %',
+    v_unfiltered_total, v_report;
+end $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1249,15 +1386,45 @@ begin
   raise notice 'PHASE G PASSED — the CAT-2D.1 ACL contract is intact with 192 populated rows.';
 end $$;
 
--- G9. Negative DML proofs under the real roles. Rolled back.
-begin;
+-- ── G9. Negative DML proofs under the real roles ─────────────────────────
+--
+-- This used to be wrapped in a top-level `begin;` … `rollback;`. That wrapper
+-- is gone, for the same reason the Phase B migration lost its own: a client
+-- that does not hold one transaction across top-level statements turns the
+-- wrapper into a lie, and a `rollback;` that never pairs with anything is
+-- worse than no wrapper at all.
+--
+-- HOW THE ATTEMPTED MUTATION IS STILL ROLLED BACK.
+--   The DO runs in its own implicit transaction. Each forbidden DML attempt sits
+--   in a plpgsql BEGIN…EXCEPTION block, i.e. a subtransaction:
+--
+--     * the expected outcome is insufficient_privilege — the subtransaction
+--       rolls back on its own and v_denied becomes true;
+--     * if the DML instead SUCCEEDS, v_denied stays false and the code
+--       immediately RAISES. That exception is not caught anywhere above it, so
+--       it aborts the whole DO — and with it the implicit transaction and the
+--       mutation that should never have been possible.
+--
+--   So a privilege hole cannot commit: proving the hole exists is the same act
+--   that undoes it. G9-FINAL below re-counts the alias rows as an independent
+--   check that nothing slipped through.
+--
+--   `set_config('role', …, is_local => true)` is transaction-scoped, so the
+--   role also reverts when the DO ends, however it ends. v_orig restores it
+--   between attempts from session_user rather than a hardcoded 'postgres',
+--   because `set role` changes current_user but never session_user.
+--
+-- ⚠ Do not wrap this DO in a transaction block. It is complete as it stands.
 
 do $$
 declare
   v_denied boolean;
   v_role   text;
   v_orig   text := session_user;
+  v_alias_rows bigint;
 begin
+  select count(*) into v_alias_rows from public.card_identity_aliases;
+
   foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
     v_denied := false;
     begin
@@ -1297,10 +1464,17 @@ begin
     end;
   end loop;
 
-  raise notice 'PHASE G9 PASSED — provenance unreadable, view DML denied, read surface works, for all three runtime roles.';
-end $$;
+  -- G9-FINAL. Independent proof that no attempted DML took effect. If a DELETE
+  -- had succeeded the code above would already have aborted this block, so this
+  -- can only fail if some future edit weakens that path.
+  if (select count(*) from public.card_identity_aliases) <> v_alias_rows then
+    raise exception
+      'FAIL G9: card_identity_aliases moved from % rows during the negative-DML probes — a forbidden write took effect',
+      v_alias_rows;
+  end if;
 
-rollback;
+  raise notice 'PHASE G9 PASSED — provenance unreadable, view DML denied, read surface works, for all three runtime roles; alias rows unchanged at %.', v_alias_rows;
+end $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1335,5 +1509,7 @@ drop table if exists public.cat2d2_pre_refs;
 drop table if exists public.cat2d2_pre_map;
 drop table if exists public.cat2d2_pre_capture;
 
--- Clear the validation identity from the session.
-select set_config('request.jwt.claims', '', false);
+-- No "clear the validation identity" step is needed any more. Phase A sets
+-- `request.jwt.claims` for its own run; every later auth-scoped phase (D, E,
+-- E7) sets it transaction-locally inside its own DO and therefore leaves the
+-- session exactly as it found it. There is no lingering identity to forget.

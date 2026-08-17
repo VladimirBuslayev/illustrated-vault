@@ -522,6 +522,83 @@ ok(/FAILING SAFE, never substituting/.test(migrationHeader),
 ok(/PHASE H \(cleanup\) at the appropriate safe point/.test(migrationHeader),
   'Phase H is sequenced after merge and smoke test, not immediately after validation');
 
+// ── Validation phases are session-independent ───────────────────────────────
+//
+// The file claims each phase after A is independently runnable in any session.
+// An earlier revision did not honour that: Phase D established
+// `request.jwt.claims` with a session-scoped TOP-LEVEL `select set_config(...)`
+// and Phases E and E7 relied on it still being there. Running E alone raised
+// 28000; E7, which only PRINTED its variants, would have rendered a tidy table
+// of `no_active_batch` rows that looked fine at a glance.
+//
+// These assertions make self-containment structural, so the auth-scoped phases
+// cannot regress to inheriting prior-session JWT state or to a top-level
+// transaction wrapper.
+console.log('\nvalidation phases are session-independent');
+
+const between = (text, startMarker, endMarker) => {
+  const i = text.indexOf(startMarker);
+  const j = endMarker ? text.indexOf(endMarker, i + 1) : text.length;
+  return i === -1 ? '' : text.slice(i, j === -1 ? text.length : j);
+};
+const PHASES = {
+  D:  between(validation, 'PHASE D — POST-DEPLOY OWNERSHIP', '-- ── E7. Pagination'),
+  E:  between(validation, 'PHASE E — POST-DEPLOY OL-0D', '-- ── E7. Pagination'),
+  E7: between(validation, '-- ── E7. Pagination', 'PHASE F — MUTABLE'),
+};
+
+for (const [name, body] of Object.entries(PHASES)) {
+  ok(body.length > 0, `Phase ${name} located`);
+  // Established inside the DO, transaction-locally, from the capture.
+  ok(/perform set_config\(\s*\n?\s*'request\.jwt\.claims',[\s\S]{0,240}?\btrue\s*\n?\s*\);/.test(body),
+    `Phase ${name} sets request.jwt.claims INSIDE its own DO, transaction-locally (is_local => true)`);
+  ok(/from public\.cat2d2_pre_capture where key = 'validation_user'/.test(body),
+    `Phase ${name} recovers the validation user from the capture table, not from session state`);
+  ok(/auth\.uid\(\)/.test(body) && /-GUARD/.test(body),
+    `Phase ${name} asserts auth.uid() matches the capture before calling any RPC`);
+  // No session-scoped, top-level set_config in these phases.
+  ok(!/^select set_config\(/m.test(body),
+    `Phase ${name} has no top-level select set_config — nothing leaks into the session`);
+}
+
+// The only top-level set_config calls belong to Phase A, which is the one phase
+// that takes operator input and runs as a unit.
+const phaseAEnd = validation.indexOf('PHASE B — DEPLOY');
+const afterA = validation.slice(phaseAEnd);
+ok(!/^select set_config\(/m.test(afterA),
+  'no phase after A uses a top-level select set_config');
+ok(!/Clear the validation identity from the session/.test(validation),
+  'no "clear the identity afterwards" step remains — transaction-local settings make it unnecessary');
+
+// E7 must ASSERT, not print.
+ok(/do \$\$/.test(PHASES.E7), 'E7 is a DO that asserts, not a bare SELECT that prints');
+ok(/FAIL E7: variant "%" answered state=%/.test(PHASES.E7),
+  'E7 refuses any variant that does not answer state=ready');
+ok(/FAIL E7: unfiltered variant "%" reports totalItems=%/.test(PHASES.E7),
+  'E7 refuses when the unfiltered variants disagree on totalItems');
+ok(/% variants exercised, expected 8/.test(PHASES.E7),
+  'E7 refuses if it did not exercise all 8 variants');
+ok((PHASES.E7.match(/^\s*\(\d, '/gm) || []).length === 8,
+  `E7 declares exactly 8 variants (found ${(PHASES.E7.match(/^\s*\(\d, '/gm) || []).length})`);
+ok((PHASES.E7.match(/,\s*true\)/g) || []).length === 4,
+  'E7 marks exactly 4 variants as unfiltered — the ones whose totalItems must agree');
+
+// No top-level transaction wrapper anywhere in the validation file.
+const validationCodeOnly = sqlCode(validation);
+for (const kw of ['begin', 'commit', 'rollback']) {
+  ok(!new RegExp(`^\\s*${kw};\\s*$`, 'm').test(validationCodeOnly),
+    `the validation file has no top-level ${kw.toUpperCase()};`);
+}
+const g9 = between(validation, '-- ── G9. Negative DML proofs', 'FINAL GATE + PHASE H');
+ok(g9.length > 0, 'G9 located');
+ok(/do \$\$[\s\S]*end \$\$;/.test(g9), 'G9 is a single DO');
+ok(/aborts the whole DO/.test(g9) || /aborts the whole/.test(g9),
+  'G9 documents how a successful forbidden DML is rolled back');
+ok(/card_identity_aliases moved from % rows during the negative-DML probes/.test(g9),
+  'G9 independently re-counts the alias rows, so a write that slipped through is caught');
+ok(/Do not wrap this DO in a transaction block/.test(g9),
+  'G9 says explicitly that it must not be wrapped');
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) {
   for (const f of failures) console.error(`  - ${f}`);

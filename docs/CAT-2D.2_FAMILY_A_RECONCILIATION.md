@@ -149,7 +149,7 @@ components strictly:
 
 | Rule | Requirement | Enforced |
 |---|---|---|
-| **A1** | inside an approved `(parent → canonical)` set pair, never inferred or wildcarded | migration §3 + §5 P1/P4 |
+| **A1** | inside an approved `(parent → canonical)` set pair, never inferred or wildcarded | migration §2 + §5 P1/P4 |
 | **A2** | `normNum(local_id)` equal exactly — `normNum` does not strip leading zeros, so `SV1` ≠ `SV001` | migration §5 P6 |
 | **A3** | `normName(name)` equal exactly, **stored row vs stored row** | migration §5 P5 |
 | **A4** | the local-id namespace is absent from the parent set upstream | evidence generator, per family |
@@ -200,11 +200,13 @@ deliberately not refactored into one.
 
 Q-4 and Q-8 are Family B / open-ended and out of scope here.
 
-**Q-9 is partially forced open by this slice.** CAT-2D §2.6 left it
-[UNVERIFIED] whether an artist page currently shows the obsolete copy, the
-survivor, or both. Aliasing makes the survivor the only candidate, so the
-artist-reachability gate (§5a) now *measures* the relevant half of Q-9 against
-production and refuses if the answer is unsafe.
+**Q-9 — the half that mattered here is now closed.** CAT-2D §2.6 left it
+[UNVERIFIED] whether an artist page shows the obsolete copy, the survivor, or
+both. Aliasing makes the survivor the only candidate, so the
+artist-reachability gate (§5a) measured it against production: **24** obsolete
+rows carry an `artist_id` and all **24** survivors carry the same one. No
+printing in this slice lost artist reachability. The broader Q-9 question — what
+an artist page displayed *before* — remains open and is not needed.
 
 ---
 
@@ -341,17 +343,22 @@ Enforced in three places: validation **A-GATE 4** (pre-deploy, reports
 migration **§5 P11** (in-transaction, under the locks), and validation
 **Phase C10** (re-asserted post-deploy).
 
-> **This gate may well fire.** CAT-0 per-set evidence records 100 of 122
-> `swsh4.5sv` rows and 48 of 70 `swsh12.5gg` rows as
-> having an illustrator but a **NULL `artist_id`**, while the obsolete
-> `swsh12.5` rows that do carry one (GG19, GG69) are exactly the two with
-> `card_extras` overrides. Whether their survivors carry `artist_id` is
-> [UNVERIFIED] — CAT-2D §11 Q-9 left it open.
+> **Production outcome: the gate passed, 24 of 24 preserved.** It was flagged
+> pre-deploy as the check most likely to refuse, because CAT-0 per-set evidence
+> records 100 of 122 `swsh4.5sv` rows and 48 of 70 `swsh12.5gg` rows as having
+> an illustrator but a **NULL `artist_id`**. Phase A measured the pairs that
+> actually matter: **24** obsolete rows carry an `artist_id`, and every one of
+> their survivors carries the same one — `would_lose` 0, `would_conflict` 0.
+> Phase C10 re-asserted it after deployment.
+>
+> That also closes the relevant half of CAT-2D §11 Q-9 for these two families:
+> whatever an artist page showed before, no printing in this slice lost artist
+> reachability by being aliased.
 >
 > **CAT-2D.2 does not repair `public.cards.artist_id`.** That is
-> illustrator/artist restoration, explicitly out of scope. A refusal stops the
-> deployment and becomes an evidence-backed follow-up decision. Neither SQL file
-> writes `cards.artist_id`, and a test asserts that.
+> illustrator/artist restoration, explicitly out of scope. A refusal would have
+> stopped the deployment and become an evidence-backed follow-up decision.
+> Neither SQL file writes `cards.artist_id`, and a test asserts that.
 
 ---
 
