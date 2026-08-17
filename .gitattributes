@@ -1,0 +1,9 @@
+# CAT-2D.2: the Family A evidence artifact is checksummed in
+# docs/cat-2d2-evidence/manifest.json, and that checksum is stamped into every
+# alias row's `evidence` payload by
+# docs/sql/cat-2d2-1-family-a-reconciliation.sql.
+#
+# Without this rule, core.autocrlf=true rewrites the CSV's line endings on
+# checkout and the working-tree bytes stop matching the approved artifact.
+# Pinning it to LF keeps the committed evidence byte-stable on every platform.
+docs/cat-2d2-evidence/*.csv text eol=lf

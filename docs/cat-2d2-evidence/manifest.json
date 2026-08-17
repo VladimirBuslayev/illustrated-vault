@@ -1,0 +1,45 @@
+{
+  "slice": "CAT-2D.2",
+  "artifact": "family-a-alias-set.csv",
+  "generated_by": "scripts/cat2d2-build-family-a-evidence.mjs",
+  "source": "TCGdex v2 (en) — read-only",
+  "observed_at": "2026-08-17T15:37:20.244Z",
+  "proof": "upstream_set_rename",
+  "scope": "set rename with STABLE local_id only",
+  "admission_rules": [
+    "A1 approved set-rename pair",
+    "A2 normNum equal",
+    "A3 normName equal (asserted at deploy)",
+    "A4 namespace absent from parent set",
+    "A5 alias 404 / canonical 200"
+  ],
+  "tier1_identity_equal": false,
+  "tier1_note": "Alias and canonical rows carry different set_name, so their Tier-1 identity keys differ by construction. See the header of the generator for why, and why A4 replaces the set component.",
+  "excluded": [
+    {
+      "family": "celebrations_cc",
+      "parent_set_id": "cel25",
+      "canonical_set_id": "cel25cc",
+      "reason": "The 25 historical Classic Collection rows are stored with LEGACY local ids (cel25-2A, cel25-4A, cel25-15A1, cel25-17A, cel25-60A, cel25-88A, ...), not cel25-CC###. The provider changed the numbering as well as the set, so the pairing cannot satisfy A2 (normNum equality). Split out as CAT-2D.3 — see docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md. Do not re-add without a separate, individually corroborated evidence class.",
+      "observed_by": "production Phase A refusal + read-only query over public.cards where set_id = cel25"
+    }
+  ],
+  "total_aliases": 192,
+  "families": [
+    {
+      "family": "shining_fates_sv",
+      "parent_set_id": "swsh4.5",
+      "canonical_set_id": "swsh4.5sv",
+      "local_id_pattern": "^SV\\d{3}$",
+      "alias_count": 122
+    },
+    {
+      "family": "crown_zenith_gg",
+      "parent_set_id": "swsh12.5",
+      "canonical_set_id": "swsh12.5gg",
+      "local_id_pattern": "^GG\\d{2}$",
+      "alias_count": 70
+    }
+  ],
+  "csv_sha256": "9deca61b3403be13b773b475ebafabfbd2a16a64085a8e8907270a3596fb63ab"
+}
