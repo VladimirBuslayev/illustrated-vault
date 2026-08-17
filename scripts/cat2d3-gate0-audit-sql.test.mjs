@@ -57,6 +57,30 @@ const doc = read(DOC_PATH);
 const code = sql.split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
 const codeLower = code.toLowerCase();
 
+// Statement splitting must be QUOTE-AWARE. A naive split(';') breaks apart any
+// statement whose caveat string contains a semicolon, which silently turns
+// "every statement is a self-contained SELECT" into a test of fragments.
+function splitStatements(text) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      cur += c;
+      if (c === "'") {
+        if (text[i + 1] === "'") { cur += "'"; i++; } else quoted = false;
+      }
+      continue;
+    }
+    if (c === "'") { quoted = true; cur += c; continue; }
+    if (c === ';') { out.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(Boolean);
+}
+
 console.log('\nCAT-2D.3 Gate 0 — audit SQL safety\n');
 
 // ── Read-only ───────────────────────────────────────────────────────────────
@@ -87,10 +111,7 @@ ok(!/\bpg_temp\b/i.test(code), 'no pg_temp reference');
 
 // ── Every statement is a self-contained SELECT ──────────────────────────────
 console.log('\nstatements are self-contained SELECTs');
-const statements = code
-  .split(';')
-  .map((s) => s.trim())
-  .filter(Boolean);
+const statements = splitStatements(code);
 ok(statements.length >= 8, `the audit has ${statements.length} statements`);
 ok(statements.every((s) => /^with\b|^select\b/i.test(s)),
   'every statement starts with WITH or SELECT — nothing else is executable here');
@@ -107,11 +128,38 @@ ok(popStatements.every((s) => /with\s+cel25_all\s+as\s*\(/i.test(s) || /from pub
 console.log('\nno user-identifying values');
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 ok(!UUID.test(sql), 'no hard-coded UUID anywhere in the file');
-ok(!/\bselect\b[^;]*\bt\.user_id\b(?![^;]*count)/is.test(code) || !/select\s+t\.user_id/i.test(code),
-  'no statement selects a raw user_id column');
+ok(!/\bas\s+\w*user_id\b/i.test(code) && !/\bas\s+\w*user_ids\b/i.test(code),
+  'no output column is a user id — user_id never reaches a result set as a value');
 ok(/count\(distinct t\.user_id\)/.test(code),
-  'user impact is expressed as COUNT(DISTINCT user_id), never as the ids themselves');
+  'per-table user impact is COUNT(DISTINCT user_id), never the ids themselves');
+ok(/count\(distinct rs\.user_id\)/.test(code),
+  'Q-B reports impacted collectors as a COUNT(DISTINCT ...) aggregate');
 ok(/COUNTS ONLY/.test(sql), 'the file states that Q-C is counts-only and why');
+
+// ── The population gate is three checks, not one ────────────────────────────
+console.log('\npopulation gate is three checks');
+ok(/THE POPULATION GATE IS THREE CHECKS, NOT ONE/.test(sql),
+  'the SQL header states the gate is three checks');
+ok(/gate check 1 of 3/.test(sql),
+  'Q-A0 is labelled as check 1 of 3, not as the whole gate');
+ok(/Passing is NECESSARY, NOT SUFFICIENT/.test(sql),
+  'Q-A0 says explicitly that passing is necessary but not sufficient');
+ok(/cannot rule out a substitution/.test(sql),
+  'the SQL names the failure Q-A0 cannot detect (a substituted numeric row)');
+// The doc QUOTES the old claim in order to correct it. That is the point, so
+// the assertion is that the phrase never stands as an assertion — it must sit
+// next to the correction.
+const claimIdx = doc.indexOf('single numeric historical row');
+ok(claimIdx === -1 || /not universally true/.test(doc.slice(claimIdx, claimIdx + 260)),
+  'the "single numeric historical row breaks it" phrasing survives only as a quoted, corrected overstatement');
+ok(!/^(?!.*not true).*a single numeric historical row would break/im.test(sql),
+  'the SQL never asserts that a single numeric historical row would break Q-A0');
+ok(/independent discriminator/.test(sql) && /independent discriminator/.test(doc),
+  'upstream liveness is named as the independent discriminator in both files');
+ok(/as SETS, not just as counts|as sets, not\njust as counts|\*\*as sets, not\njust as counts\*\*/.test(sql + doc),
+  'the upstream comparison is specified as a set comparison, not a count comparison');
+ok(/Q-B..Q-G may not be run until|may not be run until it passes|Only when all three pass/.test(sql + doc),
+  'the doc/SQL state that Q-B..Q-G may not run until the gate passes');
 
 // ── The population selector is explicit and falsifiable ─────────────────────
 console.log('\npopulation selector is explicit and falsifiable');
@@ -131,9 +179,64 @@ ok(/api\.tcgdex\.net\/v2\/en\/sets\/cel25/.test(sql),
   'the required out-of-SQL upstream corroboration step is spelled out');
 
 // Q-A1 must enumerate BOTH partitions, so the split is reviewable by eye.
-const qa1 = code.split(';').find((s) => s.includes('partition'));
+const qa1 = splitStatements(code).find((s) => s.includes('partition'));
 ok(!!qa1 && !/where[^;]*local_id ~ '\^\[0-9\]\+\$' is not true/i.test(qa1),
   'Q-A1 enumerates all 50 cel25 rows, not just the historical partition');
+
+// ── Q-C0 classifies rather than blanket-STOPping ────────────────────────────
+//
+// A bare '%card_id%' sweep legitimately surfaces columns that are NOT catalog
+// card references — binder_card_id is a membership FK, alias/canonical are the
+// identity map itself. A rule of "anything Q-C does not cover is a STOP" would
+// fire on known-immune structure and cry wolf.
+console.log('\nQ-C0 classifies every card-id-like column');
+const qc0 = splitStatements(code).find((s) => s.includes('information_schema.columns'));
+ok(!!qc0, 'Q-C0 located');
+for (const cls of [
+  'immutable import evidence',
+  'identity infrastructure',
+  'membership reference',
+  'direct catalog reference',
+  'STOP: unclassified card-id-like reference',
+]) {
+  ok(qc0.includes(cls), `Q-C0 emits the "${cls}" class`);
+}
+ok(/user_binder_layout_items.*binder_card_id/s.test(qc0),
+  'Q-C0 classifies binder_card_id explicitly rather than letting it fall through to STOP');
+ok(/user_import_rows.*candidate_card_ids/s.test(qc0),
+  'Q-C0 classifies candidate_card_ids as immutable import evidence');
+ok(/THE STOP CONDITION IS THE LAST CLASS ONLY/.test(sql),
+  'the SQL states the stop condition fires only on the unclassified class');
+ok(/No row classified `STOP: unclassified card-id-like reference`/.test(doc),
+  'the doc checklist asks only for zero unclassified rows, not zero uncovered tables');
+
+// ── card_extras is catalog metadata, not collector-authored state ───────────
+console.log('\ncard_extras is not collector-authored state');
+ok(/card_extras IS NOT COLLECTOR-AUTHORED STATE/.test(sql),
+  'the SQL states plainly that card_extras is catalog/editorial metadata');
+ok(/'catalog\/editorial metadata \(global, not collector-authored\)'/.test(code),
+  'Q-C labels card_extras with its own reference class');
+const qg = splitStatements(code).find((s) => s.includes('collector_authored_reference_rows'));
+ok(!!qg, 'Q-G exposes a collector_authored_reference_rows total');
+// The collector-authored sum is the parenthesised block immediately preceding
+// its alias. card_extras must not appear inside it.
+const collectorSum = qg ? qg.slice(0, qg.indexOf('as collector_authored_reference_rows')).slice(-900) : '';
+ok(collectorSum.length > 0 && !collectorSum.includes('card_extras'),
+  'card_extras is NOT summed into the collector-authored total');
+ok(!!qg && /as\s+card_extras_reference_rows/.test(qg),
+  'card_extras is reported separately as a catalog-metadata migration signal');
+
+// ── user_binder_cards owner counting ────────────────────────────────────────
+console.log('\nbinder owner counting');
+ok(/join public\.user_binders ub on ub\.id = t\.binder_id/.test(code),
+  'owner count for user_binder_cards is derived by joining the parent binder');
+ok(/count\(distinct ub\.user_id\)/.test(code),
+  'distinct owners come from user_binders.user_id');
+ok(/count\(distinct t\.binder_id\)\s*\n?\s*--?.*binders|as\s+distinct_binders/.test(code) ||
+   /distinct_binders/.test(code),
+  'distinct binders are reported under their own name');
+ok(!/count\(distinct t\.binder_id\)[^,]*as distinct_owners/i.test(code),
+  'a binder count is never emitted as distinct_owners');
 
 // ── Gate 0 does not do CAT-2D.3's identity work ─────────────────────────────
 console.log('\nno identity claim');
@@ -141,10 +244,36 @@ ok(!/cel25cc-CC\d/.test(sql),
   'no specific cel25cc survivor id is named anywhere — no pair list has crept in');
 ok(!/alias_card_id\s*,\s*canonical_card_id/.test(code),
   'no alias-shaped (alias, canonical) projection exists');
-ok(/DIAGNOSTIC ONLY/.test(sql) && /name overlap is not identity evidence/i.test(sql),
-  'name overlap is labelled DIAGNOSTIC ONLY in the output itself');
+ok(/DIAGNOSTIC ONLY/.test(sql) && /NAME OVERLAP IS NOT ALIAS EVIDENCE/.test(sql),
+  'name overlap is labelled DIAGNOSTIC ONLY and explicitly not alias evidence');
 ok(/NOT a historical->survivor mapping/.test(sql),
   'the artist comparison carries its own not-a-mapping caveat column');
+
+// ── Artist and UI claims are narrowed to what production proves ─────────────
+console.log('\nartist / UI claims are evidence-safe');
+ok(/ARTIST-QUERY REACHABILITY\. Not "is rendered today"/.test(sql),
+  'Q-D states it measures reachability, not rendering');
+ok(/fetchArtistCards/.test(sql),
+  'Q-D grounds the claim in the actual production query path');
+ok(/artist_query_reachable/.test(code),
+  'Q-D output columns are named for reachability');
+ok(/illustrator_reachable/.test(code),
+  'illustrator-string reachability is measured too — a NULL artist_id is not automatically unreachable');
+ok(!/visible_on_artist_page/.test(code),
+  'no output column claims a row is visible on an artist page');
+ok(!/shows the printing twice|show the printing twice/i.test(sql.replace(/does NOT establish[\s\S]{0,200}/g, '')) ||
+   /does NOT establish\s*\n--\s*that "every catalog surface shows the printing twice"/.test(sql),
+  'the "every catalog surface shows the printing twice" claim appears only as the thing being disclaimed');
+ok(/CONCURRENT CATALOG PRESENCE/.test(sql),
+  'Q-E is framed as concurrent presence, not duplicate presentation');
+ok(/both populations are concurrently present in the canonical catalog/i.test(sql),
+  'Q-E uses evidence-safe language for co-presence');
+ok(/no row-to-row printing identity is asserted/i.test(sql),
+  'Q-E states no row-to-row printing identity is asserted');
+ok(!!qg && /historical_names_also_in_cel25cc/.test(qg),
+  'Q-G carries the exact-name-overlap diagnostic, not co-presence alone');
+ok(!!qg && /historical_present_in_catalog/.test(qg) && !/duplicate/i.test(qg),
+  'Q-G names co-presence as presence, never as "duplicate"');
 ok(/Gate 0 makes NO alias decision and proposes NO mapping/.test(sql),
   'the severity roll-up restates the scope boundary in its own output');
 ok(/Cross-printing image substitution|cross-printing image substitution/i.test(sql),

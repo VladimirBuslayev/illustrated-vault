@@ -92,30 +92,54 @@ enumerated.
 `CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md` §3.1 is explicit that this partition
 *"must be established from data, not from a pattern."* This audit honours that
 in the only way SQL can — it does not assert the pattern is right, it makes the
-pattern **falsifiable**:
+pattern **falsifiable**, and then requires an independent check SQL cannot
+perform.
 
-- **Q-A0** reports partition sizes plus four integrity flags. The complement
-  must be exactly 25 rows **and** exactly the integers 1–25 with no gaps,
-  duplicates or extras. A single numeric historical row breaks it.
-- **Q-A1** enumerates **all 50 rows**, both partitions labelled, so a reviewer
-  confirms the split by eye rather than trusting a regex.
+### The population gate is three checks, and all three are prerequisites
 
-**Required corroboration, outside SQL.** Before any downstream CAT-2D.3 work
-treats this population as final, confirm against upstream liveness — the same
-evidence class CAT-2D.2 used for A5:
+**Q-B through Q-G may not be run until all three pass.**
+
+| # | Check | What it settles |
+|---|---|---|
+| **1** | **Q-A0** passes every integrity flag | sizes, gaps, duplicates, NULLs, stray `CC###` rows |
+| **2** | **Q-A1** enumerates all 50 rows coherently, reviewed by eye | nothing looks misplaced across the two partitions |
+| **3** | **Upstream** `cel25` live IDs agree **exactly** with Q-A1's numeric partition | membership — the independent discriminator |
+
+#### ⚠ What Q-A0 can and cannot prove
+
+An earlier revision of this document claimed *"a single numeric historical row
+breaks it."* **That is not universally true**, and the overstatement is
+corrected here.
+
+Q-A0 is a strong **consistency** test, not a proof of membership. Consider the
+failure it cannot see: if a numeric-`local_id` historical row occupied a number
+whose live base-set row is missing from storage, the numeric partition would
+still hold 25 rows spanning exactly 1–25 with no duplicates. **Every Q-A0 flag
+would pass** while one historical row sat in the base-set partition and one
+base-set row was absent entirely. Counts right, membership wrong.
+
+Q-A0 rules out the *loose* failures. It cannot rule out a substitution.
+**Upstream liveness is the independent discriminator** — check 3, not check 1.
+
+#### Check 3 — required corroboration, outside SQL
 
 ```
-curl -s https://api.tcgdex.net/v2/en/sets/cel25 | jq -r '.cards[].id'
+curl -s https://api.tcgdex.net/v2/en/sets/cel25 | jq -r '.cards[].id' | sort
 ```
 
 Every returned ID is a live base-set row; every stored `cel25` ID absent from
-that list is historical. **That list and Q-A1's non-numeric partition must agree
-exactly.** If they disagree, the selector is wrong, this audit's population is
-wrong, and Q-B…Q-G must be re-run against the corrected population.
+that list is historical. Compare against Q-A1's numeric partition **as sets, not
+just as counts** — they must agree exactly, with no extras on either side:
 
-**This is the gate's first STOP condition.** If Q-A0 does not return
-50 / 25 / 25 with `base_set_is_exactly_1_to_25 = true`, stop and re-derive the
-population before reading anything else.
+- a stored numeric ID **missing from upstream** → a historical row hiding in the
+  base-set partition;
+- an upstream ID **missing from storage** → a base-set row never ingested.
+
+Either invalidates the selector. Q-B…Q-G must then be re-run against the
+corrected population.
+
+Upstream liveness **partitions** the population; it does not **map** it. No
+historical → survivor pairing is derived here or anywhere else in Gate 0.
 
 ---
 
@@ -135,21 +159,45 @@ separate: **active matched** (ownership authority) · **candidate-only**
 (diagnostic, never authority) · **superseded/other batches** (historical
 evidence). `user_import_rows` is read-only throughout. → **Q-B**
 
-### C — Collector-authored mutable state
+### C — Mutable direct catalog references, by class
 Reference counts from every current card-ID-bearing mutable surface —
 `card_overrides`, `card_extras`, `card_favorites`, `price_history`,
-`user_card_intent`, `user_binder_cards` — with the schema inspected first to
-confirm no other table stores direct `card_id` references. Row count, distinct
-card IDs, and owner count where applicable. **Counts only; no user UUIDs.**
-→ **Q-C0** (schema discovery), **Q-C** (inventory)
+`user_card_intent`, `user_binder_cards`. Row count, distinct card IDs, owner
+count where derivable. **Counts only; no user UUIDs.**
 
-### D — Artist-first impact
+> **`card_extras` is *not* collector-authored state.** It is global
+> catalog/editorial metadata — manual illustrator corrections, written by
+> privileged enrichment, shared by every user, with **no `user_id` column**
+> (`docs/sql/card_extras_and_view.sql`). Q-C inventories it because it is a
+> mutable direct card reference a migration would have to move, but it is
+> labelled as catalog metadata and **excluded from any collector-impact total**.
+
+> **`user_binder_cards` has no `user_id`.** Ownership is carried by the parent
+> binder, and its RLS policies verify through it (BP-0A1). Owner counts are
+> derived by joining `public.user_binders`; distinct binders are reported
+> separately and are **not** labelled as owners.
+
+The schema is inspected first — **Q-C0** classifies every card-id-like column
+in the live schema, so an unaccounted-for reference is a finding while known
+non-catalog structure is not. → **Q-C0** (classification), **Q-C** (inventory)
+
+### D — Artist-first impact: query *reachability*
 How many historical rows carry a non-null `artist_id`, which artists, and
-whether those legacy rows are therefore rendered on Artist Pages today. Reported
+whether those legacy rows are **reachable by an artist query** today. Reported
 **per `artist_id` in aggregate**, never row-to-row — equal `artist_id` is not an
-identity claim. → **Q-D, Q-D2**
+identity claim.
 
-### E — Duplicate catalog / UI exposure
+> **Reachability, not rendering.** `cardService.fetchArtistCards` reads
+> `cards_effective`; a curated entry filters `.eq('artist_id', …)`, a dynamic
+> entry matches exact `artist_id` **or** exact `illustrator`. So `artist_id` +
+> effective membership proves a row *can be returned* by an artist query — not
+> that any collector renders it today, which also requires an artist entry to
+> exist for that identity. Illustrator-string reachability is reported alongside,
+> because the dynamic branch matches on it even when `artist_id` is NULL.
+
+→ **Q-D, Q-D2**
+
+### E — Concurrent catalog presence
 Whether `cards_effective` currently exposes **both** populations; counts;
 exact-name overlap; non-unique names within either population. Presentation
 diagnostic only. → **Q-E**
@@ -167,38 +215,53 @@ is human.
 
 ## 5. Interpretation framework
 
-Applied **after** Q-A0 passes. If Q-A0 fails, no classification is valid.
+Applied **only after all three population-gate checks pass** (§3). If any of
+Q-A0, the Q-A1 read-through, or upstream agreement fails, no classification is
+valid — the audit is measuring the wrong rows.
+
+**Visibility is judged on measured co-presence plus name / artist-reachability
+evidence — never on co-presence alone.** Two populations both being in the
+catalog is two populations being in the catalog; calling that "the printing
+shows twice" would presuppose the row-to-row identity Gate 0 has not
+established.
 
 | Classification | Evidence pattern |
 |---|---|
-| **LOAD-BEARING NOW** | Active physical ownership depends on old IDs (Q-B `active_matched_rows` > 0); **and/or** manual ownership / intents / binder / favorites materially depend on them (Q-C non-zero on a user-authored table); **and/or** artist-first presentation is materially duplicated or broken (Q-D shows the same artist rendering both populations). |
-| **VISIBLE BUT NON-LOAD-BEARING** | Duplicate catalog presentation exists (Q-E both populations in `cards_effective`), but no collector truth or authored state depends on the old IDs (Q-B active = 0, Q-C ≈ 0). |
-| **DORMANT** | Effectively no active or user-authored references **and** no meaningful current presentation impact. |
+| **LOAD-BEARING NOW** | Active physical ownership depends on old IDs (Q-B `active_matched_rows` > 0, `impacted_users` > 0); **and/or** collector-authored state materially depends on them (Q-C non-zero on a **collector-authored** table — `card_extras` does not count); **and/or** artist-first quality is materially affected (Q-D shows historical rows FK-reachable under the *same* `artist_id` as cel25cc rows). |
+| **VISIBLE BUT NON-LOAD-BEARING** | Both populations are concurrently present in the canonical catalog (Q-E) **and** there is substantial exact-name overlap and/or shared artist reachability — but no collector truth or authored state depends on the old IDs (Q-B active = 0, Q-C collector-authored ≈ 0). |
+| **DORMANT** | Effectively no active or collector-authored references **and** no meaningful presentation signal: little or no name overlap, and no shared artist reachability. |
 
 **Mixed evidence is a permitted outcome.** The likely mixed case: zero active
-ownership and zero authored state, but 25 duplicated printings visible in the
-catalog and some of them on artist pages. That is not LOAD-BEARING by the
-ownership test and is more than DORMANT by the presentation test. Say so, and
-state the tradeoff explicitly rather than rounding to a label.
+ownership and zero collector-authored state, but both populations present in the
+catalog with substantial name overlap and some shared artist reachability. That
+is not LOAD-BEARING by the ownership test and is more than DORMANT by the
+presentation test. Say so, and state the tradeoff explicitly rather than
+rounding to a label.
+
+A second mixed case worth naming: non-zero `card_extras` references with zero
+collector-authored ones. That is a **catalog-metadata migration signal**, not
+collector impact — it raises the eventual cost of CAT-2D.3 slightly without
+making it urgent.
 
 Signals that would argue for **deferring** CAT-2D.3:
 
 - Q-B active matched rows = 0 → no collector's ownership currently resolves
   through a historical Celebrations ID;
-- Q-C totals ≈ 0 → no overrides, favorites, intents, binder rows or price
-  history to migrate, so the eventual migration stays cheap and no user-authored
-  state is at risk while we wait;
-- Q-D historical rows with `artist_id` = 0 → the duplicates are not reaching
-  artist pages, the strategically important surface.
+- Q-C **collector-authored** totals ≈ 0 → no overrides, favorites, intents,
+  binder rows or price history to migrate, so the eventual migration stays cheap
+  and no collector-authored state is at risk while we wait;
+- Q-D `historical_fk_reachable` = 0 → the legacy rows are not reachable by the
+  artist-query path at all, so the strategically important surface is unaffected.
 
 Signals that would argue for **prioritising** it:
 
 - any non-zero Q-B active matched count — that is live ownership sitting on an
   identity the provider has retired;
-- Q-D showing curated artists rendering both copies — a visible artist-first
-  quality defect that persists for as long as we defer;
-- Q-C growth over time — every day of deferral is more collector-authored state
-  landing on IDs that will eventually have to move.
+- Q-D showing historical rows FK-reachable under the **same `artist_id`** as
+  cel25cc rows — an artist query for that identity can return both populations,
+  which is an artist-first quality concern that persists while we defer;
+- Q-C collector-authored growth over time — every day of deferral is more
+  collector-authored state landing on IDs that will eventually have to move.
 
 **Note on Q-F.** `cel25cc` was 25/25 image-missing at CAT-0. If that still
 holds, the Classic Collection is invisible-as-art under *either* identity, which
@@ -222,8 +285,15 @@ owner.
 - Global diagnostics across all users, so RLS must not scope them; that is why
   no JWT context is established. No user UUID appears in the file.
 
-Run order: **Q-A0 first** (it gates everything), then Q-A1, Q-C0, Q-B, Q-C, Q-D,
-Q-D2, Q-E, Q-F, Q-G.
+**Run order — the population gate is a hard prerequisite:**
+
+1. **Q-A0** — consistency flags. Stop on any deviation.
+2. **Q-A1** — read the 50-row enumeration; confirm the partition looks coherent.
+3. **Upstream** — `curl … /sets/cel25` and compare as sets against Q-A1's
+   numeric partition.
+
+**Only when all three pass**, run Q-C0, Q-B, Q-C, Q-D, Q-D2, Q-E, Q-F, Q-G — in
+any order, each is independently self-contained.
 
 ### Output handling
 
@@ -237,7 +307,9 @@ commit user UUIDs, binder IDs or row IDs.**
 
 > **Not yet run.** Paste output below, then classify against §5.
 
-### Q-A0 — selector integrity  ⚠ gate
+### Population gate — all three required before Q-B..Q-G
+
+**Check 1 — Q-A0 consistency**
 
 ```
 (pending)
@@ -248,22 +320,41 @@ commit user UUIDs, binder IDs or row IDs.**
 - [ ] `candidate_base_set_rows` = 25
 - [ ] `base_set_is_exactly_1_to_25` = true
 - [ ] `rows_with_null_local_id` = 0
+- [ ] `historical_rows_matching_cc_pattern` = 0
 - [ ] `cel25cc_rows` = 25
-- [ ] Upstream corroboration run; `cel25` live IDs match the numeric partition exactly
 
-### Q-A1 — full enumeration of `set_id = 'cel25'`
-
-```
-(pending)
-```
-
-### Q-C0 — schema discovery: tables carrying `card_id`
+**Check 2 — Q-A1 full enumeration of `set_id = 'cel25'`, read through**
 
 ```
 (pending)
 ```
 
-- [ ] No card_id-bearing table appears here that Q-C does not cover
+- [ ] All 50 rows present; the partition is coherent on inspection
+- [ ] No `cel25` row is already aliased (`is_already_aliased` all false)
+
+**Check 3 — upstream liveness (the independent discriminator)**
+
+```
+(pending — curl -s https://api.tcgdex.net/v2/en/sets/cel25 | jq -r '.cards[].id' | sort)
+```
+
+- [ ] Upstream live IDs and Q-A1's numeric partition agree **as sets**
+- [ ] No stored numeric ID missing from upstream
+- [ ] No upstream ID missing from storage
+
+> ⚠ Q-A0 passing is **not** sufficient on its own — it cannot detect a
+> historical row substituting for an absent base-set number. Check 3 settles
+> membership. Do not proceed to Q-B until all three boxes above are ticked.
+
+### Q-C0 — card-id-like columns, classified
+
+```
+(pending)
+```
+
+- [ ] No row classified `STOP: unclassified card-id-like reference`
+- [ ] Expected classes only: direct catalog reference · immutable import
+      evidence · identity infrastructure · membership reference
 
 ### Q-B — ownership impact
 
