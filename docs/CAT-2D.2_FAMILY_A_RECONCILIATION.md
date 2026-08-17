@@ -425,7 +425,7 @@ Static only — the PR itself touches no database.
 
 | Check | Result |
 |---|---|
-| `node scripts/cat2d2-family-a-alias-set.test.mjs` | **148 passed, 0 failed** |
+| `node scripts/cat2d2-family-a-alias-set.test.mjs` | **194 passed, 0 failed** |
 | `node scripts/cat2d2-owned-ids-collapse.test.mjs` | **32 passed, 0 failed** |
 | `node scripts/cat2d2-build-family-a-evidence.mjs --check` (384 live probes) | **ok — committed artifact matches upstream** |
 | `node scripts/cat2d1-owned-ids-contract.test.mjs` | 33 passed, 0 failed |

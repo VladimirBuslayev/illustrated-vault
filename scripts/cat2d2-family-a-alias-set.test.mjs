@@ -541,11 +541,35 @@ const between = (text, startMarker, endMarker) => {
   const j = endMarker ? text.indexOf(endMarker, i + 1) : text.length;
   return i === -1 ? '' : text.slice(i, j === -1 ? text.length : j);
 };
+// Each slice must END where the next phase BEGINS. D previously ran to the E7
+// marker, so it swallowed Phase E — and E's JWT setup would have satisfied the
+// D assertions even if D had lost its own. The three slices are now disjoint,
+// so each phase is proved self-contained on its own evidence.
 const PHASES = {
-  D:  between(validation, 'PHASE D — POST-DEPLOY OWNERSHIP', '-- ── E7. Pagination'),
+  D:  between(validation, 'PHASE D — POST-DEPLOY OWNERSHIP', 'PHASE E — POST-DEPLOY OL-0D'),
   E:  between(validation, 'PHASE E — POST-DEPLOY OL-0D', '-- ── E7. Pagination'),
   E7: between(validation, '-- ── E7. Pagination', 'PHASE F — MUTABLE'),
 };
+
+// Disjointness is the property that makes the per-phase assertions meaningful,
+// so it is asserted rather than assumed.
+{
+  const dEnd = validation.indexOf('PHASE E — POST-DEPLOY OL-0D');
+  const eStart = dEnd;
+  const e7Start = validation.indexOf('-- ── E7. Pagination');
+  const fStart = validation.indexOf('PHASE F — MUTABLE');
+  ok(dEnd > 0 && e7Start > eStart && fStart > e7Start,
+    'the D / E / E7 markers appear in order');
+  ok(!PHASES.D.includes('PHASE E — POST-DEPLOY OL-0D'),
+    'the Phase D slice stops before Phase E — E\'s JWT setup cannot satisfy D\'s assertions');
+  ok(!PHASES.E.includes('E7. Pagination'), 'the Phase E slice stops before E7');
+  ok(!PHASES.E7.includes('PHASE F'), 'the E7 slice stops before Phase F');
+  const jwtSetups = (s) => (s.match(/perform set_config\(\s*\n?\s*'request\.jwt\.claims'/g) || []).length;
+  for (const [name, body] of Object.entries(PHASES)) {
+    ok(jwtSetups(body) === 1,
+      `Phase ${name} contains exactly ONE JWT setup of its own (found ${jwtSetups(body)})`);
+  }
+}
 
 for (const [name, body] of Object.entries(PHASES)) {
   ok(body.length > 0, `Phase ${name} located`);
@@ -598,6 +622,30 @@ ok(/card_identity_aliases moved from % rows during the negative-DML probes/.test
   'G9 independently re-counts the alias rows, so a write that slipped through is caught');
 ok(/Do not wrap this DO in a transaction block/.test(g9),
   'G9 says explicitly that it must not be wrapped');
+
+// The positive control must measure, not just succeed. An owner-rights view
+// returning ZERO rows also "succeeds" — and that is exactly how a broken read
+// surface would present: every privilege check green, every consumer silently
+// no longer resolving aliases.
+ok(/execute 'select count\(\*\) from public\.card_identity_resolution' into v_seen;/.test(g9),
+  'G9 captures the row count through the read surface rather than discarding it');
+ok(/if v_seen is distinct from 192 then/.test(g9),
+  'G9 asserts each runtime role reads exactly 192 mappings through card_identity_resolution');
+ok(/if v_seen <> v_alias_rows then/.test(g9),
+  'G9 also asserts the view and its base table agree');
+ok(/card_identity_aliases holds % rows before the probes, expected 192/.test(g9),
+  'G9 pins the pre-probe alias count at 192, so the positive control cannot be satisfied by an empty table');
+
+// Phase ordering claims must not sweep H's destructive cleanup into "any order".
+console.log('\nphase ordering claims are correctly scoped');
+ok(/THE CLAIM APPLIES TO THE READ-ONLY VALIDATION PHASES C\.\.G ONLY/.test(validation),
+  'the "independently runnable" claim is scoped to C..G');
+ok(/A, B and H are NOT interchangeable and are NOT re-orderable/.test(validation),
+  'A, B and H are explicitly excluded from that claim');
+ok(/H\s+is DESTRUCTIVE cleanup/.test(validation),
+  'Phase H is labelled destructive and last');
+ok(!/every phase after A[\s\S]{0,80}any\s*\n?--\s*order/i.test(validation),
+  'the old unscoped "every phase after A … any order" wording is gone');
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) {

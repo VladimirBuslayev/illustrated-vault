@@ -20,7 +20,7 @@
 --       PERSISTENT, privilege-locked tables that every phase re-reads.
 --
 -- ─────────────────────────────────────────────────────────────────────────
--- "INDEPENDENTLY RUNNABLE AFTER A" — NOW ACTUALLY TRUE
+-- "INDEPENDENTLY RUNNABLE" — NOW ACTUALLY TRUE, AND SCOPED TO C..G
 -- ─────────────────────────────────────────────────────────────────────────
 -- An earlier revision of this file CLAIMED each phase was independently
 -- runnable in any session after A, and it was not: Phase D established
@@ -44,12 +44,24 @@
 -- `is_local => true` also means each phase leaves the session as it found it,
 -- so there is no validation identity to forget to clear afterwards.
 --
--- Every phase after A is therefore genuinely self-contained: any session, any
--- order, any number of times.
+-- ⚠ THE CLAIM APPLIES TO THE READ-ONLY VALIDATION PHASES C..G ONLY.
+--   C, D, E, E7, F and G are genuinely self-contained: any session, any order,
+--   any number of times. They read production and assert; they change nothing.
 --
--- scripts/cat2d2-family-a-alias-set.test.mjs asserts this structurally, so
--- these phases cannot regress to relying on prior-session JWT state or on a
--- transaction wrapper.
+--   A, B and H are NOT interchangeable and are NOT re-orderable:
+--     A  writes the capture tables and is a hard prerequisite of B (cat-2d2-1
+--        §6 reads cat2d2_pre_refs). Re-running A is safe and rebuilds all three
+--        tables, but ONLY while the alias table is still empty — its own
+--        A-GUARD refuses afterwards, precisely so it cannot destroy the undo
+--        list of a migration that has already run.
+--     B  is the migration itself.
+--     H  is DESTRUCTIVE cleanup. It drops the capture tables, including the
+--        exact undo list, and must run LAST — after C..G pass, after the PR
+--        merges and the app deploys, after the production smoke test.
+--
+-- scripts/cat2d2-family-a-alias-set.test.mjs asserts the C..G property
+-- structurally, so those phases cannot regress to relying on prior-session JWT
+-- state or on a transaction wrapper.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- ⚠ PHASE A IS A GATE AND AN INPUT, NOT JUST A SNAPSHOT
@@ -81,10 +93,13 @@
 --   G   security — CAT-2D.1 ACL contract unchanged        (read-only)
 --   H   cleanup — drop all three capture tables
 --
--- Run A0 → A → B → C → D → E → F → G in order; each may be its own Run.
--- H runs later, at the safe point in the deployment sequence — after the PR is
--- merged, the application change is deployed and the production smoke test has
--- passed. See the DEPLOYMENT ORDER header of cat-2d2-1.
+-- Run A0 → A → B first, in that order: A must precede B, and B must precede any
+-- post-deploy phase. C, D, E, E7, F and G may then be run in any order, in any
+-- session, any number of times — each is self-contained and read-only.
+-- H runs LAST, at the safe point in the deployment sequence — after C..G pass,
+-- after the PR is merged, the application change is deployed and the production
+-- smoke test has passed. It is destructive; see the DEPLOYMENT ORDER header of
+-- cat-2d2-1.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -1422,8 +1437,12 @@ declare
   v_role   text;
   v_orig   text := session_user;
   v_alias_rows bigint;
+  v_seen   bigint;
 begin
   select count(*) into v_alias_rows from public.card_identity_aliases;
+  if v_alias_rows <> 192 then
+    raise exception 'FAIL G9: card_identity_aliases holds % rows before the probes, expected 192', v_alias_rows;
+  end if;
 
   foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
     v_denied := false;
@@ -1452,16 +1471,30 @@ begin
       raise exception 'FAIL G9: % was able to read alias provenance from the private base table', v_role;
     end if;
 
-    -- Positive control: the narrow read surface must still work, and must now
-    -- return the 192 real mappings.
+    -- Positive control. "The SELECT succeeded" is not enough: an owner-rights
+    -- view that returns ZERO rows also succeeds, and that is precisely how a
+    -- broken read surface would present — every consumer would silently stop
+    -- resolving aliases while every privilege check still looked green.
+    -- So the row COUNT is captured and asserted to be exactly 192.
+    v_seen := null;
     begin
       perform set_config('role', v_role, true);
-      execute 'select count(*) from public.card_identity_resolution';
+      execute 'select count(*) from public.card_identity_resolution' into v_seen;
       perform set_config('role', v_orig, true);
     exception when others then
       perform set_config('role', v_orig, true);
       raise exception 'FAIL G9: % could NOT read card_identity_resolution — the read surface is broken', v_role;
     end;
+    if v_seen is distinct from 192 then
+      raise exception
+        'FAIL G9: % reads % row(s) through card_identity_resolution, expected exactly 192 — the read surface resolves a different set than the alias table holds',
+        v_role, coalesce(v_seen::text, '<null>');
+    end if;
+    if v_seen <> v_alias_rows then
+      raise exception
+        'FAIL G9: % reads % row(s) through card_identity_resolution but card_identity_aliases holds % — the view and its base table disagree',
+        v_role, v_seen, v_alias_rows;
+    end if;
   end loop;
 
   -- G9-FINAL. Independent proof that no attempted DML took effect. If a DELETE
@@ -1473,7 +1506,7 @@ begin
       v_alias_rows;
   end if;
 
-  raise notice 'PHASE G9 PASSED — provenance unreadable, view DML denied, read surface works, for all three runtime roles; alias rows unchanged at %.', v_alias_rows;
+  raise notice 'PHASE G9 PASSED — for anon, authenticated and service_role: view DML denied, provenance unreadable, and the read surface returns exactly % mappings. Alias rows unchanged at %.', 192, v_alias_rows;
 end $$;
 
 
