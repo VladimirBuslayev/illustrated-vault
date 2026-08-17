@@ -333,7 +333,15 @@ const ARTIST_EDITORIAL = {
         note: "An editorial pick: the case where the Pokémon and the material want exactly the same thing — soft, round and stuffed.",
       },
       {
-        id: "swsh12.5-GG19",
+        // CAT-2D.2: swsh12.5-GG19 -> swsh12.5gg-GG19. TCGdex re-namespaced the
+        // Galarian Gallery subset out of Crown Zenith. The obsolete id is now
+        // an approved identity alias, so it no longer appears in
+        // cards_effective and this entry would resolve to nothing — the
+        // expectName guard would omit it with a console warning rather than
+        // substitute. Same physical printing, same name, same artist.
+        // Safe to deploy before or after the SQL: the survivor is already in
+        // cards_effective today.
+        id: "swsh12.5gg-GG19",
         expectName: "Altaria",
         label: "Built from scratch",
         basis: "documented",

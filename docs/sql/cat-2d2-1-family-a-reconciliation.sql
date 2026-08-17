@@ -1,0 +1,1121 @@
+-- docs/sql/cat-2d2-1-family-a-reconciliation.sql
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CAT-2D.2 — Family A provider identity reconciliation
+--
+-- Populates public.card_identity_aliases with the 217 Family A renames whose
+-- current TCGdex survivor ALREADY EXISTS in public.cards, and migrates the
+-- mutable user-facing references that point at the obsolete ids.
+--
+--   swsh4.5-SV###   -> swsh4.5sv-SV###     Shining Fates Shiny Vault        122
+--   swsh12.5-GG##   -> swsh12.5gg-GG##     Crown Zenith Galarian Gallery     70
+--   cel25-CC###     -> cel25cc-CC###       Celebrations Classic Collection   25
+--                                                                          ───
+--                                                                          217
+--
+-- No sync run is required: every survivor is already stored.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHAT THIS FILE DOES NOT DO
+-- ─────────────────────────────────────────────────────────────────────────
+--   * deletes NOTHING from public.cards — the 217 obsolete rows are retained
+--     raw provider history and simply stop appearing in cards_effective;
+--   * never writes user_import_rows — historical matching evidence stays
+--     byte-identical, and alias resolution happens at READ time (CAT-2D.1 §5);
+--   * touches no Trainer Gallery id (Family B, blocked — CAT-2D §7.3);
+--   * changes no ownership semantics beyond the resolution CAT-2D.1 shipped;
+--   * does not restore the sync schedule and runs no sync.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- SOURCE OF TRUTH
+-- ─────────────────────────────────────────────────────────────────────────
+--   alias schema, no-chain trigger, resolution view, alias-aware consumers
+--     -> docs/sql/cat-2d1-1-dark-alias-foundation.sql   (deployed, PR #12)
+--   approved allowlist + per-pair upstream evidence
+--     -> docs/cat-2d2-evidence/family-a-alias-set.csv
+--        docs/cat-2d2-evidence/manifest.json
+--   normalisers replicated in §2
+--     -> src/utils/keys.js  normName / normNum   (frozen — never reimplement
+--        differently; the copies here are asserted equal-by-construction in
+--        scripts/cat2d2-family-a-alias-set.test.mjs)
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- THE ADMISSION RULE, AND THE ONE PLACE IT DEPARTS FROM CAT-2D §3.4
+-- ─────────────────────────────────────────────────────────────────────────
+-- CAT-2D §3.4 rule 1 requires equal Tier-1 identity
+-- (normName, normSet(set_name), normNum(local_id)) between alias and canonical.
+--
+-- FAMILY A CANNOT SATISFY THAT RULE, and pretending otherwise would be the
+-- exact kind of unexamined pattern migration this slice must not be.
+--
+--   sync-cards.mjs :: mapCardToRow writes set_name from the set the provider
+--   served the card under. These printings were ingested while they sat in the
+--   PARENT set, so the obsolete rows carry 'Shining Fates' / 'Crown Zenith' /
+--   'Celebrations' while their survivors carry the subset names. normSet of
+--   those differs, so the Tier-1 keys differ BY CONSTRUCTION.
+--
+-- That is also why Family A has never produced a Tier-1 collision and why the
+-- CAT-2B1 guard has never refused these sets: the defect is a duplicated
+-- PRINTING, not a duplicated identity key. (Family B is the opposite case —
+-- the TG subset generation kept the subset set_name, so Tier-1 equality does
+-- hold there. Nothing in this file relies on or affects that.)
+--
+-- Family A therefore substitutes, FOR THE SET COMPONENT ONLY, an explicitly
+-- enumerated and separately evidenced set-rename pair, and keeps the other two
+-- components strictly:
+--
+--   A1  the pairing lies inside an approved (parent -> canonical) set pair,
+--       enumerated in §3 — never inferred, never wildcarded
+--   A2  normNum(local_id) equal, exactly. normNum does NOT strip leading
+--       zeros, so 'SV1' and 'SV001' are different printings and cannot pair
+--   A3  normName(name) equal, exactly, evaluated against the STORED rows —
+--       §5 P4. Not against the artifact, and not against upstream
+--   A4  the parent set no longer serves ANY card in the family's local-id
+--       namespace — observed upstream when the artifact was generated. This
+--       is the evidence that the whole namespace MOVED, rather than that one
+--       card happens to share a name and number with another
+--   A5  the obsolete id 404s upstream and the canonical id 200s, per pair,
+--       observed and dated in the artifact
+--
+-- A1+A2+A3 alone would still only be a same-name-same-number argument. A4 is
+-- what makes it a rename. Name equality alone is explicitly insufficient, and
+-- no cross-language, cross-printing or artwork-level equivalence is admitted.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- FAIL-CLOSED POSTURE — STRICTER THAN CAT-2D §6.2
+-- ─────────────────────────────────────────────────────────────────────────
+-- CAT-2D §6.2 permits SILENT MERGES for card_favorites, user_binder_cards,
+-- price_history and user_card_intent when a user already holds both the
+-- obsolete and the survivor row.
+--
+-- THIS MIGRATION IMPLEMENTS NO MERGE BRANCH AT ALL. Every collision in every
+-- mutable table REFUSES the whole transaction (§7). Rationale:
+--
+--   * a merge is the only operation in the entire CAT-2D design that destroys
+--     information (§10), and it would do so without a human ever seeing it;
+--   * Q-3 predicts ZERO collisions, so fail-closed is expected to cost
+--     nothing — and if that prediction is wrong, that fact is far more
+--     valuable than an automatic resolution;
+--   * refusing keeps the migration a single reversible UPDATE of card_id.
+--
+-- If a collision is ever reported, resolving it is a separate, explicitly
+-- approved operator decision — not a side effect of running this file.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- DEPLOYMENT ORDER
+-- ─────────────────────────────────────────────────────────────────────────
+--   1. run docs/sql/cat-2d2-2-family-a-validation.sql PHASE A (pre-capture,
+--      collision analysis). It REFUSES if any collision exists, before this
+--      file is ever run.
+--   2. run THIS FILE, top to bottom. One transaction: the 217 alias rows and
+--      every reference migration land together or not at all (CAT-2D §6.3 —
+--      swsh12.5-GG19 must never be unowned, not even mid-migration).
+--   3. run cat-2d2-2 PHASES C..G (post-validation and cleanup).
+--
+-- The application change in this slice (src/constants/artistEditorial.js,
+-- swsh12.5-GG19 -> swsh12.5gg-GG19) is SAFE IN EITHER ORDER but is best
+-- deployed FIRST or simultaneously: the survivor is already in cards_effective
+-- today, so the new id resolves before this file runs, and the old id stops
+-- resolving after it. Deploying SQL first leaves a cosmetic gap in which the
+-- Asako Ito notable card is omitted with a console warning — the expectName
+-- guard failing safe, never substituting.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+begin;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §1. SERIALIZE ALIAS TOPOLOGY WRITES   (binding requirement from CAT-2D.1 §2)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- CAT-2D.1 proved depth-1 alias topology only for SEQUENTIAL writers: the
+-- two-sided R1/R2 trigger evaluates against the state each transaction can
+-- see, so two concurrent privileged transactions could each pass and commit a
+-- chain neither observed. Its binding requirement on this and every later
+-- slice is an explicit lock taken BEFORE any alias row is read or written.
+--
+-- SHARE ROW EXCLUSIVE is the mode named there. It self-conflicts, so at most
+-- one alias-topology writer exists at a time, while ordinary readers (the
+-- resolution view, cards_effective, both RPCs) are unaffected.
+--
+-- Taken FIRST, before the §5 proofs read the table. Reading topology under a
+-- weaker lock and then writing under a stronger one is the race this closes.
+lock table public.card_identity_aliases in share row exclusive mode;
+
+-- The mutable-reference tables are locked in the same mode for the same
+-- reason: §7 proves "no collision exists", then §8 acts on that proof. Without
+-- a lock a concurrent INSERT could create the colliding row in between, and
+-- the UPDATE would fail on a unique violation — or, worse, a future edit that
+-- softened the refusal into a merge would silently destroy a row written
+-- seconds earlier. Readers are not blocked; concurrent writers to these six
+-- tables are, for the duration of one short transaction.
+--
+-- Lock order is fixed and alphabetical to keep this file deadlock-free against
+-- itself if it is ever run twice concurrently by mistake.
+--
+-- If any of these six relations does not exist, this statement aborts the
+-- transaction before a single row has been read. That is the intended outcome:
+-- the reference inventory in §7 would be stale, and a stale inventory is the
+-- one condition under which this migration could leave a live reference
+-- pointing at an id that has left the effective catalog. §7 repeats the check
+-- with a named diagnostic for the case where the relation exists but has been
+-- replaced by something unexpected.
+lock table public.card_extras        in share row exclusive mode;
+lock table public.card_favorites     in share row exclusive mode;
+lock table public.card_overrides     in share row exclusive mode;
+lock table public.price_history      in share row exclusive mode;
+lock table public.user_binder_cards  in share row exclusive mode;
+lock table public.user_card_intent   in share row exclusive mode;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §2. FROZEN NORMALISERS — session-local copies of src/utils/keys.js
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Created in pg_temp so this migration leaves NO permanent function behind.
+-- CAT-2D.2 is not authorised to add public schema objects.
+--
+-- These are transcriptions of the frozen ownership normalisers:
+--
+--   normName = s => (s||"").toLowerCase().trim()
+--                          .replace(/[^a-z0-9\s]/g,"").replace(/\s+/g," ")
+--   normNum  = n => (n||"").toString().toLowerCase().trim()
+--                          .replace(/\/.*$/,"").trim()
+--
+-- Note there is deliberately NO trailing btrim in normName: the JS trims
+-- BEFORE stripping punctuation, so a name like 'Umbreon ☆' normalises to
+-- 'umbreon ' WITH a trailing space. Adding a final btrim here would be
+-- "obviously correct" and would silently diverge from the importer.
+--
+-- POSIX [:space:] and JavaScript \s are not identical (JS also matches NBSP
+-- and friends). That divergence cannot affect this migration: §5 P4 compares
+-- one STORED name against another STORED name using this same function on
+-- both sides. No value normalised here is ever compared to a JS-normalised
+-- value.
+
+create function pg_temp.cat2d2_norm_name(s text) returns text
+language sql immutable as $fn$
+  select regexp_replace(
+           regexp_replace(lower(btrim(coalesce(s, ''))), '[^a-z0-9[:space:]]', '', 'g'),
+           '[[:space:]]+', ' ', 'g')
+$fn$;
+
+create function pg_temp.cat2d2_norm_num(s text) returns text
+language sql immutable as $fn$
+  select btrim(regexp_replace(lower(btrim(coalesce(s, ''))), '/.*$', ''))
+$fn$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §3. THE APPROVED SET-RENAME PAIRS   (A1)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- The local-id patterns are ANCHORED and family-specific. They are the only
+-- thing separating an obsolete subset row from an ordinary parent-set row
+-- inside the same set_id — swsh4.5 also holds the 73 real Shining Fates cards,
+-- swsh12.5 the 160 real Crown Zenith cards, cel25 the 25 real Celebrations
+-- cards, and NONE of those may be touched. A loose pattern here would widen
+-- the slice silently, so §5 P7 pins the resulting counts exactly.
+--
+-- The SAME patterns appear in scripts/cat2d2-build-family-a-evidence.mjs and
+-- are compared by scripts/cat2d2-family-a-alias-set.test.mjs.
+
+create temporary table cat2d2_family (
+  family              text primary key,
+  alias_set_id        text not null,
+  canonical_set_id    text not null,
+  local_id_pattern    text not null,
+  expected_count      int  not null
+) on commit drop;
+
+insert into cat2d2_family values
+  ('shining_fates_sv', 'swsh4.5',  'swsh4.5sv',  '^SV[0-9]{3}$', 122),
+  ('crown_zenith_gg',  'swsh12.5', 'swsh12.5gg', '^GG[0-9]{2}$',  70),
+  ('celebrations_cc',  'cel25',    'cel25cc',    '^CC[0-9]{3}$',  25);
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §4. THE APPROVED ALLOWLIST — 217 individually evidenced identity claims
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Generated from docs/cat-2d2-evidence/family-a-alias-set.csv, which was in
+-- turn produced by a read-only upstream probe
+-- (scripts/cat2d2-build-family-a-evidence.mjs). Every row was individually
+-- observed: alias_upstream_status = 404, canonical_upstream_status = 200.
+--
+-- THIS IS AN ALLOWLIST, NOT A MATCHER (CAT-2D §7.1). A pair that is not
+-- listed here cannot be created by this migration under any circumstance, and
+-- a pair that IS listed here is still refused unless §5 proves it against the
+-- stored rows. Both gates must pass.
+--
+-- The `name` column is the UPSTREAM survivor name at observation time. It is
+-- carried for review and for the evidence payload. It is deliberately NOT the
+-- value P4 tests: P4 compares stored obsolete name against stored survivor
+-- name, so a drifting upstream name cannot make an unrelated pair look valid.
+--
+-- Do not hand-edit. Regenerate the artifact and re-derive this block; the
+-- test asserts the two are identical.
+
+create temporary table cat2d2_allowlist (
+  family                    text not null,
+  alias_card_id             text not null primary key,
+  canonical_card_id         text not null,
+  name                      text not null,
+  local_id                  text not null,
+  alias_upstream_status     int  not null,
+  canonical_upstream_status int  not null
+) on commit drop;
+
+insert into cat2d2_allowlist
+  (family, alias_card_id, canonical_card_id, name, local_id,
+   alias_upstream_status, canonical_upstream_status)
+values
+    ('shining_fates_sv', 'swsh4.5-SV001', 'swsh4.5sv-SV001', 'Rowlet', 'SV001', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV002', 'swsh4.5sv-SV002', 'Dartrix', 'SV002', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV003', 'swsh4.5sv-SV003', 'Decidueye', 'SV003', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV004', 'swsh4.5sv-SV004', 'Grookey', 'SV004', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV005', 'swsh4.5sv-SV005', 'Thwackey', 'SV005', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV006', 'swsh4.5sv-SV006', 'Rillaboom', 'SV006', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV007', 'swsh4.5sv-SV007', 'Blipbug', 'SV007', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV008', 'swsh4.5sv-SV008', 'Dottler', 'SV008', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV009', 'swsh4.5sv-SV009', 'Orbeetle', 'SV009', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV010', 'swsh4.5sv-SV010', 'Gossifleur', 'SV010', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV011', 'swsh4.5sv-SV011', 'Eldegoss', 'SV011', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV012', 'swsh4.5sv-SV012', 'Applin', 'SV012', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV013', 'swsh4.5sv-SV013', 'Flapple', 'SV013', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV014', 'swsh4.5sv-SV014', 'Appletun', 'SV014', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV015', 'swsh4.5sv-SV015', 'Scorbunny', 'SV015', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV016', 'swsh4.5sv-SV016', 'Raboot', 'SV016', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV017', 'swsh4.5sv-SV017', 'Cinderace', 'SV017', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV018', 'swsh4.5sv-SV018', 'Sizzlipede', 'SV018', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV019', 'swsh4.5sv-SV019', 'Centiskorch', 'SV019', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV020', 'swsh4.5sv-SV020', 'Galarian Mr. Mime', 'SV020', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV021', 'swsh4.5sv-SV021', 'Galarian Mr. Rime', 'SV021', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV022', 'swsh4.5sv-SV022', 'Suicune', 'SV022', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV023', 'swsh4.5sv-SV023', 'Galarian Darumaka', 'SV023', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV024', 'swsh4.5sv-SV024', 'Galarian Darmanitan', 'SV024', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV025', 'swsh4.5sv-SV025', 'Sobble', 'SV025', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV026', 'swsh4.5sv-SV026', 'Drizzile', 'SV026', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV027', 'swsh4.5sv-SV027', 'Inteleon', 'SV027', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV028', 'swsh4.5sv-SV028', 'Chewtle', 'SV028', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV029', 'swsh4.5sv-SV029', 'Drednaw', 'SV029', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV030', 'swsh4.5sv-SV030', 'Cramorant', 'SV030', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV031', 'swsh4.5sv-SV031', 'Arrokuda', 'SV031', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV032', 'swsh4.5sv-SV032', 'Barraskewda', 'SV032', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV033', 'swsh4.5sv-SV033', 'Snom', 'SV033', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV034', 'swsh4.5sv-SV034', 'Frosmoth', 'SV034', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV035', 'swsh4.5sv-SV035', 'Eiscue', 'SV035', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV036', 'swsh4.5sv-SV036', 'Dracovish', 'SV036', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV037', 'swsh4.5sv-SV037', 'Arctovish', 'SV037', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV038', 'swsh4.5sv-SV038', 'Rotom', 'SV038', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV039', 'swsh4.5sv-SV039', 'Yamper', 'SV039', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV040', 'swsh4.5sv-SV040', 'Boltund', 'SV040', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV041', 'swsh4.5sv-SV041', 'Toxel', 'SV041', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV042', 'swsh4.5sv-SV042', 'Toxtricity', 'SV042', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV043', 'swsh4.5sv-SV043', 'Pincurchin', 'SV043', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV044', 'swsh4.5sv-SV044', 'Morpeko', 'SV044', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV045', 'swsh4.5sv-SV045', 'Dracozolt', 'SV045', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV046', 'swsh4.5sv-SV046', 'Arctozolt', 'SV046', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV047', 'swsh4.5sv-SV047', 'Galarian Ponyta', 'SV047', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV048', 'swsh4.5sv-SV048', 'Galarian Rapidash', 'SV048', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV049', 'swsh4.5sv-SV049', 'Galarian Corsola', 'SV049', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV050', 'swsh4.5sv-SV050', 'Galarian Cursola', 'SV050', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV051', 'swsh4.5sv-SV051', 'Dedenne', 'SV051', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV052', 'swsh4.5sv-SV052', 'Sinistea', 'SV052', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV053', 'swsh4.5sv-SV053', 'Polteageist', 'SV053', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV054', 'swsh4.5sv-SV054', 'Hatenna', 'SV054', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV055', 'swsh4.5sv-SV055', 'Hattrem', 'SV055', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV056', 'swsh4.5sv-SV056', 'Hatterene', 'SV056', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV057', 'swsh4.5sv-SV057', 'Milcery', 'SV057', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV058', 'swsh4.5sv-SV058', 'Alcremie', 'SV058', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV059', 'swsh4.5sv-SV059', 'Indeedee', 'SV059', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV060', 'swsh4.5sv-SV060', 'Dreepy', 'SV060', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV061', 'swsh4.5sv-SV061', 'Drakloak', 'SV061', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV062', 'swsh4.5sv-SV062', 'Dragapult', 'SV062', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV063', 'swsh4.5sv-SV063', 'Galarian Farfetch''d', 'SV063', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV064', 'swsh4.5sv-SV064', 'Galarian Sirfetch''d', 'SV064', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV065', 'swsh4.5sv-SV065', 'Galarian Yamask', 'SV065', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV066', 'swsh4.5sv-SV066', 'Galarian Runerigus', 'SV066', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV067', 'swsh4.5sv-SV067', 'Rolycoly', 'SV067', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV068', 'swsh4.5sv-SV068', 'Carkol', 'SV068', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV069', 'swsh4.5sv-SV069', 'Coalossal', 'SV069', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV070', 'swsh4.5sv-SV070', 'Silicobra', 'SV070', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV071', 'swsh4.5sv-SV071', 'Sandaconda', 'SV071', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV072', 'swsh4.5sv-SV072', 'Clobbopus', 'SV072', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV073', 'swsh4.5sv-SV073', 'Grapploct', 'SV073', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV074', 'swsh4.5sv-SV074', 'Falinks', 'SV074', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV075', 'swsh4.5sv-SV075', 'Stonjourner', 'SV075', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV076', 'swsh4.5sv-SV076', 'Koffing', 'SV076', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV077', 'swsh4.5sv-SV077', 'Galarian Weezing', 'SV077', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV078', 'swsh4.5sv-SV078', 'Galarian Zigzagoon', 'SV078', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV079', 'swsh4.5sv-SV079', 'Galarian Linoone', 'SV079', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV080', 'swsh4.5sv-SV080', 'Galarian Obstagoon', 'SV080', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV081', 'swsh4.5sv-SV081', 'Nickit', 'SV081', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV082', 'swsh4.5sv-SV082', 'Thievul', 'SV082', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV083', 'swsh4.5sv-SV083', 'Impidimp', 'SV083', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV084', 'swsh4.5sv-SV084', 'Morgrem', 'SV084', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV085', 'swsh4.5sv-SV085', 'Grimmsnarl', 'SV085', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV086', 'swsh4.5sv-SV086', 'Galarian Meowth', 'SV086', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV087', 'swsh4.5sv-SV087', 'Galarian Perrserker', 'SV087', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV088', 'swsh4.5sv-SV088', 'Galarian Stunfisk', 'SV088', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV089', 'swsh4.5sv-SV089', 'Corviknight', 'SV089', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV090', 'swsh4.5sv-SV090', 'Cufant', 'SV090', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV091', 'swsh4.5sv-SV091', 'Copperajah', 'SV091', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV092', 'swsh4.5sv-SV092', 'Duraludon', 'SV092', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV093', 'swsh4.5sv-SV093', 'Minccino', 'SV093', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV094', 'swsh4.5sv-SV094', 'Cinccino', 'SV094', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV095', 'swsh4.5sv-SV095', 'Ducklett', 'SV095', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV096', 'swsh4.5sv-SV096', 'Swanna', 'SV096', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV097', 'swsh4.5sv-SV097', 'Bunnelby', 'SV097', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV098', 'swsh4.5sv-SV098', 'Oranguru', 'SV098', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV099', 'swsh4.5sv-SV099', 'Skwovet', 'SV099', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV100', 'swsh4.5sv-SV100', 'Greedent', 'SV100', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV101', 'swsh4.5sv-SV101', 'Rookidee', 'SV101', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV102', 'swsh4.5sv-SV102', 'Corvisquire', 'SV102', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV103', 'swsh4.5sv-SV103', 'Wooloo', 'SV103', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV104', 'swsh4.5sv-SV104', 'Dubwool', 'SV104', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV105', 'swsh4.5sv-SV105', 'Rillaboom V', 'SV105', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV106', 'swsh4.5sv-SV106', 'Rillaboom VMAX', 'SV106', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV107', 'swsh4.5sv-SV107', 'Charizard VMAX', 'SV107', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV108', 'swsh4.5sv-SV108', 'Centiskorch V', 'SV108', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV109', 'swsh4.5sv-SV109', 'Centiskorch VMAX', 'SV109', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV110', 'swsh4.5sv-SV110', 'Lapras V', 'SV110', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV111', 'swsh4.5sv-SV111', 'Lapras VMAX', 'SV111', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV112', 'swsh4.5sv-SV112', 'Toxtricity V', 'SV112', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV113', 'swsh4.5sv-SV113', 'Toxtricity VMAX', 'SV113', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV114', 'swsh4.5sv-SV114', 'Indeedee V', 'SV114', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV115', 'swsh4.5sv-SV115', 'Falinks V', 'SV115', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV116', 'swsh4.5sv-SV116', 'Grimmsnarl V', 'SV116', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV117', 'swsh4.5sv-SV117', 'Grimmsnarl VMAX', 'SV117', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV118', 'swsh4.5sv-SV118', 'Ditto V', 'SV118', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV119', 'swsh4.5sv-SV119', 'Ditto VMAX', 'SV119', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV120', 'swsh4.5sv-SV120', 'Dubwool V', 'SV120', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV121', 'swsh4.5sv-SV121', 'Eternatus V', 'SV121', 404, 200),
+    ('shining_fates_sv', 'swsh4.5-SV122', 'swsh4.5sv-SV122', 'Eternatus VMAX', 'SV122', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG01', 'swsh12.5gg-GG01', 'Hisuian Voltorb', 'GG01', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG02', 'swsh12.5gg-GG02', 'Kricketune', 'GG02', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG03', 'swsh12.5gg-GG03', 'Magmortar', 'GG03', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG04', 'swsh12.5gg-GG04', 'Oricorio', 'GG04', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG05', 'swsh12.5gg-GG05', 'Lapras', 'GG05', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG06', 'swsh12.5gg-GG06', 'Manaphy', 'GG06', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG07', 'swsh12.5gg-GG07', 'Keldeo', 'GG07', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG08', 'swsh12.5gg-GG08', 'Electivire', 'GG08', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG09', 'swsh12.5gg-GG09', 'Toxtricity', 'GG09', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG10', 'swsh12.5gg-GG10', 'Mew', 'GG10', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG11', 'swsh12.5gg-GG11', 'Lunatone', 'GG11', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG12', 'swsh12.5gg-GG12', 'Deoxys', 'GG12', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG13', 'swsh12.5gg-GG13', 'Diancie', 'GG13', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG14', 'swsh12.5gg-GG14', 'Comfey', 'GG14', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG15', 'swsh12.5gg-GG15', 'Solrock', 'GG15', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG16', 'swsh12.5gg-GG16', 'Absol', 'GG16', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG17', 'swsh12.5gg-GG17', 'Thievul', 'GG17', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG18', 'swsh12.5gg-GG18', 'Magnezone', 'GG18', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG19', 'swsh12.5gg-GG19', 'Altaria', 'GG19', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG20', 'swsh12.5gg-GG20', 'Latias', 'GG20', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG21', 'swsh12.5gg-GG21', 'Hisuian Goodra', 'GG21', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG22', 'swsh12.5gg-GG22', 'Ditto', 'GG22', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG23', 'swsh12.5gg-GG23', 'Dunsparce', 'GG23', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG24', 'swsh12.5gg-GG24', 'Miltank', 'GG24', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG25', 'swsh12.5gg-GG25', 'Bibarel', 'GG25', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG26', 'swsh12.5gg-GG26', 'Riolu', 'GG26', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG27', 'swsh12.5gg-GG27', 'Swablu', 'GG27', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG28', 'swsh12.5gg-GG28', 'Duskull', 'GG28', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG29', 'swsh12.5gg-GG29', 'Bidoof', 'GG29', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG30', 'swsh12.5gg-GG30', 'Pikachu', 'GG30', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG31', 'swsh12.5gg-GG31', 'Turtwig', 'GG31', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG32', 'swsh12.5gg-GG32', 'Paras', 'GG32', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG33', 'swsh12.5gg-GG33', 'Poochyena', 'GG33', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG34', 'swsh12.5gg-GG34', 'Mareep', 'GG34', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG35', 'swsh12.5gg-GG35', 'Leafeon VSTAR', 'GG35', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG36', 'swsh12.5gg-GG36', 'Entei V', 'GG36', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG37', 'swsh12.5gg-GG37', 'Simisear VSTAR', 'GG37', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG38', 'swsh12.5gg-GG38', 'Suicune V', 'GG38', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG39', 'swsh12.5gg-GG39', 'Lumineon V', 'GG39', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG40', 'swsh12.5gg-GG40', 'Glaceon VSTAR', 'GG40', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG41', 'swsh12.5gg-GG41', 'Raikou V', 'GG41', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG42', 'swsh12.5gg-GG42', 'Zeraora VMAX', 'GG42', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG43', 'swsh12.5gg-GG43', 'Zeraora VSTAR', 'GG43', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG44', 'swsh12.5gg-GG44', 'Mewtwo VSTAR', 'GG44', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG45', 'swsh12.5gg-GG45', 'Deoxys VMAX', 'GG45', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG46', 'swsh12.5gg-GG46', 'Deoxys VSTAR', 'GG46', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG47', 'swsh12.5gg-GG47', 'Hatterene VMAX', 'GG47', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG48', 'swsh12.5gg-GG48', 'Zacian V', 'GG48', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG49', 'swsh12.5gg-GG49', 'Drapion V', 'GG49', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG50', 'swsh12.5gg-GG50', 'Darkrai VSTAR', 'GG50', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG51', 'swsh12.5gg-GG51', 'Hisuian Samurott V', 'GG51', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG52', 'swsh12.5gg-GG52', 'Hisuian Samurott VSTAR', 'GG52', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG53', 'swsh12.5gg-GG53', 'Hoopa V', 'GG53', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG54', 'swsh12.5gg-GG54', 'Zamazenta V', 'GG54', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG55', 'swsh12.5gg-GG55', 'Regigigas VSTAR', 'GG55', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG56', 'swsh12.5gg-GG56', 'Hisuian Zoroark VSTAR', 'GG56', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG57', 'swsh12.5gg-GG57', 'Adaman', 'GG57', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG58', 'swsh12.5gg-GG58', 'Cheren''s Care', 'GG58', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG59', 'swsh12.5gg-GG59', 'Colress''s Experiment', 'GG59', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG60', 'swsh12.5gg-GG60', 'Cynthia''s Ambition', 'GG60', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG61', 'swsh12.5gg-GG61', 'Gardenia''s Vigor', 'GG61', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG62', 'swsh12.5gg-GG62', 'Grant', 'GG62', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG63', 'swsh12.5gg-GG63', 'Irida', 'GG63', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG64', 'swsh12.5gg-GG64', 'Melony', 'GG64', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG65', 'swsh12.5gg-GG65', 'Raihan', 'GG65', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG66', 'swsh12.5gg-GG66', 'Roxanne', 'GG66', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG67', 'swsh12.5gg-GG67', 'Origin Forme Palkia VSTAR', 'GG67', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG68', 'swsh12.5gg-GG68', 'Origin Forme Dialga VSTAR', 'GG68', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG69', 'swsh12.5gg-GG69', 'Giratina VSTAR', 'GG69', 404, 200),
+    ('crown_zenith_gg', 'swsh12.5-GG70', 'swsh12.5gg-GG70', 'Arceus VSTAR', 'GG70', 404, 200),
+    ('celebrations_cc', 'cel25-CC001', 'cel25cc-CC001', 'Blastoise', 'CC001', 404, 200),
+    ('celebrations_cc', 'cel25-CC002', 'cel25cc-CC002', 'Charizard', 'CC002', 404, 200),
+    ('celebrations_cc', 'cel25-CC003', 'cel25cc-CC003', 'Venusaur', 'CC003', 404, 200),
+    ('celebrations_cc', 'cel25-CC004', 'cel25cc-CC004', 'Imposter Professor Oak', 'CC004', 404, 200),
+    ('celebrations_cc', 'cel25-CC005', 'cel25cc-CC005', 'Dark Gyarados', 'CC005', 404, 200),
+    ('celebrations_cc', 'cel25-CC006', 'cel25cc-CC006', 'Here Comes Team Rocket!', 'CC006', 404, 200),
+    ('celebrations_cc', 'cel25-CC007', 'cel25cc-CC007', 'Rocket''s Zapdos', 'CC007', 404, 200),
+    ('celebrations_cc', 'cel25-CC008', 'cel25cc-CC008', '_____''s Pikachu', 'CC008', 404, 200),
+    ('celebrations_cc', 'cel25-CC009', 'cel25cc-CC009', 'Cleffa', 'CC009', 404, 200),
+    ('celebrations_cc', 'cel25-CC010', 'cel25cc-CC010', 'Shining Magikarp', 'CC010', 404, 200),
+    ('celebrations_cc', 'cel25-CC011', 'cel25cc-CC011', 'Team Magma''s Groudon', 'CC011', 404, 200),
+    ('celebrations_cc', 'cel25-CC012', 'cel25cc-CC012', 'Rocket''s Admin.', 'CC012', 404, 200),
+    ('celebrations_cc', 'cel25-CC013', 'cel25cc-CC013', 'Mew ex', 'CC013', 404, 200),
+    ('celebrations_cc', 'cel25-CC014', 'cel25cc-CC014', 'Gardevoir ex', 'CC014', 404, 200),
+    ('celebrations_cc', 'cel25-CC015', 'cel25cc-CC015', 'Umbreon ☆', 'CC015', 404, 200),
+    ('celebrations_cc', 'cel25-CC016', 'cel25cc-CC016', 'Claydol', 'CC016', 404, 200),
+    ('celebrations_cc', 'cel25-CC017', 'cel25cc-CC017', 'Luxray GL LV.X', 'CC017', 404, 200),
+    ('celebrations_cc', 'cel25-CC018', 'cel25cc-CC018', 'Garchomp C LV.X', 'CC018', 404, 200),
+    ('celebrations_cc', 'cel25-CC019', 'cel25cc-CC019', 'Donphan', 'CC019', 404, 200),
+    ('celebrations_cc', 'cel25-CC020', 'cel25cc-CC020', 'Reshiram', 'CC020', 404, 200),
+    ('celebrations_cc', 'cel25-CC021', 'cel25cc-CC021', 'Zekrom', 'CC021', 404, 200),
+    ('celebrations_cc', 'cel25-CC022', 'cel25cc-CC022', 'Mewtwo EX', 'CC022', 404, 200),
+    ('celebrations_cc', 'cel25-CC023', 'cel25cc-CC023', 'Xerneas EX', 'CC023', 404, 200),
+    ('celebrations_cc', 'cel25-CC024', 'cel25cc-CC024', 'M Rayquaza EX', 'CC024', 404, 200),
+    ('celebrations_cc', 'cel25-CC025', 'cel25cc-CC025', 'Tapu Lele GX', 'CC025', 404, 200);
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §5. DERIVE THE CANDIDATE PAIRS FROM STORED EVIDENCE, AND PROVE EVERY ONE
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Nothing above has claimed that any of the 217 obsolete ids actually exists in
+-- public.cards, or that the stored rows say what the artifact says. §5 does
+-- exactly that, against production data, and refuses on any discrepancy.
+--
+-- The two sets must match EXACTLY in both directions:
+--   * a stored row inside an approved namespace that is NOT on the allowlist
+--     means the namespace is wider than the approval — refuse (P2);
+--   * an allowlist entry with no stored row means the artifact describes a
+--     printing this database never ingested, or ingested under a different id
+--     shape — refuse (P3). P3 is the check that fires if, say, the obsolete
+--     rows were stored as 'swsh4.5-SV1' rather than 'swsh4.5-SV001'. It is
+--     meant to fire loudly rather than be worked around.
+
+-- In-transaction pre-state, for the §9 deltas. Captured after the §1 locks, so
+-- nothing can move underneath it.
+create temporary table cat2d2_txn_pre on commit drop as
+select
+  (select count(*) from public.cards)                    as cards_rows,
+  (select count(*) from public.cards_effective)          as cards_effective_rows,
+  (select count(*) from public.card_identity_aliases)    as alias_rows,
+  (select md5(coalesce(string_agg(
+     md5(coalesce(r.card_id, '~') || '|' || r.match_status),
+     ',' order by r.batch_id, r.source_row_number), ''))
+   from public.user_import_rows r)                       as import_rows_checksum;
+
+-- 5a. Stored obsolete candidates — selected ONLY by an approved
+--     (set_id, anchored local-id pattern) pair. This is the pattern's entire
+--     job: propose candidates. It proves nothing on its own.
+create temporary table cat2d2_stored_obsolete on commit drop as
+select c.id, c.name, c.set_id, c.set_name, c.local_id, f.family
+from public.cards c
+join cat2d2_family f on f.alias_set_id = c.set_id
+where c.local_id ~ f.local_id_pattern;
+
+create unique index on cat2d2_stored_obsolete (id);
+
+-- 5b. The proven map: allowlist ∩ stored obsolete ∩ stored survivor.
+--     Every column below comes from a REAL ROW, not from the artifact, except
+--     the two upstream statuses which are observation records by nature.
+create temporary table cat2d2_map on commit drop as
+select
+  a.family,
+  a.alias_card_id,
+  a.canonical_card_id,
+  a.alias_upstream_status,
+  a.canonical_upstream_status,
+  o.name     as alias_name,
+  o.set_id   as alias_set_id,
+  o.set_name as alias_set_name,
+  o.local_id as alias_local_id,
+  s.name     as canonical_name,
+  s.set_id   as canonical_set_id,
+  s.set_name as canonical_set_name,
+  s.local_id as canonical_local_id
+from cat2d2_allowlist a
+join public.cards o on o.id = a.alias_card_id
+join public.cards s on s.id = a.canonical_card_id;
+
+create unique index on cat2d2_map (alias_card_id);
+create index on cat2d2_map (canonical_card_id);
+
+do $$
+declare
+  v_n        bigint;
+  v_detail   text;
+  r          record;
+begin
+  -- ── P1. The allowlist is internally well formed ─────────────────────────
+  select count(*) into v_n from cat2d2_allowlist;
+  if v_n <> 217 then
+    raise exception 'CAT-2D.2 REFUSED (P1): allowlist holds % rows, expected 217', v_n;
+  end if;
+
+  select string_agg(format('%s(%s)', family, n), ', ' order by family) into v_detail
+  from (select family, count(*) as n from cat2d2_allowlist group by family) q;
+  for r in
+    select f.family, f.expected_count, count(a.alias_card_id) as actual
+    from cat2d2_family f
+    left join cat2d2_allowlist a on a.family = f.family
+    group by f.family, f.expected_count
+  loop
+    if r.actual <> r.expected_count then
+      raise exception 'CAT-2D.2 REFUSED (P1): family % holds % allowlist rows, expected % [%]',
+        r.family, r.actual, r.expected_count, v_detail;
+    end if;
+  end loop;
+
+  -- id shape: both ids must be exactly '<set_id>-<local_id>' for their family.
+  select count(*) into v_n
+  from cat2d2_allowlist a
+  join cat2d2_family f on f.family = a.family
+  where a.alias_card_id     <> f.alias_set_id     || '-' || a.local_id
+     or a.canonical_card_id <> f.canonical_set_id || '-' || a.local_id
+     or a.local_id !~ f.local_id_pattern;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 REFUSED (P1): % allowlist row(s) have a malformed id or local_id', v_n;
+  end if;
+
+  -- A5, as recorded per pair.
+  select count(*) into v_n from cat2d2_allowlist
+  where alias_upstream_status <> 404 or canonical_upstream_status <> 200;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 REFUSED (P1/A5): % allowlist row(s) do not carry alias=404 / canonical=200', v_n;
+  end if;
+
+  -- 1:1, no self-alias, no chain WITHIN the allowlist itself.
+  select count(*) into v_n from (
+    select canonical_card_id from cat2d2_allowlist group by canonical_card_id having count(*) > 1
+  ) q;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 REFUSED (P1): % survivor(s) are claimed by more than one alias — Family A is 1:1', v_n;
+  end if;
+  select count(*) into v_n from cat2d2_allowlist where alias_card_id = canonical_card_id;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 REFUSED (P1): % self-alias row(s) in the allowlist', v_n;
+  end if;
+  select count(*) into v_n
+  from cat2d2_allowlist a join cat2d2_allowlist b on b.canonical_card_id = a.alias_card_id;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 REFUSED (P1): % allowlist id(s) appear as both an alias and a survivor', v_n;
+  end if;
+
+  -- ── P2. No stored row inside an approved namespace is unlisted ──────────
+  --     v_n is the TRUE total; v_detail samples the first 20, so a wide
+  --     mismatch can never be misread as a small one.
+  select count(*) into v_n from cat2d2_stored_obsolete so
+  where not exists (select 1 from cat2d2_allowlist a where a.alias_card_id = so.id);
+  if v_n <> 0 then
+    select string_agg(id, ', ' order by id) into v_detail from (
+      select so.id from cat2d2_stored_obsolete so
+      where not exists (select 1 from cat2d2_allowlist a where a.alias_card_id = so.id)
+      order by so.id limit 20
+    ) q;
+    raise exception
+      'CAT-2D.2 REFUSED (P2): % stored row(s) in an approved namespace are NOT on the allowlist — the approval does not cover what is stored. First 20: %',
+      v_n, v_detail;
+  end if;
+
+  -- ── P3. Every allowlist alias id exists as a stored row ─────────────────
+  select count(*) into v_n from cat2d2_allowlist a
+  where not exists (select 1 from cat2d2_stored_obsolete so where so.id = a.alias_card_id);
+  if v_n <> 0 then
+    select string_agg(alias_card_id, ', ' order by alias_card_id) into v_detail from (
+      select a.alias_card_id from cat2d2_allowlist a
+      where not exists (select 1 from cat2d2_stored_obsolete so where so.id = a.alias_card_id)
+      order by a.alias_card_id limit 20
+    ) q;
+    raise exception
+      'CAT-2D.2 REFUSED (P3): % allowlist alias id(s) have no row in public.cards — the stored id shape does not match the artifact. First 20: %',
+      v_n, v_detail;
+  end if;
+
+  -- ── P4. Every survivor exists, in the approved canonical set ────────────
+  select count(*) into v_n from cat2d2_allowlist a
+  where not exists (select 1 from public.cards c where c.id = a.canonical_card_id);
+  if v_n <> 0 then
+    select string_agg(canonical_card_id, ', ' order by canonical_card_id) into v_detail from (
+      select a.canonical_card_id from cat2d2_allowlist a
+      where not exists (select 1 from public.cards c where c.id = a.canonical_card_id)
+      order by a.canonical_card_id limit 20
+    ) q;
+    raise exception 'CAT-2D.2 REFUSED (P4): % survivor(s) absent from public.cards. First 20: %', v_n, v_detail;
+  end if;
+
+  select count(*) into v_n
+  from cat2d2_map m join cat2d2_family f on f.family = m.family
+  where m.alias_set_id <> f.alias_set_id or m.canonical_set_id <> f.canonical_set_id;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 REFUSED (P4): % row(s) have a stored set_id outside the approved rename pair', v_n;
+  end if;
+
+  -- The map must now be complete. If it is not, one of the joins above lost a
+  -- row for a reason P2/P3/P4 did not name — refuse rather than proceed on a
+  -- partial map.
+  select count(*) into v_n from cat2d2_map;
+  if v_n <> 217 then
+    raise exception 'CAT-2D.2 REFUSED (P4): proven map holds % pairs, expected 217', v_n;
+  end if;
+
+  -- ── P5 (A3). normName equality, STORED vs STORED ────────────────────────
+  select count(*) into v_n from cat2d2_map
+  where pg_temp.cat2d2_norm_name(alias_name) <> pg_temp.cat2d2_norm_name(canonical_name)
+     or pg_temp.cat2d2_norm_name(alias_name) = '';
+  if v_n <> 0 then
+    select string_agg(format('%s "%s" <> %s "%s"',
+             alias_card_id, alias_name, canonical_card_id, canonical_name), '; ') into v_detail
+    from (
+      select * from cat2d2_map
+      where pg_temp.cat2d2_norm_name(alias_name) <> pg_temp.cat2d2_norm_name(canonical_name)
+         or pg_temp.cat2d2_norm_name(alias_name) = ''
+      order by alias_card_id limit 10
+    ) q;
+    raise exception 'CAT-2D.2 REFUSED (P5/A3): % pair(s) fail normName equality. First 10: %', v_n, v_detail;
+  end if;
+
+  -- ── P6 (A2). normNum equality, STORED vs STORED ─────────────────────────
+  select count(*) into v_n from cat2d2_map
+  where pg_temp.cat2d2_norm_num(alias_local_id) <> pg_temp.cat2d2_norm_num(canonical_local_id)
+     or pg_temp.cat2d2_norm_num(alias_local_id) = '';
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 REFUSED (P6/A2): % pair(s) fail normNum equality', v_n;
+  end if;
+
+  -- ── P7. Exact per-family counts against stored rows ─────────────────────
+  for r in
+    select f.family, f.expected_count, count(m.alias_card_id) as actual
+    from cat2d2_family f
+    left join cat2d2_map m on m.family = f.family
+    group by f.family, f.expected_count
+  loop
+    if r.actual <> r.expected_count then
+      raise exception 'CAT-2D.2 REFUSED (P7): family % proved % pairs against stored rows, expected %',
+        r.family, r.actual, r.expected_count;
+    end if;
+    raise notice 'CAT-2D.2 family % — % proven pairs', rpad(r.family, 18), r.actual;
+  end loop;
+
+  -- ── P8. A survivor must not itself be obsolete ──────────────────────────
+  select count(*) into v_n
+  from cat2d2_map m
+  where exists (select 1 from cat2d2_stored_obsolete so where so.id = m.canonical_card_id);
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 REFUSED (P8): % survivor(s) are themselves obsolete candidates', v_n;
+  end if;
+
+  -- ── P9. Nothing here is already aliased, in either direction ────────────
+  --     The R1/R2 trigger would catch a chain, but a clear refusal beats a
+  --     trigger message, and this also makes a partial re-run impossible to
+  --     mistake for success.
+  select count(*) into v_n
+  from public.card_identity_aliases x
+  join cat2d2_allowlist a
+    on a.alias_card_id     in (x.alias_card_id, x.canonical_card_id)
+    or a.canonical_card_id in (x.alias_card_id, x.canonical_card_id);
+  if v_n <> 0 then
+    raise exception
+      'CAT-2D.2 REFUSED (P9): % existing alias row(s) already reference a Family A id — this migration has already run, or a conflicting claim exists',
+      v_n;
+  end if;
+
+  -- ── P10. All 217 obsolete ids are visible in cards_effective TODAY ──────
+  --     This is what makes the §9 delta assertion meaningful: the effective
+  --     catalog must shrink by exactly 217, no more and no less.
+  select count(*) into v_n
+  from cat2d2_map m join public.cards_effective ce on ce.id = m.alias_card_id;
+  if v_n <> 217 then
+    raise exception
+      'CAT-2D.2 REFUSED (P10): % of 217 obsolete ids are currently in cards_effective — the expected delta is not 217', v_n;
+  end if;
+
+  raise notice 'CAT-2D.2 §5 PASSED — 217 pairs proven against stored rows.';
+end $$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §6. INSERT THE 217 ALIAS ROWS
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- family = 'set_rename' is the value CAT-2D §3.1 defines for this column
+-- ("the only value today"). The finer-grained family token is carried inside
+-- `evidence` rather than widening the column's vocabulary without approval.
+--
+-- Every evidence payload is built from the STORED rows proven in §5, so the
+-- stored provenance of each claim is auditable from the table alone, without
+-- the artifact. `evidence_artifact_sha256` ties it back to the reviewed CSV.
+--
+-- The R1/R2 no-chain trigger fires per row here. §5 P8/P9 have already made a
+-- trigger rejection impossible; if one fires anyway, this migration has a bug
+-- and the whole transaction correctly aborts.
+
+insert into public.card_identity_aliases
+  (alias_card_id, canonical_card_id, family, evidence, approved_by, slice)
+select
+  m.alias_card_id,
+  m.canonical_card_id,
+  'set_rename',
+  jsonb_build_object(
+    'proof',                     'upstream_set_rename',
+    'family_token',              m.family,
+    'admission_rules',           jsonb_build_array('A1', 'A2', 'A3', 'A4', 'A5'),
+    'alias',                     jsonb_build_object(
+                                   'name',     m.alias_name,
+                                   'set_id',   m.alias_set_id,
+                                   'set_name', m.alias_set_name,
+                                   'local_id', m.alias_local_id),
+    'canonical',                 jsonb_build_object(
+                                   'name',     m.canonical_name,
+                                   'set_id',   m.canonical_set_id,
+                                   'set_name', m.canonical_set_name,
+                                   'local_id', m.canonical_local_id),
+    'norm_name_equal',           true,
+    'norm_num_equal',            true,
+    'tier1_identity_equal',      false,
+    'tier1_note',                'Family A alias and canonical rows carry different set_name (parent set vs renamed subset), so their Tier-1 keys differ by construction. Admission rule A4 — the whole local-id namespace is absent from the parent set upstream — replaces the set component. See docs/sql/cat-2d2-1-family-a-reconciliation.sql header.',
+    'alias_upstream_status',     m.alias_upstream_status,
+    'canonical_upstream_status', m.canonical_upstream_status,
+    'observed_at',               '2026-08-17T14:10:16.557Z',
+    'evidence_artifact',         'docs/cat-2d2-evidence/family-a-alias-set.csv',
+    'evidence_artifact_sha256',  'b5a2b074455dbbe95ec0638850dca5e912e97f43841c6218ecfb509a6e6c2128'
+  ),
+  'CAT-2D.2 approved allowlist — docs/cat-2d2-evidence/manifest.json',
+  'CAT-2D.2'
+from cat2d2_map m
+order by m.alias_card_id;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §7. MUTABLE-REFERENCE COLLISION ANALYSIS   (fail-closed; no merge branch)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Six mutable tables carry a card_id that may point at a Family A obsolete id.
+-- Each has a uniqueness constraint a naive UPDATE could violate, so each is
+-- scanned for the condition "this owner already holds the survivor too".
+--
+--   table               unique key                        peer columns scanned
+--   card_extras         (card_id)                         —
+--   card_favorites      (user_id, card_id)                user_id
+--   card_overrides      (user_id, card_id)                user_id
+--   price_history       (user_id, card_id, recorded_date) user_id, recorded_date
+--   user_binder_cards   (binder_id, card_id)              binder_id
+--   user_card_intent    (user_id, card_id)                user_id
+--
+-- NOT SCANNED, DELIBERATELY:
+--   user_import_rows           — immutable historical evidence, never migrated
+--   user_import_rows.candidate_card_ids
+--                              — same; CAT-2D §11 Q-6 is diagnostic only and
+--                                is reported by the validation file, not acted on
+--   user_binder_layout_items   — references a MEMBERSHIP row id, never a card
+--                                id (BP-3.1A). Structurally immune
+--   user_collection.owned_keys — name::num / name::set keys, not card ids.
+--                                Structurally immune to any id rename
+--
+-- ANY collision anywhere aborts the whole transaction. See the fail-closed
+-- note in the file header for why no merge branch exists.
+
+create temporary table cat2d2_ref_tables (
+  ord         int primary key,
+  table_name  text   not null,
+  peer_cols   text[] not null,
+  refs        bigint,
+  collisions  bigint
+) on commit drop;
+
+insert into cat2d2_ref_tables (ord, table_name, peer_cols) values
+  (1, 'card_extras',       '{}'::text[]),
+  (2, 'card_favorites',    '{user_id}'::text[]),
+  (3, 'card_overrides',    '{user_id}'::text[]),
+  (4, 'price_history',     '{user_id,recorded_date}'::text[]),
+  (5, 'user_binder_cards', '{binder_id}'::text[]),
+  (6, 'user_card_intent',  '{user_id}'::text[]);
+
+do $$
+declare
+  r            record;
+  i            int;
+  v_join       text;
+  v_refs       bigint;
+  v_coll       bigint;
+  v_total_coll bigint := 0;
+  v_report     text   := '';
+begin
+  for r in select * from cat2d2_ref_tables order by ord loop
+    -- Resolved before any dynamic statement touches the table, so a renamed or
+    -- missing table is a named refusal rather than an opaque runtime error.
+    if to_regclass('public.' || quote_ident(r.table_name)) is null then
+      raise exception
+        'CAT-2D.2 REFUSED (§7): expected mutable-reference table public.% does not exist — the reference inventory is stale and this migration must not proceed on it',
+        r.table_name;
+    end if;
+
+    execute format(
+      'select count(*) from public.%I t join cat2d2_map m on m.alias_card_id = t.card_id',
+      r.table_name
+    ) into v_refs;
+
+    -- `is not distinct from` rather than `=`: a NULL peer column (e.g. a
+    -- nullable user_id) must still count as the same owner, otherwise a real
+    -- collision could hide behind a NULL and reach the UPDATE.
+    v_join := '';
+    for i in 1 .. coalesce(array_length(r.peer_cols, 1), 0) loop
+      v_join := v_join || format(' and b.%I is not distinct from a.%I', r.peer_cols[i], r.peer_cols[i]);
+    end loop;
+
+    execute format(
+      'select count(*) from public.%I a '
+      'join cat2d2_map m on m.alias_card_id = a.card_id '
+      'join public.%I b on b.card_id = m.canonical_card_id%s',
+      r.table_name, r.table_name, v_join
+    ) into v_coll;
+
+    update cat2d2_ref_tables set refs = v_refs, collisions = v_coll where ord = r.ord;
+    v_total_coll := v_total_coll + v_coll;
+    v_report := v_report || format('%s refs=%s collisions=%s; ', r.table_name, v_refs, v_coll);
+    raise notice 'CAT-2D.2 §7 % obsolete refs = %, collisions = %', rpad(r.table_name, 18), v_refs, v_coll;
+  end loop;
+
+  if v_total_coll <> 0 then
+    raise exception
+      'CAT-2D.2 REFUSED (§7): % merge collision(s) found — a user already holds BOTH the obsolete and the survivor row. Resolving a collision destroys information and is an explicit operator decision, never an automatic one. Scan: %',
+      v_total_coll, v_report
+      using errcode = '23505';
+  end if;
+
+  raise notice 'CAT-2D.2 §7 PASSED — zero collisions. %', v_report;
+end $$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §8. MIGRATE THE MUTABLE REFERENCES
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- UPDATE only. Never DELETE, never INSERT, never ON CONFLICT.
+--
+-- CAT-2D §6.3: the override on swsh12.5-GG19 is the SOLE reason that printing
+-- is owned — it is not in the active snapshot. Because §6 and §8 are in ONE
+-- transaction, there is no committed state in which the obsolete id has left
+-- cards_effective while the survivor is not yet force-owned.
+--
+-- The per-table row_count is compared against §7's scan. Under the §1 locks
+-- these cannot differ; the assertion exists so that a future edit which
+-- weakens the locking cannot silently migrate a different row set than the one
+-- that was proven collision-free.
+
+do $$
+declare
+  r       record;
+  v_n     bigint;
+  v_total bigint := 0;
+begin
+  for r in select * from cat2d2_ref_tables order by ord loop
+    execute format(
+      'update public.%I t set card_id = m.canonical_card_id '
+      'from cat2d2_map m where m.alias_card_id = t.card_id',
+      r.table_name
+    );
+    get diagnostics v_n = row_count;
+
+    if v_n <> r.refs then
+      raise exception
+        'CAT-2D.2 REFUSED (§8): public.% migrated % row(s) but §7 proved % — the table changed under the migration',
+        r.table_name, v_n, r.refs;
+    end if;
+
+    v_total := v_total + v_n;
+    if v_n > 0 then
+      raise notice 'CAT-2D.2 §8 % migrated % row(s) to canonical ids', rpad(r.table_name, 18), v_n;
+    end if;
+  end loop;
+
+  raise notice 'CAT-2D.2 §8 PASSED — % mutable reference row(s) migrated.', v_total;
+end $$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §9. IN-TRANSACTION INVARIANTS   (CAT-2D §9 INV-8..INV-13)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Asserted before COMMIT so a violation rolls the whole slice back rather than
+-- being discovered by the post-deploy validation file.
+
+do $$
+declare
+  pre        cat2d2_txn_pre%rowtype;
+  v_n        bigint;
+  v_now      bigint;
+  v_checksum text;
+  r          record;
+begin
+  select * into pre from cat2d2_txn_pre;
+
+  -- INV-12. Raw provider history preserved — nothing deleted, nothing added.
+  select count(*) into v_now from public.cards;
+  if v_now <> pre.cards_rows then
+    raise exception 'CAT-2D.2 FAIL (INV-12): public.cards moved from % to % rows', pre.cards_rows, v_now;
+  end if;
+
+  -- 217 alias rows added, and no other alias row disturbed.
+  select count(*) into v_now from public.card_identity_aliases;
+  if v_now <> pre.alias_rows + 217 then
+    raise exception 'CAT-2D.2 FAIL: alias rows moved from % to %, expected %', pre.alias_rows, v_now, pre.alias_rows + 217;
+  end if;
+  select count(*) into v_n from public.card_identity_aliases where slice = 'CAT-2D.2';
+  if v_n <> 217 then
+    raise exception 'CAT-2D.2 FAIL: % alias row(s) carry slice CAT-2D.2, expected 217', v_n;
+  end if;
+
+  -- INV-13. cards_effective = raw − aliased, explained exactly.
+  select count(*) into v_now from public.cards_effective;
+  if v_now <> pre.cards_effective_rows - 217 then
+    raise exception 'CAT-2D.2 FAIL (INV-13): cards_effective moved from % to %, expected %',
+      pre.cards_effective_rows, v_now, pre.cards_effective_rows - 217;
+  end if;
+
+  -- INV-10. No alias id appears in the effective catalog. cards itself is
+  --         deliberately unconstrained — the obsolete rows must still be there.
+  select count(*) into v_n
+  from public.cards_effective ce join public.card_identity_aliases a on a.alias_card_id = ce.id;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 FAIL (INV-10): % aliased id(s) still visible in cards_effective', v_n;
+  end if;
+  select count(*) into v_n
+  from cat2d2_map m join public.cards c on c.id = m.alias_card_id;
+  if v_n <> 217 then
+    raise exception 'CAT-2D.2 FAIL (INV-12): % of 217 obsolete rows survive in public.cards — retention was violated', v_n;
+  end if;
+  select count(*) into v_n
+  from cat2d2_map m join public.cards_effective ce on ce.id = m.canonical_card_id;
+  if v_n <> 217 then
+    raise exception 'CAT-2D.2 FAIL: % of 217 survivors are visible in cards_effective, expected all', v_n;
+  end if;
+
+  -- INV-8. No orphan aliases.
+  select count(*) into v_n
+  from public.card_identity_aliases a
+  where not exists (select 1 from public.cards c where c.id = a.canonical_card_id);
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 FAIL (INV-8): % orphan alias row(s)', v_n;
+  end if;
+
+  -- INV-9. No self-alias, no chain, in either direction, table-wide.
+  select count(*) into v_n from public.card_identity_aliases where alias_card_id = canonical_card_id;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 FAIL (INV-9): % self-alias row(s)', v_n;
+  end if;
+  select count(*) into v_n
+  from public.card_identity_aliases a join public.card_identity_aliases b
+    on b.canonical_card_id = a.alias_card_id;
+  if v_n <> 0 then
+    raise exception 'CAT-2D.2 FAIL (INV-9): % alias chain(s) — depth must be exactly 1', v_n;
+  end if;
+
+  -- No obsolete reference survives in any migrated table.
+  for r in select * from cat2d2_ref_tables order by ord loop
+    execute format(
+      'select count(*) from public.%I t join cat2d2_map m on m.alias_card_id = t.card_id',
+      r.table_name
+    ) into v_n;
+    if v_n <> 0 then
+      raise exception 'CAT-2D.2 FAIL (§8): public.% still holds % obsolete reference(s)', r.table_name, v_n;
+    end if;
+  end loop;
+
+  -- INV-7. Historical import evidence byte-identical. This migration issues no
+  --        write against user_import_rows; the checksum proves it rather than
+  --        asserting it in prose.
+  select md5(coalesce(string_agg(
+           md5(coalesce(r2.card_id, '~') || '|' || r2.match_status),
+           ',' order by r2.batch_id, r2.source_row_number), ''))
+    into v_checksum
+  from public.user_import_rows r2;
+  if v_checksum is distinct from pre.import_rows_checksum then
+    raise exception 'CAT-2D.2 FAIL (INV-7): user_import_rows changed — historical evidence must be immutable';
+  end if;
+
+  raise notice 'CAT-2D.2 §9 PASSED — cards % (unchanged), cards_effective % -> %, aliases +217.',
+    pre.cards_rows, pre.cards_effective_rows, pre.cards_effective_rows - 217;
+end $$;
+
+commit;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- POST-DEPLOY SUMMARY   (read-only; safe to run any time)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+select
+  (select count(*) from public.cards)                                   as cards_rows,
+  (select count(*) from public.cards_effective)                         as cards_effective_rows,
+  (select count(*) from public.card_identity_aliases)                   as alias_rows,
+  (select count(*) from public.card_identity_aliases
+     where evidence ->> 'family_token' = 'shining_fates_sv')            as sv_aliases,
+  (select count(*) from public.card_identity_aliases
+     where evidence ->> 'family_token' = 'crown_zenith_gg')             as gg_aliases,
+  (select count(*) from public.card_identity_aliases
+     where evidence ->> 'family_token' = 'celebrations_cc')             as cc_aliases;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ROLLBACK
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Fully reversible. Nothing was deleted and nothing was created outside the
+-- alias table; every reference change is an UPDATE of card_id whose inverse is
+-- the same map read backwards.
+--
+-- ⚠ Run PHASE A of cat-2d2-2 BEFORE deploying, and do NOT drop
+--   public.cat2d2_pre_capture until you are certain no rollback is wanted:
+--   it holds the exact pre-migration (table, key, card_id) list. The reverse
+--   UPDATE below reconstructs the same result from the alias table, but the
+--   capture is the independent record.
+--
+--   begin;
+--
+--   lock table public.card_identity_aliases in share row exclusive mode;
+--   lock table public.card_extras        in share row exclusive mode;
+--   lock table public.card_favorites     in share row exclusive mode;
+--   lock table public.card_overrides     in share row exclusive mode;
+--   lock table public.price_history      in share row exclusive mode;
+--   lock table public.user_binder_cards  in share row exclusive mode;
+--   lock table public.user_card_intent   in share row exclusive mode;
+--
+--   -- 1. reverse the reference migration, for THIS slice's rows only.
+--   --    Safe because §7 proved no user held both rows, so no obsolete row
+--   --    can exist to conflict with.
+--   update public.card_extras       t set card_id = a.alias_card_id
+--     from public.card_identity_aliases a
+--    where a.slice = 'CAT-2D.2' and t.card_id = a.canonical_card_id;
+--   -- ... repeat verbatim for card_favorites, card_overrides, price_history,
+--   --     user_binder_cards, user_card_intent.
+--   --
+--   -- ⚠ This reverses EVERY row now pointing at a survivor, including any row
+--   --   that already pointed there before the migration. Because §7 proved
+--   --   zero collisions, no such row existed for a migrated owner — but if a
+--   --   user has created one SINCE the deploy, use cat2d2_pre_capture to
+--   --   restrict the update to the exact keys that were migrated.
+--
+--   -- 2. remove the alias rows. The 217 obsolete rows reappear in
+--   --    cards_effective byte-identical, because they were never deleted.
+--   delete from public.card_identity_aliases where slice = 'CAT-2D.2';
+--
+--   commit;
+--
+-- Revert src/constants/artistEditorial.js alongside step 2 (or leave it: the
+-- expectName guard fails safe either way).
+--
+-- No public.cards row, user_import_rows row or schema object is touched by
+-- this migration in either direction.

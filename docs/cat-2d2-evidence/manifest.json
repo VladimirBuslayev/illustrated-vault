@@ -1,0 +1,42 @@
+{
+  "slice": "CAT-2D.2",
+  "artifact": "family-a-alias-set.csv",
+  "generated_by": "scripts/cat2d2-build-family-a-evidence.mjs",
+  "source": "TCGdex v2 (en) — read-only",
+  "observed_at": "2026-08-17T14:10:16.557Z",
+  "proof": "upstream_set_rename",
+  "admission_rules": [
+    "A1 approved set-rename pair",
+    "A2 normNum equal",
+    "A3 normName equal (asserted at deploy)",
+    "A4 namespace absent from parent set",
+    "A5 alias 404 / canonical 200"
+  ],
+  "tier1_identity_equal": false,
+  "tier1_note": "Family A alias and canonical rows carry different set_name, so their Tier-1 identity keys differ by construction. See the header of the generator for why, and why A4 replaces the set component.",
+  "total_aliases": 217,
+  "families": [
+    {
+      "family": "shining_fates_sv",
+      "parent_set_id": "swsh4.5",
+      "canonical_set_id": "swsh4.5sv",
+      "local_id_pattern": "^SV\\d{3}$",
+      "alias_count": 122
+    },
+    {
+      "family": "crown_zenith_gg",
+      "parent_set_id": "swsh12.5",
+      "canonical_set_id": "swsh12.5gg",
+      "local_id_pattern": "^GG\\d{2}$",
+      "alias_count": 70
+    },
+    {
+      "family": "celebrations_cc",
+      "parent_set_id": "cel25",
+      "canonical_set_id": "cel25cc",
+      "local_id_pattern": "^CC\\d{3}$",
+      "alias_count": 25
+    }
+  ],
+  "csv_sha256": "b5a2b074455dbbe95ec0638850dca5e912e97f43841c6218ecfb509a6e6c2128"
+}
