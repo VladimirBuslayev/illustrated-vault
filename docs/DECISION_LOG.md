@@ -11,13 +11,24 @@ be defined as "whatever string the provider used at import time".
 
 Durable resolution is an alias layer, not a rewrite. public.card_identity_aliases
 maps an obsolete provider ID to its canonical survivor with evidence, approver
-and slice. Raw obsolete rows STAY in public.cards as retained provider history —
-they hold images their survivors lack and there is still no durable image
-override channel. public.cards_effective exposes only canonical survivors, and
-it is the sole catalog surface any product path reads. Resolution depth is
-exactly one, enforced on both sides by trigger; there is deliberately no
-recursive resolver, because a resolver that tolerates chains eventually
-tolerates cycles.
+and slice. Raw obsolete rows STAY in public.cards as retained provider history
+rather than being deleted; a retained row may preserve source metadata or assets
+absent from its current survivor, and there is still no durable image override
+channel. CAT-2D.2 did not perform an image-difference census, so retention is
+justified by reversibility — deletion is the only irreversible act available —
+not by any measured claim about what those rows contain.
+
+public.cards_effective exposes only canonical survivors and is the canonical
+Supabase-backed product catalog surface: the authority for the archive and
+ownership-facing catalog paths. It is not the only source of card data —
+cardService's separate provider-backed set path (tcgdexService, entry.isSet)
+still exists and is deliberately NOT an identity or ownership authority.
+
+Resolution depth is exactly one, enforced on both sides by trigger; there is
+deliberately no recursive resolver, because a resolver that tolerates chains
+eventually tolerates cycles. Depth one is not a limit of one alias per survivor:
+MANY historical aliases may resolve onto ONE canonical survivor, which is the
+shape Family B is expected to need.
 
 Family A admission is A1+A2+A3+A4+A5, explicitly replacing CAT-2D §3.4's Tier-1
 equality for this evidence class. Tier-1 equality cannot hold here: the sync
@@ -67,28 +78,57 @@ CAT-2D.3. It remains blocked on a separately reviewed maintenance-only ingestion
 capability.
 
 Deployment artifacts that require atomicity must be authored as a SINGLE
-top-level PostgreSQL statement. The first production run proved that a top-level
-BEGIN plus CREATE TEMP TABLE … ON COMMIT DROP plus further top-level statements
-referencing those temp tables is not one transaction or one session in the
-Supabase SQL Editor: the temp tables were gone before the later statements ran.
-Future migrations of this kind are written as one DO block, with no reliance on
-client-held transaction or cross-statement TEMP state.
+top-level PostgreSQL statement.
 
-No IV UUID printing identity has been introduced. Every known case is a 1:1
-rename with exactly one live survivor, which an alias map expresses completely.
-A UUID identity layer becomes justified only when one printing legitimately maps
-to two simultaneously live canonical IDs, when identity must survive having no
-upstream row at all, when an artwork-vs-printing policy lands, or when language
-identity becomes real. None is true today.
+  Observed, in the tested Supabase SQL Editor workflow: the assumed
+  cross-top-level-statement transaction / TEMP-table lifecycle did not hold. A
+  harmless reproduction showed a TEMP table created by one top-level statement
+  was unavailable to a subsequent one.
+
+  Not established, and deliberately not asserted: whether the SQL Editor used
+  separate sessions, committed between statements, or behaved that way for some
+  other reason. The mechanism was not investigated, because the decision does
+  not depend on it.
+
+Therefore an atomic deployment artifact of this kind must not depend on
+client-held cross-statement state at all. It is authored as one top-level
+statement — one DO block — so atomicity is a property of the artifact rather
+than an assumption about the client.
+
+No IV UUID printing identity has been introduced. The reason is NOT that every
+case is 1:1 — the alias table deliberately permits MANY historical aliases to
+resolve onto ONE canonical survivor (there is no unique constraint on
+canonical_card_id), and Family B is expected to need exactly that, with two
+obsolete generations resolving onto one live Trainer Gallery survivor. The
+reason is narrower and holds today:
+
+  * every currently known requirement remains expressible by depth-one
+    alias → canonical-survivor resolution, including many-to-one;
+  * no known case requires a printing identity independent of a surviving
+    canonical row;
+  * no known case requires one physical printing to correspond to multiple
+    simultaneously-live canonical survivors.
+
+A UUID identity layer becomes justified when one of those stops holding — or
+when an artwork-vs-printing policy or real language identity lands, both of
+which are different axes from provider-ID renaming and must not be stacked onto
+this map.
 
 Reason:
 
 Without a durable identity layer, a provider rename silently converts a matched
 collector row into a missing card: ownership is keyed on the historical ID while
-the rendered card carries the new one. Deleting the obsolete rows would have
-been the smaller-looking fix and was rejected — it is the only irreversible act
-available, and it would discard the sole copy of imagery the survivors lack in a
-product whose stated spine is a visual archive.
+the rendered card carries the new one.
+
+Deleting the obsolete rows would have been the smaller-looking fix and was
+rejected. It is the only irreversible act available in the whole design, and it
+would discard retained source rows that may hold metadata or assets a current
+survivor lacks — in a product whose stated spine is a visual archive. The
+argument does not rest on having measured that: CAT-2D.2 ran no image-difference
+census, and the point of retention is precisely that it does not require one.
+Retaining costs 192 rows out of 23,780 and keeps a later evidence-backed
+recovery slice possible; deleting forecloses it permanently on an unmeasured
+assumption.
 
 The strictness is deliberate and asymmetric: this architecture may MERGE two
 identities for one printing, and may never INVENT ownership. False-positive

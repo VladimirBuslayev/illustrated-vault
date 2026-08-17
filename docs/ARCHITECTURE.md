@@ -215,18 +215,32 @@ identity stable across that:
 |---|---|---|
 | `public.cards` | raw provider history — everything ever ingested, including superseded identities | sync tooling only |
 | `public.card_identity_aliases` | evidence-backed obsolete ID → canonical survivor | resolution paths, via the view below |
-| `public.cards_effective` | canonical survivors only; alias IDs excluded | **every** product/catalog path |
+| `public.cards_effective` | canonical survivors only; alias IDs excluded | the archive / ownership-facing catalog paths |
+
+`cards_effective` is the **canonical Supabase-backed product catalog surface** and
+the authority for the archive and ownership-facing catalog paths. It is not the
+only place card data can come from: `cardService.fetchArtistCards` still has a
+separate provider-backed set path (`tcgdexService`, the `entry.isSet` branch).
+That path is **not an identity or ownership authority** — no external-set cards
+render in the current authenticated collection surfaces, and any future set-path
+card is override-only until a separately validated canonical mapping exists.
 
 - **Resolution depth is exactly one. No chains, no cycles.** A two-sided trigger
   rejects both an alias whose target is itself obsolete and an alias that is
   currently a survivor for other rows. Resolution is therefore a single lookup,
-  never a recursive walk.
+  never a recursive walk. Depth one is **not** one-alias-per-survivor: MANY
+  historical aliases may resolve onto ONE canonical survivor, and Family B is
+  expected to need exactly that.
 - The alias table is **private**: `anon`, `authenticated` and `service_role` hold
   zero privileges on it. The only public surface is the two-column owner-rights
   view `public.card_identity_resolution` (SELECT only), so provenance —
   evidence, approver, timestamps — is unreachable by any runtime role.
-- `public.cards` **retains** obsolete rows permanently. They are excluded from
-  `cards_effective`, not deleted; they hold imagery their survivors lack.
+- `public.cards` **retains** obsolete rows permanently — they are excluded from
+  `cards_effective`, not deleted. A retained row may preserve source metadata or
+  assets absent from its current survivor; CAT-2D.2 ran no image-difference
+  census, so nothing is claimed about how many actually differ. Retention is
+  justified by reversibility: deletion is the only irreversible act in the
+  design.
 - The ownership RPC and the OL-0D read model **resolve aliases at read time**.
   OL-0D aggregates by the resolved ID *before* joining `cards_effective`, so
   quantities from several historical IDs merge onto one canonical row rather

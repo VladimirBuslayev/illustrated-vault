@@ -476,9 +476,15 @@ The migration as originally committed used a top-level `begin;`, then
 `create temporary table ... on commit drop`, then further **top-level**
 statements referencing those temp tables, then `commit;`.
 
-In the Supabase SQL Editor those top-level statements do **not** behave as one
-persistent transaction/session for this workflow. A harmless reproduction
-confirmed it: the temp tables were gone before the later statements ran.
+**Observed:** in the tested Supabase SQL Editor workflow the assumed
+cross-top-level-statement transaction / TEMP-table lifecycle did not hold. A
+harmless reproduction showed a TEMP table created by one top-level statement was
+unavailable to a subsequent one.
+
+**Not established:** whether the SQL Editor used separate sessions, committed
+between statements, or behaved that way for some other reason. The mechanism was
+not investigated, and the correction does not depend on it — the fix is to stop
+depending on client-held cross-statement state at all.
 
 The durable CAT-2D.2 changes had nonetheless landed correctly —
 `card_identity_aliases` = 192 (all `slice = 'CAT-2D.2'`), `cards_effective` =
