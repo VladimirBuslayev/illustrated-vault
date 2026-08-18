@@ -367,15 +367,29 @@ owner.
 - Global diagnostics across all users, so RLS must not scope them; that is why
   no JWT context is established. No user UUID appears in the file.
 
-**Run order — the population gate is a hard prerequisite:**
+**Run order — current state as of 2026-08-18:**
 
-1. **Q-A0** — consistency flags. Stop on any deviation.
-2. **Q-A1** — read the 50-row enumeration; confirm the partition looks coherent.
-3. **Upstream** — `curl … /sets/cel25` and compare as sets against Q-A1's
-   numeric partition.
+| Step | State |
+|---|---|
+| 1. **Q-A0** — consistency flags | ✅ **PASSED** |
+| 2. **Q-A1** — 50-row enumeration, read through | ✅ **PASSED** |
+| 3. **Upstream** `cel25` set equality | ✅ **PASSED** |
+| → population gate | ✅ **PASSED** — the 25-row historical population is established |
+| 4. **Q-C0** — card-id-like columns, classified | ⛔ **RAN, STOP FIRING** — `artists.signature_card_id` (§4a) |
 
-**Only when all three pass**, run Q-C0, Q-B, Q-C, Q-D, Q-D2, Q-E, Q-F, Q-G — in
-any order, each is independently self-contained.
+**Next, in order, reviewing between each:**
+
+5. **Q-C1** — definition and constraints → review
+6. **Q-C2** — population and resolution → review
+7. **Q-C3** — per-row detail → review
+8. **Classify** the §4a finding against its two branches
+
+**Only then unblock Q-B onward** (Q-B, Q-C, Q-D, Q-D2, Q-E, Q-F, Q-G — in any
+order, each independently self-contained).
+
+**Q-B and every later query are blocked right now.** The population gate passing
+does not unblock them on its own: Q-C0's STOP is a separate, currently-firing
+condition.
 
 ### Output handling
 
@@ -387,46 +401,65 @@ commit user UUIDs, binder IDs or row IDs.**
 
 ## 7. Production results
 
-> **Not yet run.** Paste output below, then classify against §5.
+> **PARTIALLY RUN — GATE STOPPED.** The population gate passed in full; Q-C0
+> then returned a STOP (§4a). Q-B…Q-G have not run and must not until the
+> finding is classified. Paste remaining output below, then classify
+> against §5.
 
-### Population gate — all three required before Q-B..Q-G
+### Population gate — ✅ PASSED (all three checks, 2026-08-18)
 
-**Check 1 — Q-A0 consistency**
+The 25-row historical Celebrations population is **established**. Downstream
+figures measure the right rows.
 
-```
-(pending)
-```
-
-- [ ] `cel25_total_rows` = 50
-- [ ] `candidate_historical_rows` = 25
-- [ ] `candidate_base_set_rows` = 25
-- [ ] `base_set_is_exactly_1_to_25` = true
-- [ ] `rows_with_null_local_id` = 0
-- [ ] `historical_rows_matching_cc_pattern` = 0
-- [ ] `cel25cc_rows` = 25
-
-**Check 2 — Q-A1 full enumeration of `set_id = 'cel25'`, read through**
+**Check 1 — Q-A0 consistency ✅**
 
 ```
-(pending)
+cel25_total_rows | candidate_historical_rows | candidate_base_set_rows |
+base_set_is_exactly_1_to_25 | rows_with_null_local_id |
+historical_rows_matching_cc_pattern | cel25cc_rows |
+distinct_set_names_in_cel25 | set_names_in_cel25
+-------------------------------------------------------------------------
+              50 |                        25 |                      25 |
+                       true |                       0 |
+                                  0 |           25 |
+                          1 | Celebrations
 ```
 
-- [ ] All 50 rows present; the partition is coherent on inspection
-- [ ] No `cel25` row is already aliased (`is_already_aliased` all false)
+- [x] `cel25_total_rows` = 50
+- [x] `candidate_historical_rows` = 25
+- [x] `candidate_base_set_rows` = 25
+- [x] `base_set_is_exactly_1_to_25` = true
+- [x] `rows_with_null_local_id` = 0
+- [x] `historical_rows_matching_cc_pattern` = 0
+- [x] `cel25cc_rows` = 25
 
-**Check 3 — upstream liveness (the independent discriminator)**
+All seven required checks passed. `distinct_set_names_in_cel25` = 1
+(`Celebrations`) confirms both populations carry the parent set name, as the
+CAT-2D.2 analysis predicted.
 
-```
-(pending — curl -s https://api.tcgdex.net/v2/en/sets/cel25 | jq -r '.cards[].id' | sort)
-```
+**Check 2 — Q-A1 full enumeration, read through ✅**
 
-- [ ] Upstream live IDs and Q-A1's numeric partition agree **as sets**
-- [ ] No stored numeric ID missing from upstream
-- [ ] No upstream ID missing from storage
+Returned all **50** rows. Partition inspected and coherent — 25 numeric
+base-set rows, 25 letter-suffixed historical rows, nothing misplaced.
 
-> ⚠ Q-A0 passing is **not** sufficient on its own — it cannot detect a
-> historical row substituting for an absent base-set number. Check 3 settles
-> membership. Do not proceed to Q-B until all three boxes above are ticked.
+- [x] All 50 rows present; the partition is coherent on inspection
+- [x] No `cel25` row is already aliased (`is_already_aliased` all false)
+
+*(Per the audit convention a concise verified result is sufficient here; the
+50-row detail is not pasted. Q-C3 below does require its per-row detail, because
+the classification decision rests on individual values.)*
+
+**Check 3 — upstream liveness ✅ — the independent discriminator**
+
+Upstream `cel25` membership matched the numeric `cel25-1`…`cel25-25` partition
+**exactly, as sets**.
+
+- [x] Upstream live IDs and Q-A1's numeric partition agree **as sets**
+- [x] No stored numeric ID missing from upstream
+- [x] No upstream ID missing from storage
+
+> Membership is settled. Q-A0 alone could not have established this — check 3
+> did, exactly as designed.
 
 ### Q-C0 — card-id-like columns, classified
 

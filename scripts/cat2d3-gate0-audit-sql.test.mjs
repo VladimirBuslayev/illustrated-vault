@@ -194,8 +194,17 @@ ok(/independent discriminator/.test(sql) && /independent discriminator/.test(doc
   'upstream liveness is named as the independent discriminator in both files');
 ok(/as SETS, not just as counts|as sets, not\njust as counts|\*\*as sets, not\njust as counts\*\*/.test(sql + doc),
   'the upstream comparison is specified as a set comparison, not a count comparison');
-ok(/Q-B..Q-G may not be run until|may not be run until it passes|Only when all three pass/.test(sql + doc),
-  'the doc/SQL state that Q-B..Q-G may not run until the gate passes');
+// Comment markers and line wraps are stripped first: the prerequisite
+// sentence spans two comment lines in the SQL.
+const sqlFlat = sql.replace(/--/g, ' ').replace(/\s+/g, ' ');
+ok(/Q-B\.\.Q-G may not be run until it passes/.test(sqlFlat) &&
+   /ALL THREE MUST PASS BEFORE Q-B\.\.Q-G MAY RUN/.test(sqlFlat),
+  'the SQL states that Q-B..Q-G may not run until the population gate passes');
+ok(/\*\*Q-B and every later query are blocked right now\.\*\*/.test(doc),
+  'the doc records that Q-B is blocked NOW — by the Q-C0 STOP, not by the population gate');
+ok(/population gate passing\s*\n?does not unblock them on its own/.test(doc.replace(/\s+/g, ' ')) ||
+   /does not unblock them on its own/.test(doc),
+  'the doc distinguishes the passed population gate from the still-firing STOP');
 
 // ── The population selector is explicit and falsifiable ─────────────────────
 console.log('\npopulation selector is explicit and falsifiable');
@@ -241,8 +250,23 @@ ok(/user_binder_layout_items.*binder_card_id/s.test(qc0),
   'Q-C0 classifies binder_card_id explicitly rather than letting it fall through to STOP');
 ok(/user_import_rows.*candidate_card_ids/s.test(qc0),
   'Q-C0 classifies candidate_card_ids as immutable import evidence');
-ok(/THE STOP CONDITION IS THE LAST CLASS ONLY/.test(sql),
-  'the SQL states the stop condition fires only on the unclassified class');
+// The STOP rule is GENERAL: any reference_class beginning with 'STOP:' halts
+// the gate. The old "last class only" rule was obsolete the moment a second
+// STOP class existed, and would have let STOP: UNRESOLVED slip through.
+ok(!/THE STOP CONDITION IS THE LAST CLASS ONLY/.test(sql),
+  'the obsolete "only the last class halts" rule is gone');
+ok(/THE STOP RULE, GENERALLY: ANY reference_class beginning with 'STOP:'/.test(sql),
+  'the SQL states the general rule — any STOP: class halts the gate');
+ok(/There are now TWO STOP classes and both halt/.test(sql),
+  'the SQL names both STOP classes and says both halt');
+ok(/must keep the\n--   'STOP:' prefix/.test(sql),
+  'the SQL requires future STOP classes to keep the prefix so the rule keeps working unedited');
+ok(!/only an entry it marks 'STOP: unclassified' is a/.test(sql),
+  'the later Q-C comment no longer says only STOP: unclassified is a finding');
+ok(/ANY class beginning with 'STOP:' is a finding/.test(sql),
+  'the Q-C comment states the general STOP: rule too');
+ok(/AS OF 2026-08-18 THIS LIST IS KNOWN INCOMPLETE/.test(sql),
+  'the Q-C inventory is marked known-incomplete pending Q-C1..Q-C3');
 ok(/No row classified `STOP: /.test(doc),
   'the doc checklist asks for zero STOP-classified rows, not zero uncovered tables');
 
@@ -375,8 +399,25 @@ ok(/LOAD-BEARING NOW/.test(doc) && /VISIBLE BUT NON-LOAD-BEARING/.test(doc) && /
   'the doc carries all three classifications');
 ok(/Mixed evidence is a permitted outcome/.test(doc),
   'the doc allows a mixed verdict rather than forcing a label');
-ok(/Not yet run/.test(doc) && /\(pending\)/.test(doc),
-  'the production-results section is present and blank');
+// §7 is no longer blank — the population gate ran and passed. It must now
+// record that truth, and must not still claim the audit has not been run.
+ok(!/\*\*Not yet run\.\*\*/.test(doc) && !/Status: prepared, NOT run/.test(doc),
+  'no "not yet run" wording survives anywhere in the doc');
+ok(/PARTIALLY RUN — GATE STOPPED/.test(doc),
+  'the doc records the real execution state: partially run, gate stopped');
+ok(/### Population gate — ✅ PASSED \(all three checks, 2026-08-18\)/.test(doc),
+  'the population gate is recorded as passed, with its date');
+ok(/- \[x\] `cel25_total_rows` = 50/.test(doc) && /- \[x\] `cel25cc_rows` = 25/.test(doc),
+  'all seven Q-A0 required checks are ticked');
+ok(/All seven required checks passed/.test(doc),
+  'the doc states the seven Q-A0 checks passed');
+ok(/Returned all \*\*50\*\* rows/.test(doc) && /- \[x\] No `cel25` row is already aliased/.test(doc),
+  'Q-A1 is recorded as returning all 50 rows, coherent, none already aliased');
+ok(/matched the numeric `cel25-1`…`cel25-25` partition\s*\n?\*\*exactly, as sets\*\*/.test(doc) ||
+   /exactly, as sets/.test(doc),
+  'upstream set equality is recorded as passed');
+ok(/\(pending\)/.test(doc),
+  'the still-unrun statements remain marked pending');
 ok(/Gate 0 \*\*does not\*\*/.test(doc) || /Gate 0 \*\*makes no alias decision/.test(doc),
   'the doc states explicitly that Gate 0 makes no alias decision');
 

@@ -255,10 +255,19 @@ order by
 --   STOP: unclassified            anything else — a potentially-direct catalog
 --                                 reference nobody has accounted for
 --
--- ⚠ THE STOP CONDITION IS THE LAST CLASS ONLY. A row classified as immutable
---   evidence, identity infrastructure or membership reference is expected and
---   is not a finding. Only 'STOP: unclassified card-id-like reference' halts
---   the gate.
+-- ⚠ THE STOP RULE, GENERALLY: ANY reference_class beginning with 'STOP:'
+--   halts the gate. The expected classes — direct catalog reference,
+--   immutable import evidence, identity infrastructure, membership reference
+--   — do not halt it and are not findings.
+--
+--   There are now TWO STOP classes and both halt:
+--     STOP: unclassified …   the default — a column nobody has accounted for;
+--     STOP: UNRESOLVED …    a column we have NAMED but whose semantics are
+--                            still unestablished (artists.signature_card_id,
+--                            found 2026-08-18 — see below and audit doc §4a).
+--
+--   Naming a finding is not resolving it. A future STOP class must keep the
+--   'STOP:' prefix so this rule keeps catching it without being edited.
 --
 -- Views are included as well as base tables, so card_identity_resolution is
 -- visible rather than silently filtered out.
@@ -566,8 +575,15 @@ order by rs.batch_status;
 --
 -- The six tables below are the CAT-2D reference inventory, re-verified by
 -- CAT-2D.2's production Phase A. Q-C0 above classifies every card-id-like
--- column in the live schema; only an entry it marks 'STOP: unclassified' is a
--- finding.
+-- column in the live schema, and ANY class beginning with 'STOP:' is a finding
+-- that halts the gate — not just the default 'STOP: unclassified'.
+--
+-- ⚠ AS OF 2026-08-18 THIS LIST IS KNOWN INCOMPLETE. Q-C0 returned
+--   artists.signature_card_id as STOP: UNRESOLVED. Whether it belongs in this
+--   inventory is exactly what Q-C1..Q-C3 exist to establish, and Q-C is
+--   deliberately NOT extended until they answer. If it does belong, it is
+--   GLOBAL CATALOG METADATA alongside card_extras — artists has no user_id and
+--   nothing in it is collector-authored.
 --
 -- Excluded deliberately, with reasons:
 --   user_import_rows           — immutable historical evidence, covered by Q-B
