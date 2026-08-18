@@ -1,8 +1,12 @@
 # CAT-2D.3 Gate 0 — Celebrations production impact audit
 
-**Status: prepared, NOT run.** Read-only audit definition. No production SQL has
-been executed, no alias exists, no migration or schema change is proposed, the
-sync schedule remains paused, and no application code changed.
+**Status: PARTIALLY RUN — GATE STOPPED.** Q-C0 executed in production on
+2026-08-18 and returned one `STOP` row: `public.artists.signature_card_id`, a
+card-id-like column the CAT-2D reference inventory never knew about. **Q-B and
+every later query are blocked** until Q-C1…Q-C3 resolve it — see **§4a**.
+
+No alias exists, no migration or schema change is proposed, no write of any kind
+has been made, the sync schedule remains paused, and no application code changed.
 
 **Gate 0 makes no alias decision and proposes no mapping.** It exists to answer
 one prioritisation question with evidence instead of intuition.
@@ -213,6 +217,84 @@ is human.
 
 ---
 
+## 4a. ⛔ OPEN FINDING — Gate 0 is currently STOPPED
+
+**Q-C0 ran in production on 2026-08-18 and returned one STOP row:**
+
+```
+BASE TABLE | artists | signature_card_id | text
+           | STOP: unclassified card-id-like reference | false
+```
+
+**Q-B and every later Gate 0 query are blocked until this resolves.** This is
+Q-C0 working exactly as designed — it caught a card-id-bearing column that the
+CAT-2D reference inventory never knew about.
+
+### What the repository says about it: nothing
+
+Searched exhaustively before adding any diagnostic:
+
+| Check | Result |
+|---|---|
+| `public.artists` DDL in `docs/sql/` | **none — the table has no committed DDL at all**, it predates the repo's SQL convention |
+| `signature_card_id` in any `.sql` / `.js` / `.jsx` / `.mjs` / `.md` / `.json` | **zero occurrences** |
+| `signature_card_id` in the built `dist/` bundle | **zero occurrences** |
+| `artists` columns the repo ever names | `id`, `aliases` (`artistService.js:82`, `sync-cards.mjs:218`), plus `display_name` in a CURRENT_STATE hotfix note |
+| Runtime reads | both call sites use **explicit column lists** — neither selects this column |
+| CAT-2D.2's reference inventory | **never considered it.** That inventory was a *static six-table list* from the CAT-2D design's [Q8] evidence; CAT-2D.2 performed **no** `information_schema` sweep for card-id columns (its four `information_schema` uses are all `cards_effective` / `card_identity_resolution` column-contract checks) |
+
+**Its semantics therefore cannot be established from repo evidence, and are not
+guessed here.** The column name is suggestive; a name is not evidence. It stays
+classified `STOP: UNRESOLVED` in Q-C0 until Q-C1…Q-C3 are run and reviewed.
+
+### ⚠ This may be a live finding about a *closed* slice
+
+If `signature_card_id` does hold catalog card ids, then **CAT-2D.2 aliased 192
+ids away without migrating any reference held in this column.** That would be a
+stale reference sitting in production today — a defect in a slice already
+marked closed, not merely a CAT-2D.3 input.
+
+Q-C2 therefore checks against **all** alias rows, not just the CAT-2D.3
+candidate population. A non-zero `already_aliased_by_cat2d2` must be reported
+before anything else proceeds.
+
+### ⚠ Absence from runtime code is *not* evidence of zero impact
+
+No current frontend path reads this column — and that settles nothing. A column
+no surface reads today can still be read by a future surface, by an admin or
+editorial tool outside this repo, or by a direct query. A dangling or
+aliased-away value would be wrong whenever that happens. Q-C1…Q-C3 measure the
+**data**, not the current call graph.
+
+### The minimum diagnostic added
+
+| Statement | Establishes |
+|---|---|
+| **Q-C1** | type, nullability, default, and **whether a FK exists and what it targets** — plus any index. A FK to `public.cards(id)` settles "is it a catalog reference" outright; its absence settles nothing, since `user_binder_cards.card_id` is deliberately FK-free (BP-1A) |
+| **Q-C2** | population counts, and the discriminator — how many populated values **resolve to a `public.cards` row** vs **dangle**; how many are in `cards_effective`; **how many are already alias ids** (stale); how many hit the CAT-2D.3 historical candidates |
+| **Q-C3** | per-row detail — every populated row with its resolution status, so the classification rests on **values, not counts** |
+
+`artists` is **global artist/catalog metadata** with no user dimension, so these
+outputs contain no user-identifying values and are safe to commit.
+
+### How the finding resolves
+
+Both branches are conditional on evidence not yet in hand. Neither is pre-empted:
+
+- **If it IS a direct catalog reference** (values resolve to `public.cards`):
+  classify it in Q-C0 as such and extend Q-C / Q-G — as **global catalog
+  metadata**, alongside `card_extras`, and **never** folded into
+  `collector_authored_reference_rows`. `artists` has no `user_id`; nothing in it
+  is collector-authored.
+- **If it is NOT a catalog reference** (values dangle, or the constraint shows a
+  different target): classify it per the evidence and record why identity
+  remapping cannot reach it.
+
+Q-C / Q-G are **deliberately not extended yet.** Doing so before Q-C1…Q-C3 would
+be exactly the name-based inference this gate exists to avoid.
+
+---
+
 ## 5. Interpretation framework
 
 Applied **only after all three population-gate checks pass** (§3). If any of
@@ -348,13 +430,57 @@ commit user UUIDs, binder IDs or row IDs.**
 
 ### Q-C0 — card-id-like columns, classified
 
+**RUN 2026-08-18. Returned one STOP row — see §4a.**
+
+```
+BASE TABLE | artists | signature_card_id | text
+           | STOP: unclassified card-id-like reference | false
+```
+
+- [x] Q-C0 executed
+- [ ] **No row classified `STOP: …`** — ⛔ **FAILS.** `artists.signature_card_id`
+      is unresolved. Q-C0 now returns it as
+      `STOP: UNRESOLVED — undocumented card-id-like reference, run Q-C1..Q-C3`
+- [ ] Expected classes only: direct catalog reference · immutable import
+      evidence · identity infrastructure · membership reference
+
+> **Q-B and every later query remain blocked** until Q-C1…Q-C3 resolve this.
+
+### Q-C1 — `artists.signature_card_id` definition and constraints
+
 ```
 (pending)
 ```
 
-- [ ] No row classified `STOP: unclassified card-id-like reference`
-- [ ] Expected classes only: direct catalog reference · immutable import
-      evidence · identity infrastructure · membership reference
+- [ ] Is there a FOREIGN KEY, and what does it target?
+- [ ] Type / nullability / default recorded
+
+### Q-C2 — does it hold catalog card ids, and are any stale?
+
+```
+(pending)
+```
+
+- [ ] `dangling_no_cards_row` — the discriminator
+- [ ] **`already_aliased_by_cat2d2` = 0** — ⚠ non-zero is a stale reference in
+      production today and a defect in a *closed* slice
+- [ ] `references_cat2d3_historical` recorded
+
+### Q-C3 — per-row detail
+
+```
+(pending)
+```
+
+- [ ] Classification decided on **values**, not counts
+
+### Resolution of the §4a finding
+
+> **Pending.** One of: *direct catalog reference (global catalog metadata)* →
+> classify in Q-C0 and extend Q-C / Q-G alongside `card_extras`, never folded
+> into the collector-authored total · or *not a catalog reference* → classify
+> per evidence and record why identity remapping cannot reach it.
+
 
 ### Q-B — ownership impact
 
@@ -445,7 +571,11 @@ measuring the wrong rows. Re-derive the population before running Q-B…Q-G.
 - **Q-C0 returns any row classified `STOP: unclassified card-id-like reference`**
   → stop and inspect the new or unaccounted-for reference. Rows classified as
   immutable import evidence, identity infrastructure or membership reference are
-  expected and are **not** findings;
+  expected and are **not** findings.
+
+  **CURRENTLY FIRING (2026-08-18):** `public.artists.signature_card_id` — see
+  §4a. Q-C0 now returns it as `STOP: UNRESOLVED`, so this condition stays
+  triggered until Q-C1…Q-C3 are run and the finding is classified;
 - the current schema differs materially from what the CAT-2D docs expect (e.g. a
   named table absent, a unique constraint changed);
 - answering any question would require an unapproved identity mapping;

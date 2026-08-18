@@ -276,6 +276,13 @@ select
       then 'identity infrastructure — the alias map itself'
     when c.table_name = 'user_binder_layout_items' and c.column_name = 'binder_card_id'
       then 'membership reference (FK to user_binder_cards) — NOT a catalog card id — structurally immune'
+    -- FOUND IN PRODUCTION, 2026-08-18. Q-C0 returned this column as
+    -- unclassified, which is exactly what it exists to do. It is named here so
+    -- the finding is not rediscovered from scratch — but it is deliberately
+    -- STILL A STOP, because its semantics remain UNESTABLISHED. See the
+    -- Q-C1..Q-C3 diagnostics below and the audit doc §4a.
+    when c.table_name = 'artists' and c.column_name = 'signature_card_id'
+      then 'STOP: UNRESOLVED — undocumented card-id-like reference, run Q-C1..Q-C3'
     when c.table_name in ('card_extras', 'card_overrides', 'card_favorites',
                           'price_history', 'user_card_intent', 'user_binder_cards')
          and c.column_name = 'card_id'
@@ -295,6 +302,193 @@ order by
                              'price_history', 'user_card_intent', 'user_binder_cards')
        then 0 else 1 end,
   c.table_name, c.column_name;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Q-C1..Q-C3 — RESOLVE public.artists.signature_card_id
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- WHY THESE EXIST. Q-C0 ran in production on 2026-08-18 and returned exactly
+-- one STOP row:
+--
+--   BASE TABLE | artists | signature_card_id | text
+--              | STOP: unclassified card-id-like reference | false
+--
+-- WHAT THE REPOSITORY SAYS ABOUT IT: nothing at all. This was searched
+-- exhaustively before adding anything here.
+--
+--   * public.artists has NO committed DDL anywhere in docs/sql. The table
+--     predates the repo's SQL convention (Gate 3 era) and was never captured.
+--   * The string 'signature_card_id' appears in NO .sql, .js, .jsx, .mjs, .md
+--     or .json file in the repository, and not in the built dist bundle.
+--   * The only artists columns the repo ever names are id and aliases
+--     (artistService.js:82, sync-cards.mjs:218) plus display_name in a
+--     CURRENT_STATE hotfix note. Both reads select explicit column lists, so
+--     neither touches this column.
+--   * CAT-2D.2's reference inventory never considered it. That inventory was a
+--     STATIC six-table list inherited from the CAT-2D design's [Q8] evidence,
+--     and CAT-2D.2 performed no information_schema sweep for card-id columns —
+--     its four information_schema uses are all cards_effective /
+--     card_identity_resolution COLUMN-CONTRACT checks.
+--
+-- SO ITS SEMANTICS CANNOT BE ESTABLISHED FROM REPO EVIDENCE, AND ARE NOT
+-- GUESSED HERE. The column name is suggestive; a name is not evidence. It is
+-- classified STOP in Q-C0 and stays that way until these three statements are
+-- run and reviewed.
+--
+-- ⚠ THIS MAY BE A LIVE FINDING ABOUT A CLOSED SLICE, NOT ONLY A CAT-2D.3
+--   QUESTION. If this column does hold catalog card ids, then CAT-2D.2 aliased
+--   192 ids away without migrating any reference held here. Q-C2 therefore
+--   checks against ALL alias rows, not just the CAT-2D.3 candidate population.
+--   A non-zero already_aliased_by_cat2d2 count is a stale reference sitting in
+--   production today and must be reported before anything else proceeds.
+--
+-- ⚠ ABSENCE FROM RUNTIME CODE IS NOT EVIDENCE OF ZERO IMPACT. A column no
+--   frontend reads today can still be read by a future surface, by an admin or
+--   editorial tool outside this repo, or by a direct query — and a dangling or
+--   aliased-away value would be wrong whenever that happens. These statements
+--   measure the DATA, not the current call graph.
+--
+-- artists is GLOBAL artist/catalog metadata. It has no user dimension, so
+-- these outputs contain no user-identifying values and are safe to commit.
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Q-C1 — what the column actually IS: definition and constraints
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Establishes type, nullability, default, and — decisively — whether a FOREIGN
+-- KEY exists and what it targets. A FK to public.cards(id) would settle the
+-- "is it a catalog reference" question outright. Its absence would NOT settle
+-- the opposite: card-id columns elsewhere in this schema are deliberately
+-- FK-free (user_binder_cards.card_id has no FK by design, per BP-1A).
+
+select
+  c.table_name,
+  c.column_name,
+  c.data_type,
+  c.is_nullable,
+  c.column_default,
+  c.ordinal_position,
+  coalesce(
+    (select string_agg(
+              format('%s [%s] %s', con.conname, con.contype::text, pg_get_constraintdef(con.oid)),
+              ' | ' order by con.conname)
+       from pg_constraint con
+       join pg_class rel on rel.oid = con.conrelid
+       join pg_namespace n on n.oid = rel.relnamespace
+      where n.nspname = 'public'
+        and rel.relname = 'artists'
+        and exists (
+          select 1
+          from unnest(con.conkey) as k(attnum)
+          join pg_attribute a
+            on a.attrelid = con.conrelid and a.attnum = k.attnum
+          where a.attname = 'signature_card_id'
+        )),
+    '(no constraint involves this column)')                       as constraints_involving_column,
+  coalesce(
+    (select string_agg(i.relname, ' | ' order by i.relname)
+       from pg_index idx
+       join pg_class i on i.oid = idx.indexrelid
+       join pg_class rel on rel.oid = idx.indrelid
+       join pg_namespace n on n.oid = rel.relnamespace
+      where n.nspname = 'public' and rel.relname = 'artists'
+        and exists (
+          select 1
+          from unnest(idx.indkey) as k(attnum)
+          join pg_attribute a
+            on a.attrelid = idx.indrelid and a.attnum = k.attnum
+          where a.attname = 'signature_card_id'
+        )),
+    '(no index involves this column)')                            as indexes_involving_column
+from information_schema.columns c
+where c.table_schema = 'public'
+  and c.table_name = 'artists'
+  and c.column_name = 'signature_card_id';
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Q-C2 — does it hold catalog card ids, and are any of them stale?
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The behavioural test the column name cannot give us. If populated values
+-- resolve to public.cards.id, it is a catalog reference whatever it is called.
+-- If they do not resolve at all, it is something else, and identity remapping
+-- cannot reach it.
+--
+-- dangling_no_cards_row is the discriminator. A high count means these are not
+-- card ids. Zero, alongside a non-zero populated count, means they are.
+--
+-- already_aliased_by_cat2d2 is the urgent one: a value pointing at an id
+-- CAT-2D.2 aliased away is a stale reference in production right now.
+
+with cel25_all as (
+  select c.id, c.local_id from public.cards c where c.set_id = 'cel25'
+),
+historical as (
+  select id from cel25_all where local_id ~ '^[0-9]+$' is not true
+),
+sig as (
+  select a.id as artist_id, btrim(a.signature_card_id) as card_id
+  from public.artists a
+  where a.signature_card_id is not null
+    and btrim(a.signature_card_id) <> ''
+)
+select
+  (select count(*) from public.artists)                           as artists_rows_total,
+  (select count(*) from sig)                                      as rows_with_signature_card_id,
+  (select count(distinct card_id) from sig)                       as distinct_signature_card_ids,
+  (select count(*) from sig s
+    where exists (select 1 from public.cards c where c.id = s.card_id))
+                                                                  as resolve_to_a_cards_row,
+  (select count(*) from sig s
+    where not exists (select 1 from public.cards c where c.id = s.card_id))
+                                                                  as dangling_no_cards_row,
+  (select count(*) from sig s
+    where exists (select 1 from public.cards_effective ce where ce.id = s.card_id))
+                                                                  as present_in_cards_effective,
+  (select count(*) from sig s
+    join public.card_identity_aliases al on al.alias_card_id = s.card_id)
+                                                                  as already_aliased_by_cat2d2,
+  (select count(*) from sig s where s.card_id in (select id from historical))
+                                                                  as references_cat2d3_historical,
+  'artists is global catalog metadata — no user dimension, no collector-authored state'
+                                                                  as reference_note;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Q-C3 — per-row detail, so the classification rests on values not counts
+-- ═══════════════════════════════════════════════════════════════════════════
+-- artists is small and carries no user data, so every populated row is listed
+-- with its resolution status. This is what actually decides whether Q-C0's STOP
+-- resolves to "direct catalog reference" or to "not a catalog reference".
+
+with cel25_all as (
+  select c.id, c.local_id from public.cards c where c.set_id = 'cel25'
+),
+historical as (
+  select id from cel25_all where local_id ~ '^[0-9]+$' is not true
+),
+sig as (
+  select a.id as artist_id, btrim(a.signature_card_id) as card_id
+  from public.artists a
+  where a.signature_card_id is not null
+    and btrim(a.signature_card_id) <> ''
+)
+select
+  s.artist_id,
+  s.card_id,
+  exists (select 1 from public.cards c where c.id = s.card_id)          as is_a_cards_row,
+  exists (select 1 from public.cards_effective ce where ce.id = s.card_id)
+                                                                        as in_cards_effective,
+  exists (select 1 from public.card_identity_aliases al
+           where al.alias_card_id = s.card_id)                          as is_an_alias_id_stale,
+  (select al.canonical_card_id from public.card_identity_aliases al
+    where al.alias_card_id = s.card_id)                                 as would_resolve_to,
+  (s.card_id in (select id from historical))                            as is_cat2d3_historical,
+  (select c.set_id from public.cards c where c.id = s.card_id)          as set_id,
+  (select c.name   from public.cards c where c.id = s.card_id)          as card_name
+from sig s
+order by s.artist_id;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════

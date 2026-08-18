@@ -243,8 +243,59 @@ ok(/user_import_rows.*candidate_card_ids/s.test(qc0),
   'Q-C0 classifies candidate_card_ids as immutable import evidence');
 ok(/THE STOP CONDITION IS THE LAST CLASS ONLY/.test(sql),
   'the SQL states the stop condition fires only on the unclassified class');
-ok(/No row classified `STOP: unclassified card-id-like reference`/.test(doc),
-  'the doc checklist asks only for zero unclassified rows, not zero uncovered tables');
+ok(/No row classified `STOP: /.test(doc),
+  'the doc checklist asks for zero STOP-classified rows, not zero uncovered tables');
+
+// ── The artists.signature_card_id finding (Q-C0 production STOP, 2026-08-18) ─
+//
+// Q-C0 caught a card-id-bearing column the CAT-2D reference inventory never
+// knew about. Its semantics are NOT established by repo evidence — the artists
+// table has no committed DDL and the column appears in no SQL, runtime file,
+// doc or built bundle — so it is named but STILL BLOCKING, and Q-C1..Q-C3 exist
+// to resolve it. These pins stop it from being quietly promoted to a
+// classification on the strength of its name.
+console.log('\nartists.signature_card_id finding stays blocking');
+ok(/artists' and c\.column_name = 'signature_card_id'/.test(code),
+  'Q-C0 names artists.signature_card_id explicitly rather than leaving it to the default');
+ok(/STOP: UNRESOLVED — undocumented card-id-like reference, run Q-C1\.\.Q-C3/.test(code),
+  'its Q-C0 class still begins with STOP — the gate stays stopped');
+ok(!/artists[\s\S]{0,200}'direct catalog reference/.test(code),
+  'it has NOT been promoted to "direct catalog reference" without evidence');
+ok(!/public\.artists/.test(
+     splitStatements(code).filter((st) => st.includes('collector_authored_reference_rows')).join('')),
+  'artists is not folded into the collector-authored total');
+
+// The three diagnostics exist, are read-only, and answer the specific questions.
+for (const q of ['Q-C1', 'Q-C2', 'Q-C3']) {
+  ok(sql.includes(q) && doc.includes(q), `${q} appears in both the SQL and the audit doc`);
+}
+ok(/pg_get_constraintdef/.test(code),
+  'Q-C1 reports the actual constraint definition — a FK target is evidence, a column name is not');
+ok(/as\s+dangling_no_cards_row/.test(code),
+  'Q-C2 measures whether values resolve to a cards row at all — the is-it-a-catalog-reference discriminator');
+ok(/as\s+already_aliased_by_cat2d2/.test(code),
+  'Q-C2 checks the values against ALL alias rows, not just the CAT-2D.3 candidates');
+ok(/join public\.card_identity_aliases al on al\.alias_card_id = s\.card_id/.test(code),
+  'the stale-reference check joins the full alias table');
+ok(/as\s+references_cat2d3_historical/.test(code),
+  'Q-C2 also measures overlap with the CAT-2D.3 historical population');
+ok(/as\s+is_an_alias_id_stale/.test(code) && /as\s+would_resolve_to/.test(code),
+  'Q-C3 shows, per row, whether the value is a stale alias id and what it would resolve to');
+
+// The reasoning must stay in the file, because the negative repo result is the
+// whole basis for refusing to classify it.
+ok(/public\.artists has NO committed DDL/.test(sql),
+  'the SQL records that artists has no committed DDL');
+ok(/appears in NO \.sql, \.js, \.jsx, \.mjs, \.md/.test(sql),
+  'the SQL records that the column appears nowhere in the repository');
+ok(/ABSENCE FROM RUNTIME CODE IS NOT EVIDENCE OF ZERO IMPACT/.test(sql),
+  'the SQL states that no current reader does not mean no impact');
+ok(/LIVE FINDING ABOUT A CLOSED SLICE/.test(sql),
+  'the SQL flags the CAT-2D.2 implication if these are catalog card ids');
+ok(/GATE STOPPED/.test(doc) && /## 4a\./.test(doc),
+  'the doc status banner and §4a record the open finding');
+ok(/CURRENTLY FIRING \(2026-08-18\)/.test(doc),
+  'the stop condition is marked as currently firing rather than hypothetical');
 
 // ── card_extras is catalog metadata, not collector-authored state ───────────
 console.log('\ncard_extras is not collector-authored state');
