@@ -785,6 +785,12 @@ order by owned_image_missing desc, e.set_id;
 --
 -- Operator: save as docs/cat-3a-evidence/inputs/owned_missing_ids_input.csv
 --           DELETE IT when the audit run is complete.
+--
+-- ⚠ ALSO SAVE Q-A7d. The probe requires an INDEPENDENT expected count before it
+--   will treat the active-owned scope as decision-grade. Matching supplied ids
+--   against the evidence proves only that the ids we were given are real — it
+--   cannot detect a TRUNCATED export, because a file holding 3 of 114 owned ids
+--   reconciles perfectly against itself. Q-A7d is the count that catches that.
 
 with owned as (
   select distinct
@@ -803,6 +809,54 @@ from owned o
 join public.cards_effective e on e.id = o.resolved_card_id
 where e.image_url is null or btrim(e.image_url) = ''
 order by e.id;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Q-A7d — ACTIVE-OWNED EXPECTED COUNT — RECONCILIATION INPUT   (gate G-10)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- One number: how many rows Q-A7c should have produced.
+--
+-- WHY THIS IS NOT REDUNDANT WITH Q-A7c ITSELF.
+--
+--   The probe checks that every supplied owned id appears in the Q-A8a
+--   evidence. That proves the ids we were given are real. It CANNOT detect a
+--   truncated export: a file holding 3 of 114 owned ids matches perfectly
+--   against itself and reports a clean reconciliation.
+--
+--   The active-owned O0 gate is a NO-TOLERANCE gate — it must read `O0 = 0`
+--   before any active-owned conclusion is drawn. A gate that strict must not be
+--   satisfiable by a short file. This independent count is the only thing that
+--   can catch that, so the probe treats the active-owned scope as
+--   not_evaluated when it is absent or disagrees.
+--
+-- It is deliberately a COUNT and not a second id list: nothing here needs to
+-- restate the population, only to size it.
+--
+-- This is the same figure Q-A7a reports as owned_image_missing. It is repeated
+-- as its own statement so the operator saves a clean one-value CSV rather than
+-- transcribing a column out of a wider result.
+--
+-- Counts only. No user dimension is projected.
+--
+-- Operator: save as docs/cat-3a-evidence/inputs/owned_expected_count_input.csv
+--           DELETE IT with the rest of the inputs when the run completes.
+
+with owned as (
+  select distinct
+    coalesce(ires.canonical_card_id, r.card_id)                    as resolved_card_id
+  from public.user_import_rows r
+  join public.user_import_batches b
+    on b.id = r.batch_id and b.status = 'active'
+  left join public.card_identity_resolution ires
+    on ires.alias_card_id = r.card_id
+  where r.match_status = 'matched'
+    and r.card_id is not null
+)
+select
+  count(*) filter (where e.image_url is null or btrim(e.image_url) = '')
+                                                                   as owned_image_missing
+from owned o
+join public.cards_effective e on e.id = o.resolved_card_id;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════

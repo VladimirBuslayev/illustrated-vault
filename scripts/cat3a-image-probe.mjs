@@ -60,7 +60,8 @@
 //               image_gaps_input.csv         (Q-A8a) — required
 //               alias_pairs_input.csv        (Q-A6b) — all 192 approved pairs
 //               p3_control_pool_input.csv    (Q-A8b) — control candidates
-//               owned_missing_ids_input.csv  (Q-A7c) — OPERATOR-ONLY, see below
+//               owned_missing_ids_input.csv     (Q-A7c) — OPERATOR-ONLY
+//               owned_expected_count_input.csv  (Q-A7d) — OPERATOR-ONLY
 //   --out     directory for evidence output (created if absent)
 //   --phase   all (default) | p1 | p2 | p30 | p3 | p4
 //
@@ -79,6 +80,10 @@
 //   could supply. The owned id set is deliberately NOT threaded into
 //   buildEvidenceRecord, so there is no code path by which an owned id can
 //   reach image_gaps.csv — the safety harness asserts that structurally.
+//
+//   Q-A7d supplies the independent expected count. Without it — or on any
+//   disagreement — the active-owned scope is not_evaluated and its O0 gate and
+//   O1/O3 weighting are both withheld. See evaluateActiveOwned.
 //
 //   docs/cat-3a-evidence/inputs/ is gitignored so the raw list cannot be
 //   committed by accident.
@@ -436,6 +441,138 @@ export function classifyF2Validation(sampleResults, f2RowCount) {
     };
   }
   return { status: 'PASS', sampled: results.length };
+}
+
+/**
+ * Active-owned scope evaluation — reconciliation is LOAD-BEARING.
+ *
+ * ⚠ A reconciliation flag nobody acts on is worse than no flag (a review
+ *   correction). The earlier version recorded `reconciles` and then computed
+ *   the active-owned O0 gate anyway, so a truncated owned-id export could
+ *   produce `G-10_active_owned_o0_is_zero: true` from a population that was
+ *   never fully supplied — a no-tolerance gate passing on partial input.
+ *
+ * Four distinguishable states, and the first two are NOT the same thing:
+ *
+ *   ABSENT          the operator did not supply the file at all. The scope is
+ *                   unmeasured. not_evaluated.
+ *   PRESENT + ZERO  the file exists and legitimately holds no rows: no
+ *                   collector owns a missing-image card. That is a real,
+ *                   decision-grade zero — provided the expected count agrees.
+ *   PRESENT + RECONCILED   every supplied id was found in the evidence AND the
+ *                   supplied count matches Q-A7a. Decision-grade.
+ *   PRESENT + PARTIAL      anything else. not_evaluated, and the O1/O3
+ *                   weighting is explicitly withheld.
+ *
+ * WHY THE EXPECTED COUNT IS REQUIRED. Matching every supplied id against the
+ * evidence proves only that the ids we were given are real. It cannot detect a
+ * TRUNCATED export: a file holding 3 of 114 owned ids reconciles perfectly
+ * against itself. Q-A7a's owned_image_missing is the independent count, so
+ * without it reconciliation cannot be established and the scope fails closed.
+ *
+ * @param {object}  o
+ * @param {boolean} o.inputPresent   the file existed (distinct from holding 0 rows)
+ * @param {Set}     o.ownedIds       ids supplied by Q-A7c
+ * @param {number|null} o.expectedCount  Q-A7a owned_image_missing, or null
+ * @param {Array}   o.records        the per-row evidence
+ * @param {boolean} o.fallbackPhaseRan
+ */
+export function evaluateActiveOwned({
+  inputPresent, ownedIds, expectedCount, records, fallbackPhaseRan,
+}) {
+  const NOT_EVALUATED = 'not_evaluated';
+  const withheld = (reason, extra) => Object.assign({
+    scope: NOT_EVALUATED,
+    available: false,
+    reconciles: null,
+    weighting: 'withheld',
+    o0_gate: NOT_EVALUATED,
+    o0_rows: null,
+    reason,
+  }, extra || {});
+
+  if (!inputPresent) {
+    return withheld(
+      'owned_missing_ids_input.csv was not supplied — the active-owned scope is unmeasured, '
+      + 'not zero. The G-10 active-owned gate and the O1/O3 weighting are both withheld.',
+    );
+  }
+
+  const supplied = ownedIds.size;
+  const expectedKnown = Number.isFinite(expectedCount);
+
+  if (!expectedKnown) {
+    return withheld(
+      'owned_expected_count_input.csv (Q-A7a owned_image_missing) was not supplied, so a '
+      + 'truncated owned-id export cannot be detected. Reconciliation is unestablished and the '
+      + 'active-owned scope fails closed.',
+      { owned_missing_rows_supplied: supplied },
+    );
+  }
+
+  if (supplied !== expectedCount) {
+    return withheld(
+      `owned-id export holds ${supplied} rows but Q-A7a reported ${expectedCount}. The export is `
+      + 'truncated or the two statements were run against different states.',
+      { owned_missing_rows_supplied: supplied, expected_count: expectedCount },
+    );
+  }
+
+  // Legitimate zero: the file exists, holds no rows, and Q-A7a agrees. No
+  // collector owns a missing-image card, so the O0 gate is satisfied by an
+  // empty population rather than by an unmeasured one.
+  if (supplied === 0) {
+    return {
+      scope: 'evaluated',
+      available: true,
+      reconciles: true,
+      weighting: fallbackPhaseRan ? 'decision_grade' : 'withheld',
+      owned_missing_rows_supplied: 0,
+      expected_count: 0,
+      owned_missing_rows_matched_in_evidence: 0,
+      outcome: {},
+      sensitivity_outcome: {},
+      o0_rows: 0,
+      o0_gate: fallbackPhaseRan ? true : NOT_EVALUATED,
+      reason: 'no active-owned card is missing an image — a measured zero, not an absent scope',
+    };
+  }
+
+  const ownedRecords = records.filter(r => ownedIds.has(r.id));
+  if (ownedRecords.length !== supplied) {
+    return withheld(
+      `only ${ownedRecords.length} of ${supplied} supplied owned ids were found in the evidence. `
+      + 'The Q-A7c and Q-A8a exports were taken against different states.',
+      {
+        owned_missing_rows_supplied: supplied,
+        expected_count: expectedCount,
+        owned_missing_rows_matched_in_evidence: ownedRecords.length,
+        reconciles: false,
+      },
+    );
+  }
+
+  const tally = (key) => ownedRecords.reduce((acc, r) => {
+    const k = r[key] || '(none)';
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, {});
+  const o0Rows = ownedRecords.filter(r => r.outcome === O.INDETERMINATE).length;
+
+  return {
+    scope: 'evaluated',
+    available: true,
+    reconciles: true,
+    weighting: fallbackPhaseRan ? 'decision_grade' : 'withheld',
+    owned_missing_rows_supplied: supplied,
+    expected_count: expectedCount,
+    owned_missing_rows_matched_in_evidence: ownedRecords.length,
+    outcome: tally('outcome'),
+    sensitivity_outcome: tally('sensitivity_outcome'),
+    o0_rows: o0Rows,
+    o0_gate: fallbackPhaseRan ? o0Rows === 0 : NOT_EVALUATED,
+    reason: null,
+  };
 }
 
 /**
@@ -1188,8 +1325,23 @@ export async function main(argv) {
   // absent file must not be silently tolerated as "zero pairs".
   const aliasPairs = readInput(args.input, 'alias_pairs_input.csv', true);
   // OPERATOR-ONLY. Never written to any artifact; used for aggregates only.
-  const ownedRows = readInput(args.input, 'owned_missing_ids_input.csv', false) || [];
-  const ownedIds = new Set(ownedRows.map(r => r.card_id).filter(Boolean));
+  //
+  // ⚠ `null` (file absent) and `[]` (file present, zero rows) are DIFFERENT and
+  //   the distinction is load-bearing — see evaluateActiveOwned. Do not
+  //   collapse them with `|| []`: an unmeasured scope would then be reported
+  //   as a measured zero.
+  const ownedRows = readInput(args.input, 'owned_missing_ids_input.csv', false);
+  const ownedInputPresent = ownedRows !== null;
+  const ownedIds = new Set((ownedRows || []).map(r => r.card_id).filter(Boolean));
+
+  // Q-A7a's owned_image_missing, supplied as an independent expected count.
+  // Matching supplied ids against the evidence cannot detect a truncated
+  // export — a short file reconciles perfectly against itself — so this is the
+  // only thing that can.
+  const expectedRows = readInput(args.input, 'owned_expected_count_input.csv', false);
+  const expectedOwnedCount = expectedRows && expectedRows.length > 0
+    ? Number(expectedRows[0].owned_image_missing)
+    : null;
 
   log(`Input — missing-image rows: ${gaps.length}; control pool: ${controlPool.length}; `
     + `alias pairs: ${aliasPairs.length}; active-owned missing ids: ${ownedIds.size}`);
@@ -1336,27 +1488,20 @@ export async function main(argv) {
   const o0 = records.filter(r => r.outcome === O.INDETERMINATE).length;
   const o0Rate = records.length > 0 ? (100 * o0) / records.length : 0;
 
-  // ── Active-owned aggregates ────────────────────────────────────────────────
+  // ── Active-owned scope ─────────────────────────────────────────────────────
   // The ONLY use of the operator-only owned id set. It is intersected with the
   // in-memory record list to produce counts; no owned id is written anywhere.
-  const ownedRecords = ownedIds.size > 0
-    ? records.filter(r => ownedIds.has(r.id))
-    : [];
-  const ownedO0 = ownedRecords.filter(r => r.outcome === O.INDETERMINATE).length;
-  const activeOwned = ownedIds.size === 0
-    ? { available: false, note: 'owned_missing_ids_input.csv not supplied — the active-owned G-10 gate cannot be evaluated' }
-    : {
-      available: true,
-      owned_missing_rows_supplied: ownedIds.size,
-      owned_missing_rows_matched_in_evidence: ownedRecords.length,
-      // A mismatch means the two exports were taken at different times and the
-      // owned figures must not be trusted.
-      reconciles: ownedRecords.length === ownedIds.size,
-      outcome: tallyOver(ownedRecords, 'outcome'),
-      sensitivity_outcome: tallyOver(ownedRecords, 'sensitivity_outcome'),
-      o0_rows: ownedO0,
-      'G-10_active_owned_o0_is_zero': fallbackPhaseRan ? ownedO0 === 0 : 'not_evaluated',
-    };
+  // Reconciliation decides whether those counts are decision-grade at all.
+  const activeOwned = evaluateActiveOwned({
+    inputPresent: ownedInputPresent,
+    ownedIds,
+    expectedCount: expectedOwnedCount,
+    records,
+    fallbackPhaseRan,
+  });
+  if (activeOwned.scope !== 'evaluated') {
+    log(`Active-owned scope: NOT EVALUATED — ${activeOwned.reason}`);
+  }
 
   const gates = computeGates({
     records,
@@ -1378,7 +1523,9 @@ export async function main(argv) {
       missing_image_rows: gaps.length,
       control_pool_rows: controlPool.length,
       alias_pairs: aliasPairs.length,
-      active_owned_missing_ids: ownedIds.size,
+      active_owned_input_present: ownedInputPresent,
+      active_owned_missing_ids: ownedInputPresent ? ownedIds.size : null,
+      active_owned_expected_count: expectedOwnedCount,
       distinct_catalog_sets: catalogSetIds.length,
     },
     p1: {
@@ -1431,7 +1578,14 @@ export async function main(argv) {
         o0_rows: o0,
         o0_rate_pct: Number(o0Rate.toFixed(4)),
         o0_below_1pct: o0Rate < 1,
-        active_owned_o0_rows: activeOwned.available ? ownedO0 : null,
+        // Both mirror evaluateActiveOwned and are 'not_evaluated' whenever the
+        // owned scope did not reconcile. The active-owned gate is a
+        // NO-TOLERANCE gate, so it must never read as satisfied on a
+        // population that was only partially supplied.
+        active_owned_scope: activeOwned.scope,
+        active_owned_o0_rows: activeOwned.o0_rows,
+        'G-10_active_owned_o0_is_zero': activeOwned.o0_gate,
+        active_owned_weighting: activeOwned.weighting,
         // A non-PASS F2 validation already forces G-8/G-9 to not_evaluated, but
         // it is restated here because it independently bars the global O5
         // conclusion: rows demoted from F2 were never shown to be structurally

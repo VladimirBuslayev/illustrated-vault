@@ -233,7 +233,8 @@ ok(/NOT directly comparable at set level/i.test(sqlRaw),
 console.log('\n9. query coverage');
 
 for (const q of ['Q-A0', 'Q-A1', 'Q-A2', 'Q-A2b', 'Q-A3', 'Q-A4a', 'Q-A4b', 'Q-A4c',
-  'Q-A5a', 'Q-A5b', 'Q-A6a', 'Q-A6b', 'Q-A7a', 'Q-A7b', 'Q-A7c', 'Q-A8a', 'Q-A8b']) {
+  'Q-A5a', 'Q-A5b', 'Q-A6a', 'Q-A6b', 'Q-A7a', 'Q-A7b', 'Q-A7c', 'Q-A7d',
+  'Q-A8a', 'Q-A8b']) {
   ok(sqlRaw.includes(q), `${q} present`);
 }
 ok(/information_schema\.columns/i.test(code),
@@ -337,6 +338,26 @@ ok(/image_url is null or btrim\(e\.image_url\) = ''|e\.image_url is null or btri
   'Q-A7c is scoped to the missing-image population');
 ok(/card_identity_resolution/.test(qa7cCode),
   'Q-A7c resolves aliases exactly as production ownership does');
+
+// ── 9d-2. Q-A7d — independent reconciliation count ───────────────────────────
+console.log('\n9d-2. Q-A7d reconciliation count');
+
+const qa7d = section('Q-A7d', 'Q-A8a');
+ok(qa7d.length > 0, 'Q-A7d exists as its own statement');
+const qa7dCode = qa7d.replace(/--[^\n]*/g, '');
+ok(/as\s+owned_image_missing/i.test(qa7dCode),
+  'Q-A7d emits owned_image_missing');
+ok(!/user_id/i.test(qa7dCode), 'Q-A7d projects no user_id');
+ok(!/\bselect\s+e\.id\b/i.test(qa7dCode) && !/as\s+card_id/i.test(qa7dCode),
+  'Q-A7d emits a count, not a second id list');
+ok(/card_identity_resolution/.test(qa7dCode),
+  'Q-A7d resolves aliases the same way Q-A7c does, so the two are comparable');
+ok(/OPERATOR-ONLY|owned_expected_count_input\.csv/.test(qa7d),
+  'Q-A7d is labelled operator-only with its input filename');
+ok(/truncated/i.test(qa7d),
+  'Q-A7d states the truncation hazard it exists to catch');
+ok(/NO-TOLERANCE/i.test(qa7d),
+  'Q-A7d ties itself to the no-tolerance active-owned gate');
 
 // The gitignore rule is what makes "never committed" structural.
 const GITIGNORE = join(ROOT, '.gitignore');
@@ -474,6 +495,23 @@ ok(/committed evidence carries aggregate counts only/i.test(flatDoc),
   'spec limits committed owned evidence to aggregates');
 ok(/takes no owned-population argument/.test(flatDoc),
   'spec states the record builder cannot see the owned set');
+
+// Active-owned reconciliation must be load-bearing, with four distinct states.
+ok(/Reconciliation is load-bearing, not decorative/.test(flatDoc),
+  'spec states reconciliation is load-bearing');
+ok(/A reconciliation flag nobody acts on is worse than no flag/.test(flatDoc),
+  'spec records the defect the correction fixes');
+ok(/An absent input is an \*unmeasured\* scope/.test(flatDoc),
+  'spec distinguishes an absent input from a measured zero');
+ok(/never `true`, never `false`/.test(flatDoc),
+  'spec states a partial scope is neither a pass nor a fail');
+ok(/\*\*explicitly withheld\*\*/.test(flatDoc),
+  'spec states the O1/O3 weighting is withheld on a partial scope');
+ok(/Why Q-A7d exists/.test(flatDoc), 'spec explains Q-A7d');
+ok(/reconciles perfectly against itself/.test(flatDoc),
+  'spec explains why self-matching cannot detect truncation');
+ok(/fails closed to\s*`not_evaluated`|fails closed to `not_evaluated`/.test(flatDoc),
+  'spec states the scope fails closed without Q-A7d');
 
 // Celebrations remeasurement.
 ok(/Q-A2b — Celebrations, remeasurement only/.test(doc),

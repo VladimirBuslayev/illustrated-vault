@@ -381,7 +381,7 @@ audit must never emit, and the probe's `computeGates` is written so it cannot.
 | Scope | Rule |
 |---|---|
 | **Per-set conclusion** | `O0 = 0` **for that set**. No tolerance. |
-| **Active-owned missing-image conclusion** | `O0 = 0` across the active-owned missing-image population. No tolerance. Requires the Q-A7c linkage (§6.3). |
+| **Active-owned missing-image conclusion** | `O0 = 0` across the active-owned missing-image population. No tolerance. Requires the Q-A7c linkage **and** a reconciled Q-A7d expected count (§6.3). An unreconciled scope is `not_evaluated` — never a pass. |
 | **Global conclusion** | `O0 < 1%` of total missing rows **may be tolerated only if the worst-case sensitivity test (§6.2) proves the remaining indeterminate rows cannot change the selected roadmap outcome.** |
 
 A global `O0` rate below 1% is **not by itself a sufficient conclusion gate.**
@@ -435,9 +435,37 @@ information — so it is an **input**, never an artifact:
   harness asserts that structurally, against the exported evidence header and
   the record builder's own signature.
 
-If the two exports are taken at different times the id sets will not reconcile.
-The probe reports `reconciles: false` in that case and the active-owned figures
-must not be trusted.
+#### Reconciliation is load-bearing, not decorative
+
+A reconciliation flag nobody acts on is worse than no flag. The active-owned
+`O0 = 0` gate is a **no-tolerance** gate, so it must never read as satisfied on
+a population that was only partially supplied.
+
+Four states, and the first two are **not** the same thing:
+
+| State | Scope | `O0` gate | O1/O3 weighting |
+|---|---|---|---|
+| **Input absent** — the operator did not supply the file | `not_evaluated` | `not_evaluated` | withheld |
+| **Present, zero rows, expected count agrees** — no collector owns a missing-image card | `evaluated` | passes as a **measured zero** | decision-grade |
+| **Present, fully reconciled** | `evaluated` | computed | decision-grade |
+| **Present, partial** — count disagrees, expected count absent, or an id is missing from the evidence | `not_evaluated` | `not_evaluated` (never `true`, never `false`) | **explicitly withheld** |
+
+An absent input is an *unmeasured* scope. Reporting it as a zero would let the
+strictest gate in the audit pass on no evidence at all.
+
+#### Why Q-A7d exists
+
+Checking that every supplied id appears in the Q-A8a evidence proves only that
+the ids we were given are real. It **cannot detect a truncated export** — a file
+holding 3 of 114 owned ids reconciles perfectly against itself.
+
+**Q-A7d** emits one number, `owned_image_missing`, as an independent expected
+count. Reconciliation requires the supplied row count to equal it. Without
+Q-A7d, reconciliation is unestablished and the scope fails closed to
+`not_evaluated` — a truncated file must not be able to look valid.
+
+Q-A7d is a count, not a second id list: nothing needs to restate the
+population, only to size it. It is operator-only and gitignored like the rest.
 
 ---
 
@@ -710,6 +738,7 @@ Runs only if G-10 passes, at the scope G-10 permits.
 | **Q-A6b** | **Full 192-pair state export** — probe input | G-3 |
 | **Q-A7a/b** | Active-owned exposure, global and by set; counts only | G-2 |
 | **Q-A7c** | **Active-owned missing-image card ids** — operator-only probe input | G-10 |
+| **Q-A7d** | **Active-owned expected count** — independent reconciliation input, operator-only | G-10 |
 | **Q-A8a** | Missing-image row export — probe input | G-4 |
 | **Q-A8b** | P3-0 control candidate pool — probe input | G-7 |
 

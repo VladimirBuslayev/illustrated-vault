@@ -630,6 +630,118 @@ ok(/Widening the prepared pool is the correct next step/.test(flatP30),
 ok(!/Too few candidate ids exist in pokemontcg\.io/.test(codeOnly),
   'the old unscoped global-scarcity wording is gone');
 
+// ── 10j. Active-owned reconciliation is load-bearing ─────────────────────────
+console.log('\n10j. active-owned reconciliation');
+
+const ownedRec = (id, outcome = O.NOT_RECOVERABLE) => ({
+  id, tcgdex_state: T.PRESENT_NO_IMAGE, ptcgio_state: F.EXACT_ID_ABSENT,
+  alias_state: A.NOT_APPLICABLE, outcome, sensitivity_outcome: outcome,
+});
+const evidence3 = [ownedRec('a-1'), ownedRec('a-2'), ownedRec('a-3')];
+const ao = (o) => probe.evaluateActiveOwned({
+  records: evidence3, fallbackPhaseRan: true, ...o,
+});
+
+// (1) input absent -> not_evaluated, never a zero.
+const aoAbsent = ao({ inputPresent: false, ownedIds: new Set(), expectedCount: null });
+ok(aoAbsent.scope === 'not_evaluated', 'absent owned input -> scope not_evaluated');
+ok(aoAbsent.o0_gate === 'not_evaluated', 'absent owned input -> O0 gate not_evaluated, not true');
+ok(aoAbsent.weighting === 'withheld', 'absent owned input -> weighting withheld');
+ok(aoAbsent.o0_rows === null, 'absent owned input reports no O0 count');
+ok(/unmeasured, not zero/.test(aoAbsent.reason),
+  'the absent reason distinguishes unmeasured from zero');
+
+// (2) present with a legitimate zero, expected count agrees -> measured zero.
+const aoZero = ao({ inputPresent: true, ownedIds: new Set(), expectedCount: 0 });
+ok(aoZero.scope === 'evaluated', 'present-and-zero -> scope evaluated');
+ok(aoZero.reconciles === true, 'present-and-zero reconciles against an expected 0');
+ok(aoZero.o0_gate === true, 'present-and-zero -> O0 gate passes as a measured zero');
+ok(aoZero.weighting === 'decision_grade', 'present-and-zero -> weighting is decision-grade');
+ok(aoZero.o0_rows === 0, 'present-and-zero reports 0 O0 rows');
+ok(aoAbsent.scope !== aoZero.scope,
+  'an absent input and a legitimate zero are NOT the same state');
+
+// (3) present and fully reconciled -> evaluated.
+const aoFull = ao({
+  inputPresent: true, ownedIds: new Set(['a-1', 'a-2', 'a-3']), expectedCount: 3,
+});
+ok(aoFull.scope === 'evaluated', 'fully reconciled -> scope evaluated');
+ok(aoFull.reconciles === true, 'fully reconciled -> reconciles true');
+ok(aoFull.o0_gate === true, 'fully reconciled with no O0 rows -> gate passes');
+ok(aoFull.weighting === 'decision_grade', 'fully reconciled -> decision-grade weighting');
+ok(aoFull.owned_missing_rows_matched_in_evidence === 3, 'all three ids matched');
+ok(aoFull.outcome[O.NOT_RECOVERABLE] === 3, 'the owned outcome tally is computed');
+
+// A reconciled scope carrying an O0 row must FAIL the gate, not skip it.
+const aoWithO0 = probe.evaluateActiveOwned({
+  inputPresent: true, ownedIds: new Set(['a-1', 'a-2', 'a-3']), expectedCount: 3,
+  records: [ownedRec('a-1'), ownedRec('a-2'), ownedRec('a-3', O.INDETERMINATE)],
+  fallbackPhaseRan: true,
+});
+ok(aoWithO0.scope === 'evaluated' && aoWithO0.o0_gate === false,
+  'a reconciled scope with an O0 row fails the no-tolerance gate');
+ok(aoWithO0.o0_rows === 1, 'the owned O0 count is reported');
+
+// (4) present but only partially matched -> not_evaluated, weighting withheld.
+const aoPartial = ao({
+  inputPresent: true, ownedIds: new Set(['a-1', 'a-2', 'missing-9']), expectedCount: 3,
+});
+ok(aoPartial.scope === 'not_evaluated', 'partial match -> scope not_evaluated');
+ok(aoPartial.reconciles === false, 'partial match -> reconciles false');
+ok(aoPartial.o0_gate === 'not_evaluated',
+  'partial match -> O0 gate not_evaluated, never true and never false');
+ok(aoPartial.weighting === 'withheld', 'partial match -> O1/O3 weighting withheld');
+
+// Truncation: every supplied id matches, but there are fewer than Q-A7a said.
+const aoTruncated = ao({
+  inputPresent: true, ownedIds: new Set(['a-1', 'a-2']), expectedCount: 114,
+});
+ok(aoTruncated.scope === 'not_evaluated',
+  'a truncated export is caught by the independent expected count');
+ok(aoTruncated.o0_gate === 'not_evaluated', 'a truncated export cannot satisfy the O0 gate');
+ok(/truncated/.test(aoTruncated.reason), 'the truncation reason says so');
+
+// Expected count missing entirely -> cannot reconcile, fail closed.
+const aoNoExpected = ao({
+  inputPresent: true, ownedIds: new Set(['a-1', 'a-2', 'a-3']), expectedCount: null,
+});
+ok(aoNoExpected.scope === 'not_evaluated',
+  'without the expected count the scope fails closed');
+ok(aoNoExpected.o0_gate === 'not_evaluated',
+  'without the expected count the O0 gate is not_evaluated');
+ok(/truncated owned-id export cannot be detected/.test(aoNoExpected.reason),
+  'the reason explains why the expected count is required');
+
+// The gate is also withheld when the fallback phase never ran.
+const aoNoFallback = probe.evaluateActiveOwned({
+  inputPresent: true, ownedIds: new Set(['a-1', 'a-2', 'a-3']), expectedCount: 3,
+  records: evidence3, fallbackPhaseRan: false,
+});
+ok(aoNoFallback.o0_gate === 'not_evaluated',
+  'no fallback phase -> the owned O0 gate is not_evaluated even when reconciled');
+ok(aoNoFallback.weighting === 'withheld',
+  'no fallback phase -> weighting withheld even when reconciled');
+
+// Wiring: absent and empty must not be collapsed at the read site, and the
+// privacy contract survives all of it.
+ok(/const ownedInputPresent = ownedRows !== null/.test(codeOnly),
+  'the read site distinguishes an absent file from an empty one');
+ok(!/'owned_missing_ids_input\.csv', false\) \|\| \[\]/.test(codeOnly),
+  'the owned input is no longer collapsed with || []');
+ok(/owned_expected_count_input\.csv/.test(codeOnly),
+  'the expected-count input is read');
+ok(/evaluateActiveOwned\(\{/.test(codeOnly), 'main delegates to evaluateActiveOwned');
+ok(/'G-10_active_owned_o0_is_zero': activeOwned\.o0_gate/.test(codeOnly),
+  'the manifest gate value comes from evaluateActiveOwned, not a local recompute');
+ok(!/fallbackPhaseRan \? ownedO0 === 0 : 'not_evaluated'/.test(codeOnly),
+  'the old unconditional owned-gate computation is gone');
+// evaluateActiveOwned must never leak ids — it returns counts and tallies only.
+const aoKeys = Object.keys(aoFull);
+ok(!aoKeys.some(k => /ids$|card_id/i.test(k)),
+  'the active-owned result exposes no id list');
+ok(JSON.stringify(aoFull).indexOf('a-1') === -1,
+  'no owned card id appears anywhere in the active-owned result');
+
 // ── 11. CSV round-trip ───────────────────────────────────────────────────────
 console.log('\n11. CSV handling');
 
