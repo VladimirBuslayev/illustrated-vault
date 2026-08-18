@@ -359,6 +359,86 @@ export function sensitivityOutcome({ t, f, a, assetLiveness, outcome }) {
 }
 
 /**
+ * G-3 — the alias population must be COMPLETE and RESOLVED before any A state,
+ * P4 probe or O outcome is derived.
+ *
+ * ⚠ FAIL CLOSED. This is not a warning (it was, and that was a review defect).
+ *
+ *   With a partial population, every absent pair is indistinguishable from
+ *   "this canonical row has no approved alias" — it silently becomes A0. The
+ *   A dimension is then understated, O3 can be emitted from a population that
+ *   was never fully measured, and G-9 still reports complete because every row
+ *   does carry *an* A value. A quiet undercount that passes its own
+ *   completeness check is the worst possible failure shape for an audit.
+ *
+ *   A_UNRESOLVED is rejected for the same reason: it means the alias row names
+ *   a `cards` id that does not exist, so the pair's image comparison is
+ *   meaningless. alias_card_id has no FK to cards(id), so this is
+ *   schema-permitted and must be checked rather than assumed.
+ *
+ * Returns a verdict; the caller stops the run on `ok === false`.
+ */
+export function checkAliasPopulation(aliasPairs) {
+  const rows = Array.isArray(aliasPairs) ? aliasPairs : [];
+  const unresolved = rows.filter(p => p.alias_state === 'A_UNRESOLVED').length;
+  const unknownState = rows.filter(
+    p => p.alias_state !== 'A_UNRESOLVED' && !Object.values(A).includes(p.alias_state),
+  ).length;
+  const ok = rows.length === EXPECTED_ALIAS_PAIRS && unresolved === 0 && unknownState === 0;
+  return {
+    ok,
+    count: rows.length,
+    expected: EXPECTED_ALIAS_PAIRS,
+    unresolved,
+    unknown_state: unknownState,
+    reason: ok
+      ? null
+      : rows.length !== EXPECTED_ALIAS_PAIRS
+        ? `alias pair input holds ${rows.length}, expected exactly ${EXPECTED_ALIAS_PAIRS}`
+        : unresolved > 0
+          ? `${unresolved} pair(s) are A_UNRESOLVED — an alias row names a card id that does not exist`
+          : `${unknownState} pair(s) carry an unrecognized alias_state`,
+  };
+}
+
+/**
+ * F2 derivation validation — THREE states, not two.
+ *
+ * ⚠ An exhausted 5xx/429 is NOT confirmation (a review correction). The earlier
+ *   version marked the derivation unsound only on a 200, so a sample that never
+ *   resolved left every F2 row reported as structurally unreachable on the
+ *   strength of evidence that was never obtained.
+ *
+ *   PASS          every sampled id returned a definitive 404/410
+ *   UNSOUND       any sampled id returned 200 — the derivation is wrong
+ *   INDETERMINATE any sampled id never resolved — the derivation is untested
+ *   NOT_REQUIRED  there were no F2 rows to validate
+ *
+ * Only PASS permits F2 to stand. Both other outcomes demote every F2 row to
+ * indeterminate and block the F2-dependent gates.
+ */
+export function classifyF2Validation(sampleResults, f2RowCount) {
+  if (f2RowCount === 0) return { status: 'NOT_REQUIRED', sampled: 0 };
+  const results = sampleResults || [];
+  if (results.length === 0) return { status: 'INDETERMINATE', sampled: 0, reason: 'no_sample_taken' };
+  if (results.some(r => r.kind === 'ok')) {
+    return {
+      status: 'UNSOUND',
+      sampled: results.length,
+      reason: 'a namespace-unreachable id resolved with 200',
+    };
+  }
+  if (results.some(r => r.kind === 'indeterminate')) {
+    return {
+      status: 'INDETERMINATE',
+      sampled: results.length,
+      reason: 'a sampled id never resolved — the derivation is untested, not confirmed',
+    };
+  }
+  return { status: 'PASS', sampled: results.length };
+}
+
+/**
  * P4 asset-liveness classification.
  *
  * ASSET_LIVE requires ALL THREE of: a 2xx, an image/* content type, and a
@@ -746,34 +826,78 @@ async function runP30(controlPool, ptcgioSetIds, log) {
   const reachable = controlPool.filter(r => ptcgioSetIds.has(r.set_id));
   log(`P3-0 — pool ${controlPool.length}; verbatim-reachable ${reachable.length}`);
 
-  // Stage 1 — qualification. Stratify the candidate draw across the
-  // release-ordered pool so qualification itself samples every era.
-  const candidates = stratifiedSample(reachable, P30_QUALIFY_CANDIDATES);
-  log(`P3-0 stage 1 — qualifying ${candidates.length} candidates`);
+  // ── Stage 1 — qualification ────────────────────────────────────────────────
+  // First pass: a stratified draw across the release-ordered pool, so
+  // qualification itself samples every era rather than whichever end comes
+  // first.
+  //
+  // ⚠ SCARCITY MAY NOT BE INFERRED FROM THE FIRST PASS (a review correction).
+  //   If the stratified 120 do not yield 20 qualified controls, the run
+  //   CONTINUES deterministically through the remaining prepared pool before
+  //   concluding anything. Stopping at 120 would let one unlucky stratum decide
+  //   that the fallback provider has almost no overlap with our catalog, when
+  //   the prepared pool may hold hundreds of untried candidates.
+  const firstPass = stratifiedSample(reachable, P30_QUALIFY_CANDIDATES);
+  const firstPassIds = new Set(firstPass.map(r => r.id));
+  // Pool order is Q-A8b's order (release date, set, id) — deterministic, so a
+  // re-run tries the same candidates in the same sequence.
+  const secondPass = reachable.filter(r => !firstPassIds.has(r.id));
 
   const qualified = [];
   const qualification = [];
-  for (const r of candidates) {
+  let exhaustedPool = false;
+
+  const tryCandidates = async (list, passName) => {
+    for (const r of list) {
+      if (qualified.length >= P30_CONTROL_COUNT) return;
+      const v = await probePtcgio(r);
+      const isQualified = v.f === F.EXACT_VERIFIED || v.f === F.VERIFIED_NO_IMAGE;
+      qualification.push({ id: r.id, set_id: r.set_id, f: v.f, qualified: isQualified, pass: passName });
+      if (isQualified) qualified.push(r);
+    }
+  };
+
+  log(`P3-0 stage 1 — first pass over ${firstPass.length} stratified candidates`);
+  // The first pass is probed in full even once 20 qualify, so the qualified set
+  // stays spread across eras rather than collapsing onto the first stratum.
+  for (const r of firstPass) {
     const v = await probePtcgio(r);
     const isQualified = v.f === F.EXACT_VERIFIED || v.f === F.VERIFIED_NO_IMAGE;
-    qualification.push({ id: r.id, set_id: r.set_id, f: v.f, qualified: isQualified });
+    qualification.push({ id: r.id, set_id: r.set_id, f: v.f, qualified: isQualified, pass: 'stratified' });
     if (isQualified) qualified.push(r);
-    if (qualified.length >= P30_QUALIFY_CANDIDATES) break;
   }
-  log(`P3-0 stage 1 — qualified ${qualified.length} of ${candidates.length}`);
+  log(`P3-0 stage 1 — first pass qualified ${qualified.length}`);
+
+  if (qualified.length < P30_CONTROL_COUNT && secondPass.length > 0) {
+    log(`P3-0 stage 1 — continuing through ${secondPass.length} remaining prepared candidates`);
+    await tryCandidates(secondPass, 'continuation');
+    exhaustedPool = qualified.length < P30_CONTROL_COUNT;
+  } else if (qualified.length < P30_CONTROL_COUNT) {
+    exhaustedPool = true;
+  }
+  log(`P3-0 stage 1 — qualified ${qualified.length} of ${qualification.length} probed`);
 
   if (qualified.length < P30_CONTROL_COUNT) {
     return {
       qualification,
       qualified_count: qualified.length,
+      prepared_pool_size: reachable.length,
+      prepared_pool_exhausted: exhaustedPool,
       selected: 0,
       distinct_sets: 0,
       results: [],
       gate: {
         passed: false,
-        reason: `only ${qualified.length} qualified controls; ${P30_CONTROL_COUNT} required. `
-          + 'Too few candidate ids exist in pokemontcg.io under their own catalog id to '
-          + 'measure reliability at all — which is itself a finding about provider-ID overlap.',
+        // ⚠ WORDING IS SCOPED TO THE PREPARED POOL ON PURPOSE. Q-A8b samples at
+        //   most two cards per set, so this says nothing about how many
+        //   exact-ID cards exist globally, and must never be paraphrased as if
+        //   it did.
+        reason: `only ${qualified.length} of ${qualification.length} probed candidates qualified, `
+          + `from a prepared pool of ${reachable.length}; ${P30_CONTROL_COUNT} required. `
+          + 'This is scoped to the Q-A8b prepared control pool, which itself samples at most '
+          + 'two cards per set — it is NOT a measurement of how many catalog ids exist in '
+          + 'pokemontcg.io overall, and must not be reported as one. Widening the prepared '
+          + 'pool is the correct next step before drawing any provider-overlap conclusion.',
       },
     };
   }
@@ -835,31 +959,35 @@ async function runP3(rows, tByRow, ptcgioSetIds, log) {
 
   // ── F2 derivation validation ───────────────────────────────────────────────
   // F2 is DERIVED from the set inventory rather than probed, so the derivation
-  // itself is tested. A single 200 here means the derivation is unsound, and
-  // every F2 row is demoted to indeterminate rather than reported as a
-  // structural unreachability we did not actually establish.
+  // itself is tested against a sample. Three outcomes, not two — see
+  // classifyF2Validation. Only PASS lets F2 stand.
   const sample = [];
   if (f2Rows.length > 0) {
     const step = Math.max(1, Math.floor(f2Rows.length / 25));
     for (let i = 0; i < f2Rows.length && sample.length < 25; i += step) sample.push(f2Rows[i]);
   }
-  let f2Unsound = false;
   const f2Validation = [];
   for (const row of sample) {
     const res = await httpGet(`${PTCGIO_BASE}/cards/${encodeIdSegment(row.id).value}`);
     f2Validation.push({ id: row.id, set_id: row.set_id, kind: res.kind, status: res.status ?? null });
-    if (res.kind === 'ok') f2Unsound = true;
   }
-  if (f2Unsound) {
-    log('P3 — ⚠ F2 derivation UNSOUND: a namespace-unreachable id resolved. Demoting all F2 to indeterminate.');
+
+  const f2Verdict = classifyF2Validation(f2Validation, f2Rows.length);
+  if (f2Verdict.status === 'UNSOUND' || f2Verdict.status === 'INDETERMINATE') {
+    // Demote every F2 row. An UNSOUND derivation misclassified them; an
+    // INDETERMINATE one never established anything about them. Neither state
+    // may be reported as structural unreachability.
+    const reason = f2Verdict.status === 'UNSOUND'
+      ? 'f2_derivation_unsound'
+      : 'f2_validation_indeterminate';
+    log(`P3 — ⚠ F2 validation ${f2Verdict.status} (${f2Verdict.reason}). `
+      + `Demoting all ${f2Rows.length} F2 rows to indeterminate.`);
     for (const row of f2Rows) {
-      out.set(row.id, {
-        f: F.INDETERMINATE, reason: 'f2_derivation_unsound', checks: null, status: null,
-      });
+      out.set(row.id, { f: F.INDETERMINATE, reason, checks: null, status: null });
     }
   }
 
-  return { fByRow: out, f2Validation, f2Unsound, f2Count: f2Rows.length };
+  return { fByRow: out, f2Validation, f2Verdict, f2Count: f2Rows.length };
 }
 
 /**
@@ -985,7 +1113,9 @@ export function buildEvidenceRecord({ row, t, fRec, a, assetLiveness, fallbackPh
  *     the gate was not tested, which is different from having been tested and
  *     failed.
  */
-export function computeGates({ records, expectedRows, setStates, p30, fallbackPhaseRan, aliasPairs }) {
+export function computeGates({
+  records, expectedRows, setStates, p30, fallbackPhaseRan, aliasPairs, f2Verdict,
+}) {
   const NOT_EVALUATED = 'not_evaluated';
 
   const allSetsResolved = [...setStates.values()].every(s => s.state !== 'SET_INDETERMINATE');
@@ -994,28 +1124,49 @@ export function computeGates({ records, expectedRows, setStates, p30, fallbackPh
   const aValues = new Set(Object.values(A));
   const oValues = new Set(Object.values(O));
 
+  const aliasCheck = checkAliasPopulation(aliasPairs);
+
   const everyRowHasT = records.length === expectedRows
     && records.every(r => tValues.has(r.tcgdex_state));
 
+  // The F2 derivation gates G-8/G-9 as well.
+  //
+  // If the F2 sample never resolved, the derivation is untested and the rows it
+  // covers are demoted to indeterminate. Relying on the G-10 O0 threshold alone
+  // would not be enough: a SMALL F2 population could demote quietly, stay under
+  // 1%, survive the sensitivity test, and let a global conclusion rest on a
+  // derivation nobody validated. So a non-PASS verdict blocks the completeness
+  // gates outright. The same applies to UNSOUND — a broken derivation is a
+  // redesign trigger, not something to average away.
+  const f2Status = f2Verdict ? f2Verdict.status : null;
+  const f2Blocks = f2Status === 'UNSOUND' || f2Status === 'INDETERMINATE';
+
   const g8 = !fallbackPhaseRan
     ? NOT_EVALUATED
-    : records.every(r => fValues.has(r.ptcgio_state));
+    : f2Blocks
+      ? NOT_EVALUATED
+      : records.every(r => fValues.has(r.ptcgio_state));
 
   const g9 = !fallbackPhaseRan
     ? NOT_EVALUATED
-    : (records.length === expectedRows
-      && everyRowHasT
-      && records.every(r => fValues.has(r.ptcgio_state))
-      && records.every(r => aValues.has(r.alias_state))
-      && records.every(r => oValues.has(r.outcome)));
+    : f2Blocks
+      ? NOT_EVALUATED
+      : (records.length === expectedRows
+        && everyRowHasT
+        && aliasCheck.ok
+        && records.every(r => fValues.has(r.ptcgio_state))
+        && records.every(r => aValues.has(r.alias_state))
+        && records.every(r => oValues.has(r.outcome)));
 
   return {
-    'G-3_alias_pairs_complete': aliasPairs.length === EXPECTED_ALIAS_PAIRS,
-    'G-3_alias_pairs_seen': aliasPairs.length,
+    'G-3_alias_population_complete': aliasCheck.ok,
+    'G-3_alias_pairs_seen': aliasCheck.count,
+    'G-3_alias_unresolved': aliasCheck.unresolved,
     'G-5_all_sets_resolved': allSetsResolved,
     'G-6_all_rows_have_T': everyRowHasT,
     'G-7_ptcgio_reliability': p30 ? p30.gate.passed : NOT_EVALUATED,
     'G-8_fallback_assigned': g8,
+    'G-8_f2_validation': f2Status || NOT_EVALUATED,
     'G-9_completeness': g9,
   };
 }
@@ -1033,7 +1184,9 @@ export async function main(argv) {
   const startedAt = new Date().toISOString();
   const gaps = readInput(args.input, 'image_gaps_input.csv', true);
   const controlPool = readInput(args.input, 'p3_control_pool_input.csv', false) || [];
-  const aliasPairs = readInput(args.input, 'alias_pairs_input.csv', false) || [];
+  // REQUIRED. G-3 hard-stops below on a partial or unresolved population, so an
+  // absent file must not be silently tolerated as "zero pairs".
+  const aliasPairs = readInput(args.input, 'alias_pairs_input.csv', true);
   // OPERATOR-ONLY. Never written to any artifact; used for aggregates only.
   const ownedRows = readInput(args.input, 'owned_missing_ids_input.csv', false) || [];
   const ownedIds = new Set(ownedRows.map(r => r.card_id).filter(Boolean));
@@ -1041,9 +1194,39 @@ export async function main(argv) {
   log(`Input — missing-image rows: ${gaps.length}; control pool: ${controlPool.length}; `
     + `alias pairs: ${aliasPairs.length}; active-owned missing ids: ${ownedIds.size}`);
 
-  if (aliasPairs.length !== EXPECTED_ALIAS_PAIRS) {
-    log(`⚠ G-3 — alias pair input holds ${aliasPairs.length}, expected ${EXPECTED_ALIAS_PAIRS}. `
-      + 'The A dimension will be reported as PARTIAL and O3 must be withheld.');
+  // ── G-3 — HARD STOP ────────────────────────────────────────────────────────
+  // Placed before P4, P3-0, P3 and every O derivation. Nothing downstream may
+  // run against a partial or unresolved alias population; see
+  // checkAliasPopulation for why a warning was not sufficient.
+  const aliasCheck = checkAliasPopulation(aliasPairs);
+  if (!aliasCheck.ok) {
+    writeFileSync(
+      join(args.out, 'probe_manifest.json'),
+      `${JSON.stringify({
+        audit: 'CAT-3A — Image Coverage & Recoverability Audit',
+        probe_version: 3,
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+        halted_at: 'G-3',
+        gates: {
+          'G-3_alias_population_complete': false,
+          'G-3_alias_pairs_seen': aliasCheck.count,
+          'G-3_alias_unresolved': aliasCheck.unresolved,
+          'G-5_all_sets_resolved': 'not_evaluated',
+          'G-6_all_rows_have_T': 'not_evaluated',
+          'G-7_ptcgio_reliability': 'not_evaluated',
+          'G-8_fallback_assigned': 'not_evaluated',
+          'G-9_completeness': 'not_evaluated',
+        },
+        reason: aliasCheck.reason,
+        note: 'No A state, P4 probe or O outcome was derived. Re-export Q-A6b and re-run.',
+      }, null, 2)}\n`,
+    );
+    console.error(`G-3 FAILED — ${aliasCheck.reason}`);
+    console.error('Halting before P4/P3/O derivation. No outcome may be derived from a '
+      + 'partial or unresolved alias population.');
+    process.exitCode = 1;
+    return;
   }
 
   const catalogSetIds = [...new Set(gaps.map(r => r.set_id))].sort();
@@ -1176,12 +1359,18 @@ export async function main(argv) {
     };
 
   const gates = computeGates({
-    records, expectedRows: gaps.length, setStates: p1.setStates, p30, fallbackPhaseRan, aliasPairs,
+    records,
+    expectedRows: gaps.length,
+    setStates: p1.setStates,
+    p30,
+    fallbackPhaseRan,
+    aliasPairs,
+    f2Verdict: p3 ? p3.f2Verdict : null,
   });
 
   const manifest = {
     audit: 'CAT-3A — Image Coverage & Recoverability Audit',
-    probe_version: 2,
+    probe_version: 3,
     started_at: startedAt,
     completed_at: new Date().toISOString(),
     keyless: true,
@@ -1211,7 +1400,9 @@ export async function main(argv) {
       ? {
         f2_derived_rows: p3.f2Count,
         f2_validation_sample: p3.f2Validation.length,
-        f2_derivation_unsound: p3.f2Unsound,
+        f2_validation: p3.f2Verdict,
+        f2_demoted_to_indeterminate:
+          p3.f2Verdict.status === 'UNSOUND' || p3.f2Verdict.status === 'INDETERMINATE',
       }
       : null,
     p4: {
@@ -1241,6 +1432,12 @@ export async function main(argv) {
         o0_rate_pct: Number(o0Rate.toFixed(4)),
         o0_below_1pct: o0Rate < 1,
         active_owned_o0_rows: activeOwned.available ? ownedO0 : null,
+        // A non-PASS F2 validation already forces G-8/G-9 to not_evaluated, but
+        // it is restated here because it independently bars the global O5
+        // conclusion: rows demoted from F2 were never shown to be structurally
+        // unreachable.
+        f2_validation_blocks_global_o5:
+          Boolean(p3 && (p3.f2Verdict.status === 'UNSOUND' || p3.f2Verdict.status === 'INDETERMINATE')),
         note: 'A global rate below 1% is NOT sufficient on its own. The worst-case '
           + 'sensitivity tally must show the selected decision path is unchanged, and the '
           + 'per-set and active-owned scopes require O0 = 0 with no tolerance. See spec §6.1/§6.2.',

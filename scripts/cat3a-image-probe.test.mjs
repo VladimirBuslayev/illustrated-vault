@@ -417,12 +417,15 @@ const okRecord = (over = {}) => ({
   alias_state: A.NOT_APPLICABLE, outcome: O.NOT_RECOVERABLE, ...over,
 });
 const setStatesOk = new Map([['x', { state: 'SET_PRESENT' }]]);
-const pairs192 = Array.from({ length: 192 }, (_, i) => ({ canonical_card_id: `c-${i}` }));
+// The fixture carries a valid alias_state: G-3 now validates state as well as
+// count, so a stateless pair would fail for the wrong reason.
+const pairs192 = Array.from({ length: 192 },
+  (_, i) => ({ canonical_card_id: `c-${i}`, alias_state: A.NEITHER }));
 
 const gatesFailPath = probe.computeGates({
   records: [okRecord({ ptcgio_state: '', outcome: '' })],
   expectedRows: 1, setStates: setStatesOk,
-  p30: { gate: { passed: false } }, fallbackPhaseRan: false, aliasPairs: pairs192,
+  p30: { gate: { passed: false } }, fallbackPhaseRan: false, aliasPairs: pairs192, f2Verdict: null,
 });
 ok(gatesFailPath['G-7_ptcgio_reliability'] === false, 'G-7 reports the failure');
 ok(gatesFailPath['G-8_fallback_assigned'] === 'not_evaluated',
@@ -435,7 +438,7 @@ ok(gatesFailPath['G-6_all_rows_have_T'] === true,
 const gatesNoP30 = probe.computeGates({
   records: [okRecord({ ptcgio_state: '', outcome: '' })],
   expectedRows: 1, setStates: setStatesOk,
-  p30: null, fallbackPhaseRan: false, aliasPairs: pairs192,
+  p30: null, fallbackPhaseRan: false, aliasPairs: pairs192, f2Verdict: null,
 });
 ok(gatesNoP30['G-7_ptcgio_reliability'] === 'not_evaluated',
   'an unrun P3-0 is not_evaluated, not false');
@@ -443,7 +446,7 @@ ok(gatesNoP30['G-9_completeness'] !== true, 'G-9 is never true without the fallb
 
 const gatesHappy = probe.computeGates({
   records: [okRecord()], expectedRows: 1, setStates: setStatesOk,
-  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192,
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192, f2Verdict: { status: 'PASS' },
 });
 ok(gatesHappy['G-8_fallback_assigned'] === true, 'G-8 passes on a complete run');
 ok(gatesHappy['G-9_completeness'] === true, 'G-9 passes on a complete run');
@@ -451,13 +454,13 @@ ok(gatesHappy['G-9_completeness'] === true, 'G-9 passes on a complete run');
 // G-9 must fail on a genuinely incomplete run, not merely on a G-7 stop.
 const gatesShort = probe.computeGates({
   records: [okRecord()], expectedRows: 2, setStates: setStatesOk,
-  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192,
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192, f2Verdict: { status: 'PASS' },
 });
 ok(gatesShort['G-9_completeness'] === false, 'G-9 fails when totals do not reconcile');
 
 const gatesBadO = probe.computeGates({
   records: [okRecord({ outcome: 'garbage' })], expectedRows: 1, setStates: setStatesOk,
-  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192,
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192, f2Verdict: { status: 'PASS' },
 });
 ok(gatesBadO['G-9_completeness'] === false, 'G-9 fails when a row carries no valid O');
 
@@ -465,12 +468,12 @@ ok(gatesBadO['G-9_completeness'] === false, 'G-9 fails when a row carries no val
 console.log('\n10e. G-3 alias population');
 
 ok(probe.EXPECTED_ALIAS_PAIRS === 192, 'the expected alias population is 192');
-ok(gatesHappy['G-3_alias_pairs_complete'] === true, 'G-3 passes at exactly 192 pairs');
+ok(gatesHappy['G-3_alias_population_complete'] === true, 'G-3 passes at exactly 192 pairs');
 const gates191 = probe.computeGates({
   records: [okRecord()], expectedRows: 1, setStates: setStatesOk,
-  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192.slice(0, 191),
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192.slice(0, 191), f2Verdict: { status: 'PASS' },
 });
-ok(gates191['G-3_alias_pairs_complete'] === false, 'G-3 fails at 191 pairs');
+ok(gates191['G-3_alias_population_complete'] === false, 'G-3 fails at 191 pairs');
 ok(gates191['G-3_alias_pairs_seen'] === 191, 'G-3 reports the observed count');
 ok(/alias_pairs_input\.csv/.test(codeOnly) && !/a2_alias_assets_input/.test(codeOnly),
   'the probe ingests the FULL pair export, not an A2-only file');
@@ -508,6 +511,124 @@ ok(ownedUses >= 2 && !/toCsv\([^)]*owned/i.test(codeOnly),
   'the owned id set is never passed to a CSV writer');
 ok(/active_owned/.test(codeOnly) && /G-10_active_owned_o0_is_zero/.test(codeOnly),
   'the active-owned O0 = 0 gate input is computed');
+
+// ── 10g. G-3 hard-stops a partial or unresolved alias population ─────────────
+console.log('\n10g. G-3 hard stop');
+
+const mkPairs = (n, state = A.NEITHER) =>
+  Array.from({ length: n }, (_, i) => ({ canonical_card_id: `c-${i}`, alias_state: state }));
+
+ok(probe.checkAliasPopulation(mkPairs(192)).ok === true, '192 clean pairs pass G-3');
+ok(probe.checkAliasPopulation(mkPairs(191)).ok === false, '191 pairs fail G-3');
+ok(probe.checkAliasPopulation(mkPairs(193)).ok === false, '193 pairs fail G-3');
+ok(probe.checkAliasPopulation([]).ok === false, 'an empty population fails G-3');
+ok(probe.checkAliasPopulation(null).ok === false, 'a missing population fails G-3');
+ok(/expected exactly 192/.test(probe.checkAliasPopulation(mkPairs(191)).reason),
+  'the G-3 failure reason names the expected count');
+
+// A_UNRESOLVED must be rejected even at a full 192.
+const withUnresolved = mkPairs(191).concat([{ canonical_card_id: 'c-x', alias_state: 'A_UNRESOLVED' }]);
+ok(withUnresolved.length === 192, 'the unresolved fixture is a full population');
+ok(probe.checkAliasPopulation(withUnresolved).ok === false,
+  'a single A_UNRESOLVED pair fails G-3 even at a full 192');
+ok(probe.checkAliasPopulation(withUnresolved).unresolved === 1,
+  'the unresolved count is reported');
+ok(/names a card id that does not exist/.test(probe.checkAliasPopulation(withUnresolved).reason),
+  'the unresolved reason explains the schema hazard');
+const withGarbage = mkPairs(191).concat([{ canonical_card_id: 'c-y', alias_state: 'nonsense' }]);
+ok(probe.checkAliasPopulation(withGarbage).ok === false, 'an unrecognized alias_state fails G-3');
+
+// A partial population must not be able to produce O3 or pass completeness.
+const gatesPartial = probe.computeGates({
+  records: [okRecord({ alias_state: A.ALIAS_ONLY, outcome: O.ALIAS_CANDIDATE })],
+  expectedRows: 1, setStates: setStatesOk, p30: { gate: { passed: true } },
+  fallbackPhaseRan: true, aliasPairs: mkPairs(191), f2Verdict: { status: 'PASS' },
+});
+ok(gatesPartial['G-3_alias_population_complete'] === false, 'G-3 reports false at 191 pairs');
+ok(gatesPartial['G-9_completeness'] === false,
+  'G-9 cannot pass while the alias population is partial — even with every row classified');
+
+// Structural: the hard stop precedes P4, P3-0 and P3 in main().
+const g3Idx = codeOnly.indexOf('checkAliasPopulation(aliasPairs)');
+const p4CallIdx = codeOnly.indexOf('await runP4(');
+const p30CallIdx = codeOnly.indexOf('await runP30(');
+ok(g3Idx !== -1 && p4CallIdx > g3Idx, 'the G-3 check precedes P4');
+ok(g3Idx !== -1 && p30CallIdx > g3Idx, 'the G-3 check precedes P3-0');
+ok(/process\.exitCode = 1;[\s\S]{0,40}return;/.test(codeOnly.slice(g3Idx, p4CallIdx)),
+  'a failed G-3 returns from main rather than continuing');
+ok(/halted_at: 'G-3'/.test(codeOnly), 'a G-3 halt is recorded in the manifest');
+ok(/'alias_pairs_input\.csv', true/.test(codeOnly),
+  'the alias pair export is a REQUIRED input, not an optional one');
+
+// ── 10h. F2 validation has three states ──────────────────────────────────────
+console.log('\n10h. F2 validation');
+
+const f2 = (results, count = 100) => probe.classifyF2Validation(results, count).status;
+ok(f2([{ kind: 'absent' }, { kind: 'absent' }]) === 'PASS', 'all-404 sample -> PASS');
+ok(f2([{ kind: 'absent' }, { kind: 'ok' }]) === 'UNSOUND', 'any 200 -> UNSOUND');
+ok(f2([{ kind: 'absent' }, { kind: 'indeterminate' }]) === 'INDETERMINATE',
+  'any unresolved -> INDETERMINATE, never PASS');
+ok(f2([{ kind: 'indeterminate' }, { kind: 'ok' }]) === 'UNSOUND',
+  'a 200 outranks an indeterminate — the derivation is definitively wrong');
+ok(probe.classifyF2Validation([], 0).status === 'NOT_REQUIRED', 'no F2 rows -> NOT_REQUIRED');
+ok(f2([], 100) === 'INDETERMINATE',
+  'F2 rows with no sample taken -> INDETERMINATE, never PASS');
+ok(/untested, not confirmed/.test(probe.classifyF2Validation([{ kind: 'indeterminate' }], 5).reason),
+  'the indeterminate reason states the derivation is untested rather than confirmed');
+
+// A non-PASS F2 verdict must block G-8/G-9 regardless of row completeness.
+for (const status of ['UNSOUND', 'INDETERMINATE']) {
+  const g = probe.computeGates({
+    records: [okRecord()], expectedRows: 1, setStates: setStatesOk,
+    p30: { gate: { passed: true } }, fallbackPhaseRan: true,
+    aliasPairs: mkPairs(192), f2Verdict: { status },
+  });
+  ok(g['G-8_fallback_assigned'] === 'not_evaluated', `F2 ${status} makes G-8 not_evaluated`);
+  ok(g['G-9_completeness'] === 'not_evaluated', `F2 ${status} makes G-9 not_evaluated`);
+  ok(g['G-8_f2_validation'] === status, `the F2 verdict ${status} is surfaced`);
+}
+const gPass = probe.computeGates({
+  records: [okRecord()], expectedRows: 1, setStates: setStatesOk,
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true,
+  aliasPairs: mkPairs(192), f2Verdict: { status: 'PASS' },
+});
+ok(gPass['G-8_fallback_assigned'] === true && gPass['G-9_completeness'] === true,
+  'a PASS F2 verdict lets the completeness gates pass');
+
+// The demotion must cover BOTH non-PASS states, not just UNSOUND.
+ok(/f2Verdict\.status === 'UNSOUND' \|\| f2Verdict\.status === 'INDETERMINATE'/.test(codeOnly),
+  'both non-PASS verdicts demote the F2 rows');
+ok(/f2_validation_indeterminate/.test(codeOnly),
+  'an indeterminate validation has its own demotion reason');
+ok(!/f2Unsound = true/.test(codeOnly), 'the old two-state F2 check is gone');
+
+// ── 10i. P3-0 must exhaust the prepared pool before claiming scarcity ────────
+console.log('\n10i. P3-0 pool exhaustion');
+
+const p30Src = codeOnly.slice(codeOnly.indexOf('async function runP30'),
+  codeOnly.indexOf('async function runP3('));
+ok(p30Src.length > 0, 'the P3-0 implementation was located');
+ok(/const secondPass = reachable\.filter/.test(p30Src),
+  'a continuation pass over the remaining prepared pool exists');
+ok(/continuing through/.test(p30Src), 'the continuation pass is logged');
+ok(/prepared_pool_exhausted/.test(p30Src),
+  'the result records whether the prepared pool was exhausted');
+ok(/prepared_pool_size/.test(p30Src), 'the result records the prepared pool size');
+
+// Rejoin adjacent string-literal concatenations before matching, so a phrase
+// that happens to straddle a `' + '` seam in the source still reads as one
+// sentence. Without this the assertions would depend on line wrapping.
+const flatP30 = p30Src.replace(/'\s*\+\s*'/g, '').replace(/\s+/g, ' ');
+ok(/scoped to the Q-A8b prepared control pool/.test(flatP30),
+  'the insufficient-qualification reason is scoped to the prepared pool');
+ok(/NOT a measurement of how many catalog ids exist in pokemontcg\.io overall/.test(flatP30),
+  'the reason explicitly disclaims a global provider-overlap measurement');
+ok(/samples at most two cards per set/.test(flatP30),
+  'the reason names the two-per-set sampling limit that causes the scoping');
+ok(/Widening the prepared pool is the correct next step/.test(flatP30),
+  'the reason names widening the pool as the next step');
+ok(!/Too few candidate ids exist in pokemontcg\.io/.test(codeOnly),
+  'the old unscoped global-scarcity wording is gone');
 
 // ── 11. CSV round-trip ───────────────────────────────────────────────────────
 console.log('\n11. CSV handling');

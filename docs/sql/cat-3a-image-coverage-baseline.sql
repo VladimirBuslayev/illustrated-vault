@@ -152,6 +152,26 @@ select
      from public.card_identity_resolution r
     where not exists (select 1 from public.cards_effective e where e.id = r.canonical_card_id))
                                                                    as alias_targets_not_effective,
+  -- ⚠ AND EVERY ALIAS SOURCE — deliberately NOT symmetric with the target
+  -- checks above, because the schema is not symmetric either.
+  --
+  -- card_identity_aliases.canonical_card_id carries an FK to cards(id);
+  -- alias_card_id DOES NOT (cat-2d1-1-dark-alias-foundation.sql §1). An alias
+  -- row can therefore name a SOURCE id with no corresponding `cards` row, and
+  -- nothing in the schema prevents it.
+  --
+  -- That matters because the A dimension compares both sides of each pair. A
+  -- missing source row yields a null image_url on the alias side, which reads
+  -- as "the alias has no image" (A3/A4) when the truth is "there is no alias
+  -- row to read". Those states are not interchangeable, and the difference is
+  -- invisible in the output unless it is measured here.
+  --
+  -- Expected 0. Any non-zero value invalidates the A dimension and STOPs the
+  -- audit at G-1, before Q-A6 is trusted.
+  (select count(*)
+     from public.card_identity_resolution r
+    where not exists (select 1 from public.cards c where c.id = r.alias_card_id))
+                                                                   as alias_sources_missing_from_cards,
   now()                                                            as captured_at;
 
 
@@ -579,14 +599,39 @@ order by alias_state;
 --
 -- Public catalog data only. No user data, no UUIDs.
 --
--- Expected: exactly 192 rows. G-3 validates that count explicitly.
+-- Expected: exactly 192 rows, and ZERO carrying A_UNRESOLVED.
+--
+-- G-3 validates both, and the probe HARD-STOPS on either failure. It does not
+-- proceed on a partial or unresolved alias population: doing so would silently
+-- treat every absent pair as A0, understate the A dimension, and still let the
+-- completeness gate pass. A partial A population means O3 is withheld and no
+-- outcome is derived at all.
 --
 -- Operator: save as docs/cat-3a-evidence/inputs/alias_pairs_input.csv
+
+-- ⚠ UNRESOLVED DETECTION USES JOINED-ROW EXISTENCE, NOT THE ALIAS ROW'S OWN
+--   COLUMNS. This was a review correction and it is load-bearing.
+--
+--   r.alias_card_id and r.canonical_card_id come from card_identity_resolution.
+--   alias_card_id is that table's PRIMARY KEY, so it is never null — testing it
+--   for null proves nothing at all and would report every pair as resolved.
+--   What must be proven is that the JOINED `cards` rows exist, which is
+--   a.id / c.id after the LEFT JOIN.
+--
+--   This matters more on the alias side than the canonical side:
+--   canonical_card_id carries an FK to cards(id); alias_card_id DOES NOT
+--   (cat-2d1-1-dark-alias-foundation.sql §1). A missing alias row is therefore
+--   schema-permitted, and it would surface as a null alias_image_url —
+--   indistinguishable from a genuine A3/A4 unless existence is carried
+--   explicitly. Q-A0's alias_sources_missing_from_cards is the population-level
+--   version of the same check.
 
 with pairs as (
   select
     r.alias_card_id,
     r.canonical_card_id,
+    (a.id is not null)                                             as alias_row_exists,
+    (c.id is not null)                                             as canonical_row_exists,
     a.image_url                                                    as alias_image_url,
     c.image_url                                                    as canonical_image_url,
     c.set_id                                                       as canonical_set_id,
@@ -600,12 +645,14 @@ with pairs as (
 select
   alias_card_id,
   canonical_card_id,
+  alias_row_exists,
+  canonical_row_exists,
   canonical_set_id,
   canonical_set_name,
   canonical_local_id,
   canonical_name,
   case
-    when alias_card_id is null or canonical_card_id is null
+    when not alias_row_exists or not canonical_row_exists
       then 'A_UNRESOLVED'
     when (alias_image_url is not null and btrim(alias_image_url) <> '')
      and (canonical_image_url is not null and btrim(canonical_image_url) <> '')

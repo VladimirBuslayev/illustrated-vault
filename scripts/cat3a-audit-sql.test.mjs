@@ -286,6 +286,38 @@ for (const st of ['A1_ALIAS_IMAGE_CANONICAL_IMAGE', 'A2_ALIAS_IMAGE_CANONICAL_MI
 ok(!/where[\s\S]{0,200}canonical_image_url is null or btrim\(canonical_image_url\) = ''/i.test(qa6b),
   'Q-A6b does NOT filter to the A2 subset — all 192 pairs are exported');
 ok(/exactly 192 rows/i.test(qa6b), 'Q-A6b states the expected 192-row count');
+ok(/ZERO carrying A_UNRESOLVED/i.test(qa6b), 'Q-A6b states that A_UNRESOLVED must be zero');
+ok(/HARD-STOPS/i.test(qa6b), 'Q-A6b states that the probe hard-stops on failure');
+
+// ── 9c-2. Unresolved detection uses JOINED-ROW existence ─────────────────────
+console.log('\n9c-2. unresolved detection');
+
+// The defect being pinned: alias_card_id is card_identity_resolution's PRIMARY
+// KEY, so `alias_card_id is null` can never be true and would report every pair
+// as resolved. Existence must come from the LEFT-joined `cards` rows.
+ok(/\(a\.id is not null\)\s+as alias_row_exists/.test(qa6b),
+  'Q-A6b derives alias_row_exists from the joined cards row');
+ok(/\(c\.id is not null\)\s+as canonical_row_exists/.test(qa6b),
+  'Q-A6b derives canonical_row_exists from the joined cards row');
+ok(/when not alias_row_exists or not canonical_row_exists[\s\S]{0,40}then 'A_UNRESOLVED'/.test(qa6b),
+  'either missing side classifies as A_UNRESOLVED');
+ok(!/when alias_card_id is null or canonical_card_id is null/.test(qa6b),
+  'the old key-column null test is gone — it could never be true');
+ok(/alias_row_exists,[\s\S]{0,40}canonical_row_exists,/.test(qa6b),
+  'both existence flags are projected for the probe to consume');
+ok(/alias_card_id DOES NOT/.test(qa6b),
+  'Q-A6b records that alias_card_id carries no FK to cards(id)');
+
+// Population-level counterpart in Q-A0.
+const qa0 = section('Q-A0', 'Q-A1');
+ok(/alias_sources_missing_from_cards/.test(qa0),
+  'Q-A0 counts alias SOURCE rows missing from cards');
+ok(/alias_targets_missing_from_cards/.test(qa0),
+  'Q-A0 still counts alias TARGET rows missing from cards');
+ok(/where not exists \(select 1 from public\.cards c where c\.id = r\.alias_card_id\)/.test(qa0),
+  'the source check tests the alias id against cards, not against the alias table');
+ok(/NOT symmetric/i.test(qa0),
+  'Q-A0 explains why the source and target checks are asymmetric');
 
 // ── 9d. Q-A7c — operator-only owned linkage ──────────────────────────────────
 console.log('\n9d. Q-A7c operator-only owned input');
@@ -391,10 +423,48 @@ ok(/zero bytes \| `ASSET_INDETERMINATE`/.test(doc.replace(/\s+/g, ' '))
 // Full A dimension.
 ok(/All 192 pairs are exported with their state \(Q-A6b\), not just A2/.test(flatDoc),
   'spec requires the full 192-pair export');
-ok(/G-3 validates the count explicitly/.test(flatDoc),
-  'spec states G-3 validates the 192 count');
 ok(/would force every A4 canonical row to be labelled `A0`/.test(flatDoc),
   'spec records why an A2-only export is wrong');
+
+// G-3 is a hard stop, and A_UNRESOLVED has its own justification.
+ok(/\*\*G-3 is a HARD STOP, not a warning\.\*\*/.test(flatDoc),
+  'spec states G-3 is a hard stop');
+ok(/before it derives any A state, runs P4, runs P3, or derives any O outcome/.test(flatDoc),
+  'spec states what the hard stop precedes');
+ok(/A quiet undercount that passes its own completeness check/.test(flatDoc),
+  'spec records why a warning was insufficient');
+ok(/`alias_card_id` does not\*\*|\*\*`alias_card_id` does not\*\*/.test(flatDoc),
+  'spec records that alias_card_id carries no FK');
+ok(/there is no alias row to read/.test(flatDoc),
+  'spec distinguishes a missing alias row from a genuine A3/A4');
+ok(/alias_sources_missing_from_cards/.test(flatDoc),
+  'spec names the Q-A0 population-level check');
+ok(/alias_row_exists` \/ `canonical_row_exists/.test(flatDoc),
+  'spec names the Q-A6b row-level existence flags');
+
+// F2 three-state validation.
+ok(/An exhausted 5xx is not confirmation\.\*\*|\*\*An exhausted 5xx is not confirmation\.\*\*/.test(flatDoc),
+  'spec states an exhausted 5xx is not confirmation');
+ok(/derivation is \*\*untested\*\*, not confirmed/.test(flatDoc),
+  'spec labels the indeterminate F2 verdict as untested');
+ok(/G-8 and G-9 become `not_evaluated`/.test(flatDoc),
+  'spec states a non-PASS F2 verdict blocks the completeness gates');
+ok(/global `O5` conclusion is\s*barred|global `O5` conclusion is barred/.test(flatDoc),
+  'spec bars the global O5 conclusion on a non-PASS F2 verdict');
+ok(/a \*\*small\*\* F2 population could demote quietly, stay under 1%/.test(flatDoc),
+  'spec explains why G-10 alone would not close the hole');
+
+// P3-0 pool exhaustion and scoped wording.
+ok(/the run continues deterministically through the remaining prepared pool/i.test(flatDoc),
+  'spec requires continuing through the prepared pool');
+ok(/Scarcity may not be inferred from the first 120/.test(flatDoc),
+  'spec forbids inferring scarcity from the first pass');
+ok(/Only after the prepared pool is exhausted/.test(flatDoc),
+  'spec permits the insufficient verdict only after exhaustion');
+ok(/says nothing about how many catalog ids exist in pokemontcg\.io overall/.test(flatDoc),
+  'spec scopes the insufficient verdict away from a global claim');
+ok(/samples at most two cards per set/.test(flatDoc),
+  'spec names the two-per-set limit that forces the scoping');
 
 // Active-owned linkage.
 ok(/### 6\.3 Active-owned linkage/.test(doc), 'spec defines the active-owned linkage');

@@ -269,9 +269,43 @@ understating the dimension and making the promised 192-row census artifact
 impossible to produce. A1 and A3 are exported too: the census must reconcile to
 192, and a state that is absent by construction is worth showing to be absent.
 
-**G-3 validates the count explicitly** against the CAT-2D.2 deployed population
-of 192. A different count means the alias table has moved since CAT-2D.2, and
-the audit is re-scoped rather than run against a population nobody approved.
+**G-3 is a HARD STOP, not a warning.** The probe requires exactly
+`EXPECTED_ALIAS_PAIRS = 192` pairs, **zero of them `A_UNRESOLVED`**, before it
+derives any A state, runs P4, runs P3, or derives any O outcome. On failure it
+writes a manifest recording G-3 failed with every downstream gate
+`not_evaluated`, and exits non-zero.
+
+A warning would not have been enough. With a partial population every absent
+pair is indistinguishable from "this canonical row has no approved alias" — it
+silently becomes `A0`. The A dimension is then understated, `O3` can be emitted
+from a population that was never fully measured, and G-9 still reports complete
+because every row does carry *an* A value. **A quiet undercount that passes its
+own completeness check is the worst failure shape an audit can have.**
+
+A count other than 192 means the alias table has moved since CAT-2D.2, and the
+audit is re-scoped rather than run against a population nobody approved.
+
+#### `A_UNRESOLVED` needs its own check
+
+`card_identity_aliases.canonical_card_id` carries an FK to `cards(id)`.
+**`alias_card_id` does not** (`cat-2d1-1-dark-alias-foundation.sql` §1). An
+alias row may therefore name a source id with no corresponding `cards` row, and
+nothing in the schema prevents it.
+
+That is not a hypothetical nuisance. A missing source row yields a null
+`alias_image_url`, which reads as **A3/A4 — "the alias has no image"** when the
+truth is **"there is no alias row to read"**. The states are not
+interchangeable, and the difference is invisible unless existence is carried
+explicitly.
+
+So it is measured in two places:
+
+- **Q-A0** reports `alias_sources_missing_from_cards`, expected `0`, at
+  population level. Non-zero STOPs at G-1.
+- **Q-A6b** carries `alias_row_exists` / `canonical_row_exists`, derived from
+  the LEFT-joined `cards` rows — **not** from the alias row's own columns, which
+  are the resolution table's key and are never null. Testing those would prove
+  nothing and would report every pair as resolved.
 
 A2 rows additionally carry an asset-liveness verdict from P4 (§7.5):
 `ASSET_LIVE`, `ASSET_DEAD` or `ASSET_INDETERMINATE`. An A2 row is a recovery
@@ -315,13 +349,13 @@ renders today".
 | **G-0** | Working tree clean; branch cut from current `origin/main`; sync quiesced — no active `sync-cards.yml` run, scheduled trigger remains paused per CAT-2B0 | STOP |
 | **G-1** | **Q-A0** catalog invariants hold and reconcile to the post-CAT-2D.2 expected state | STOP — catalog integrity precedes coverage measurement |
 | **G-2** | **Q-A1 through Q-A5, and Q-A7** complete; Q-A1 and Q-A2 reconcile exactly | STOP |
-| **G-3** | **Q-A6b** exports exactly **192** pairs, each carrying an A state; **P4** completes over the A2 subset | Record the A-population as PARTIAL; withhold O3 |
+| **G-3** | **Q-A6b** exports exactly **192** pairs, **zero `A_UNRESOLVED`**; **P4** completes over the A2 subset | **HARD STOP.** No A state, P4 probe or O outcome is derived. Every downstream gate is `not_evaluated` |
 | **G-4** | **Q-A8a** export produced; row count equals the Q-A1 missing count exactly | STOP — probes must not run against a partial inventory (same fail-closed discipline as `catalogIndexLoader.js:68`) |
 | **G-5** | **P1** resolves every distinct catalog `set_id`, or marks it indeterminate | Indeterminate sets propagate T4 to their rows |
 | **G-6** | **P2** assigns exactly one T to every exported row | STOP if any row is unassigned |
 | **G-7** | **P3-0** two-stage reliability gate passes (§7.3) | **STOP — P3 does not run.** Source instability is recorded as a standalone finding; CAT-3A reports T- and A-findings only and withholds every F- and O-dependent conclusion |
-| **G-8** | Every row **requiring a fallback verdict** carries exactly one F value from the vocabulary | `not_evaluated` when the fallback phase did not run |
-| **G-9** | Completeness: every missing-image row carries exactly one T, one F, one A **and** one O, and totals reconcile (`Σ O = Q-A1 missing total`) | `not_evaluated` when the fallback phase did not run; STOP if false |
+| **G-8** | Every row **requiring a fallback verdict** carries exactly one F value, **and the F2 derivation validated PASS** | `not_evaluated` when the fallback phase did not run or F2 validation is not PASS |
+| **G-9** | Completeness: every missing-image row carries exactly one T, one F, one A **and** one O; the alias population is complete; totals reconcile (`Σ O = Q-A1 missing total`) | `not_evaluated` when the fallback phase did not run or F2 validation is not PASS; STOP if false |
 | **G-10** | **Conclusion gate** — see §6.1 | Withhold the conclusion at the corresponding scope |
 
 ### 6.0 G-8 / G-9 may never pass on a G-7 failure
@@ -461,14 +495,28 @@ Validity therefore cannot be established by SQL. It is established by probing.
 
 - Candidate pool: Q-A8b (populated-image catalog rows, at most 2 per set across
   every set), filtered to sets whose id matches a pokemontcg.io `set.id`
-  verbatim, then a **deterministic stratified draw** of up to 120 candidates
-  across the release-ordered pool so every era is sampled.
-- Each candidate is probed by its **exact catalog id**.
-- A candidate becomes **qualified** only by actually resolving to `F3` or `F4`
-  — an exact-id success.
-- Fewer than 20 qualified → the gate fails with an explicit reason. That
-  outcome is itself a finding about provider-ID overlap, not a source-health
-  verdict.
+  verbatim. This filtered list is the **prepared pool**.
+- **First pass:** a deterministic stratified draw of up to 120 candidates across
+  the release-ordered prepared pool, so qualification itself samples every era.
+  The whole first pass is probed even once 20 qualify, so the qualified set
+  stays spread across eras rather than collapsing onto the first stratum.
+- Each candidate is probed by its **exact catalog id**. A candidate becomes
+  **qualified** only by actually resolving to `F3` or `F4` — an exact-id
+  success.
+- **If fewer than 20 qualify, the run continues deterministically through the
+  remaining prepared pool** (pool order: release date, set, id) until 20 qualify
+  or the prepared pool is exhausted. Scarcity may not be inferred from the first
+  120: one unlucky stratum must not be allowed to decide that the fallback
+  provider barely overlaps our catalog while hundreds of prepared candidates sit
+  untried.
+- Only after the prepared pool is exhausted may P3-0 report insufficient
+  qualified controls.
+
+**Wording is scoped to the prepared pool.** Q-A8b samples at most two cards per
+set, so an insufficient-qualification result says nothing about how many catalog
+ids exist in pokemontcg.io overall and **must never be reported as if it did**.
+The correct next step in that case is widening the prepared pool, not drawing a
+provider-overlap conclusion.
 
 #### Stage 2 — the gate
 
@@ -512,11 +560,38 @@ does not resolve under its own id is simply not qualified.
 - Verification via the imported `imageService` normalizers.
   `id_match`, `number_match`, `name_match` and `set_match` are all recorded;
   only the first three participate in assignment.
-- **F2 validation sample.** 25 F2 rows — whose value was *derived* from the set
-  inventory rather than probed — are probed anyway, to confirm the derivation
-  returns 404. If any returns 200, the F2 derivation is unsound: every F2 row is
-  demoted to indeterminate pending a redesign. This is the only reason a
-  per-card request is issued for an F2 row.
+#### F2 validation — three outcomes, not two
+
+F2 is *derived* from the set inventory rather than probed, so the derivation
+itself is tested: 25 F2 rows are probed anyway. This is the only reason a
+per-card request is issued for an F2 row.
+
+| Sample result | Verdict | Effect |
+|---|---|---|
+| every sampled id returns **404/410** | **PASS** | F2 stands |
+| any sampled id returns **200** | **UNSOUND** | derivation is wrong |
+| any sampled id **never resolves** (429/5xx/transport after budget) | **INDETERMINATE** | derivation is **untested**, not confirmed |
+| there were no F2 rows | `NOT_REQUIRED` | nothing to validate |
+
+**An exhausted 5xx is not confirmation.** Treating "we could not reach it" as
+"it is absent" would leave every F2 row reported as structurally unreachable on
+the strength of evidence that was never obtained — the same error the
+404-versus-5xx rule exists to prevent, one level up.
+
+On **UNSOUND or INDETERMINATE**:
+
+- every F2 row is demoted to `F7` (reason `f2_derivation_unsound` or
+  `f2_validation_indeterminate`), so none is reported as structurally
+  unreachable;
+- **G-8 and G-9 become `not_evaluated`**, and the global `O5` conclusion is
+  barred until the sample is re-probed.
+
+Blocking the gates is deliberate and is *not* redundant with G-10. Relying on
+the O0 threshold alone would leave a hole: a **small** F2 population could
+demote quietly, stay under 1%, survive the sensitivity test, and let a global
+conclusion rest on a derivation nobody validated. The same reasoning applies to
+UNSOUND — a broken derivation is a redesign trigger, not something to average
+away.
 
 ### 7.5 P4 — approved-alias asset liveness
 
