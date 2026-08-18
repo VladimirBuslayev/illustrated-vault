@@ -78,12 +78,31 @@
 --   Q-A1  BOTH base tables, reported separately
 --   Q-A2  cards_effective (+ join to cards for `series`, which the view does
 --         not expose)
+--   Q-A2b RAW cards for the Celebrations partition, + effective membership
 --   Q-A3  cards_effective
 --   Q-A4  information_schema, then cards / cards_effective
 --   Q-A5  cards_effective
---   Q-A6  RAW cards — the only query that does, and the only one that may
+--   Q-A6  RAW cards for the approved alias pairs
 --   Q-A7  cards_effective, through the alias resolution surface
 --   Q-A8  cards_effective
+--
+-- Exactly two statements read RAW cards for a population the view does not
+-- expose: Q-A2b (the historical Celebrations partition, which is not separable
+-- inside cards_effective) and Q-A6 (the alias rows, which the view excludes by
+-- construction). No other statement may.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- OPERATOR-ONLY OUTPUTS — NEVER COMMITTED
+-- ─────────────────────────────────────────────────────────────────────────
+--
+-- Q-A7c emits a bare list of catalog card ids representing the ACTIVE-OWNED
+-- missing-image population. It contains no user id, no batch id and no
+-- quantity — but it is still a projection of what collectors collectively own,
+-- so it is an OPERATOR-ONLY input to the probe and MUST NOT be committed to the
+-- repository. The probe consumes it to compute AGGREGATE active-owned counts;
+-- only those aggregates become evidence.
+--
+-- docs/cat-3a-evidence/inputs/ is gitignored for exactly this reason.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -215,6 +234,79 @@ from public.cards_effective e
 join public.cards c on c.id = e.id
 group by e.set_id
 order by image_missing desc, e.set_id;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Q-A2b — CELEBRATIONS NAMED POPULATIONS   (gate G-2)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ⚠ REMEASUREMENT ONLY. This statement pairs NOTHING. It proposes no
+--   historical -> survivor mapping, derives none, and implies none. CAT-2D.3's
+--   admission rules (25 individually corroborated pairs, no fuzzy matching,
+--   its own named evidence class) are untouched by this file.
+--
+-- WHY THIS EXISTS AS ITS OWN STATEMENT
+--
+--   Q-A2 groups by set_id, and the live Celebrations base set and the
+--   historical Classic Collection reprints BOTH live under set_id = 'cel25'.
+--   Grouping by set therefore CANNOT report them separately, and the number
+--   CAT-2D.3 called "the single most decision-relevant" — image coverage of the
+--   Classic Collection under either identity — is invisible in Q-A2's output.
+--
+-- ⚠ READS RAW public.cards for the partition. The historical rows are fully
+--   effective (CAT-2D.3 Gate 0 Q-E: 25/25 in cards_effective), so this is NOT
+--   about alias exclusion — it is because no column in the view separates the
+--   two cel25 populations. Effective membership is reported as its own column.
+--
+-- THE SELECTOR IS CAT-2D.3's, REPRODUCED VERBATIM
+--
+--   historical := set_id = 'cel25' AND local_id ~ '^[0-9]+$' IS NOT TRUE
+--   base_set   := set_id = 'cel25' AND local_id ~ '^[0-9]+$'
+--
+--   Its known limitation is carried forward unchanged and must not be
+--   forgotten here: the selector proves SIZE, RANGE, GAP and DUPLICATE
+--   consistency but NOT membership. A numeric-local_id historical row
+--   occupying a number whose live base-set row is absent would sit in the
+--   wrong partition. CAT-2D.3 settled membership with an independent upstream
+--   liveness check; this statement does not re-derive it and does not need to,
+--   because a small misassignment between the two cel25 partitions cannot
+--   change an image-coverage conclusion that is reported for BOTH partitions
+--   plus their total.
+--
+-- Expected from CAT-2D.3 Gate 0 (2026-08-18), to be re-established not assumed:
+--   base_set      25 rows · 24 populated image_url · 25 effective
+--   historical    25 rows ·  0 populated image_url · 25 effective
+--   cel25cc       25 rows ·  0 populated image_url · 25 effective
+
+with cel25_all as (
+  select c.id, c.local_id, c.image_url
+  from public.cards c
+  where c.set_id = 'cel25'
+),
+populations as (
+  select 'cel25_base_set_live'          as population, id, image_url
+    from cel25_all where local_id ~ '^[0-9]+$'
+  union all
+  select 'cel25_classic_collection_historical' as population, id, image_url
+    from cel25_all where local_id ~ '^[0-9]+$' is not true
+  union all
+  select 'cel25cc_current'              as population, c.id, c.image_url
+    from public.cards c where c.set_id = 'cel25cc'
+)
+select
+  p.population,
+  count(*)                                                         as rows_total,
+  count(*) filter (where p.image_url is null or btrim(p.image_url) = '')
+                                                                   as image_missing,
+  count(*) filter (where p.image_url is not null and btrim(p.image_url) <> '')
+                                                                   as image_populated,
+  count(*) filter (where exists (
+    select 1 from public.cards_effective e where e.id = p.id
+  ))                                                               as rows_in_cards_effective,
+  round(100.0 * count(*) filter (where p.image_url is null or btrim(p.image_url) = '')
+              / nullif(count(*), 0), 2)                            as pct_missing
+from populations p
+group by p.population
+order by p.population;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -458,20 +550,38 @@ order by alias_state;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- Q-A6b — A2 SUBSET DETAIL — P4 PROBE INPUT   (gate G-3)
+-- Q-A6b — FULL APPROVED-PAIR STATE EXPORT — PROBE INPUT   (gate G-3)
 -- ═══════════════════════════════════════════════════════════════════════════
--- The rows where the retained alias holds an image its canonical survivor
--- lacks. Emitted so P4 can test whether the retained asset is still LIVE on
--- assets.tcgdex.net — CAT-2D.2 recorded alias_upstream_status = 404 for the
--- API record, but the asset host has a separate lifecycle and its liveness
--- must be measured, never inferred.
+-- ⚠ ALL 192 PAIRS, NOT JUST A2. This is deliberate and was a review
+--   correction.
+--
+--   Exporting only the A2 subset would leave the probe unable to distinguish
+--   "this canonical row has no approved alias at all" (A0) from "this canonical
+--   row has an approved alias and BOTH sides are missing an image" (A4). Every
+--   A4 canonical row IS in the missing-image population, so an A2-only export
+--   silently mislabels them A0, understates the A dimension, and makes the
+--   promised 192-row alias census artifact impossible to produce.
+--
+--   Which alias states can appear in the missing-image population at all:
+--     A2  alias has image, canonical missing   -> canonical IS missing-image
+--     A4  both missing                         -> canonical IS missing-image
+--     A1  both have images                     -> canonical is NOT missing-image
+--     A3  alias missing, canonical has image   -> canonical is NOT missing-image
+--   A1 and A3 are exported anyway. The census artifact must reconcile to 192,
+--   and a state that is absent by construction is worth showing to be absent.
+--
+-- ⚠ THIS PROPOSES NO REPAIR. alias_image_url is emitted so P4 can test whether
+--   the retained asset is still LIVE on assets.tcgdex.net — CAT-2D.2 recorded
+--   alias_upstream_status = 404 for the API record, but the asset host has a
+--   separate lifecycle and its liveness must be measured, never inferred. The
+--   value is a LIVENESS TARGET, not a proposed value for the canonical row, and
+--   must not be applied as one. P4 probes A2 rows only.
 --
 -- Public catalog data only. No user data, no UUIDs.
 --
--- Operator: save as docs/cat-3a-evidence/inputs/a2_alias_assets_input.csv
+-- Expected: exactly 192 rows. G-3 validates that count explicitly.
 --
--- ⚠ Emitting alias_image_url here is for LIVENESS TESTING. It is not a
---   proposed value for the canonical row and must not be applied as one.
+-- Operator: save as docs/cat-3a-evidence/inputs/alias_pairs_input.csv
 
 with pairs as (
   select
@@ -484,8 +594,8 @@ with pairs as (
     c.local_id                                                     as canonical_local_id,
     c.name                                                         as canonical_name
   from public.card_identity_resolution r
-  join public.cards a on a.id = r.alias_card_id
-  join public.cards c on c.id = r.canonical_card_id
+  left join public.cards a on a.id = r.alias_card_id
+  left join public.cards c on c.id = r.canonical_card_id
 )
 select
   alias_card_id,
@@ -494,10 +604,22 @@ select
   canonical_set_name,
   canonical_local_id,
   canonical_name,
+  case
+    when alias_card_id is null or canonical_card_id is null
+      then 'A_UNRESOLVED'
+    when (alias_image_url is not null and btrim(alias_image_url) <> '')
+     and (canonical_image_url is not null and btrim(canonical_image_url) <> '')
+      then 'A1_ALIAS_IMAGE_CANONICAL_IMAGE'
+    when (alias_image_url is not null and btrim(alias_image_url) <> '')
+     and (canonical_image_url is null or btrim(canonical_image_url) = '')
+      then 'A2_ALIAS_IMAGE_CANONICAL_MISSING'
+    when (alias_image_url is null or btrim(alias_image_url) = '')
+     and (canonical_image_url is not null and btrim(canonical_image_url) <> '')
+      then 'A3_ALIAS_MISSING_CANONICAL_IMAGE'
+    else 'A4_ALIAS_MISSING_CANONICAL_MISSING'
+  end                                                              as alias_state,
   alias_image_url
 from pairs
-where (alias_image_url is not null and btrim(alias_image_url) <> '')
-  and (canonical_image_url is null or btrim(canonical_image_url) = '')
 order by canonical_set_id, canonical_local_id, canonical_card_id;
 
 
@@ -588,6 +710,55 @@ order by owned_image_missing desc, e.set_id;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Q-A7c — ACTIVE-OWNED MISSING-IMAGE CARD IDS — OPERATOR-ONLY PROBE INPUT
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ⚠ OPERATOR-ONLY. DO NOT COMMIT THIS OUTPUT.
+--
+-- WHY IT EXISTS. G-10 requires an ACTIVE-OWNED O0 = 0 gate and the decision
+-- framework weights O1/O3 by active-owned exposure. Both need per-row linkage
+-- between a recoverability OUTCOME (which only the probe computes) and the
+-- owned population (which only the database knows). Q-A7a/Q-A7b aggregate, so
+-- neither can supply that linkage. Without this statement the active-owned
+-- gate is unmeasurable and would have to be silently dropped.
+--
+-- WHY IT IS STILL PRIVACY-SAFE TO PRODUCE, AND NOT TO PUBLISH.
+--   Emitted:     distinct catalog card ids, and nothing else.
+--   NOT emitted: user_id, batch id, row id, quantity, per-user anything.
+--   There is no user dimension in the projection at all — one column, one row
+--   per distinct card.
+--
+--   It is nonetheless a projection of what the collector base collectively
+--   owns, which is not public information. So it is an INPUT to the probe and
+--   never an artifact. The probe uses it to compute AGGREGATE active-owned
+--   counts; only those aggregates become committed evidence, and the probe is
+--   structurally prevented from copying these ids into per-row output.
+--
+-- docs/cat-3a-evidence/inputs/ is gitignored so this cannot be committed by
+-- accident.
+--
+-- Operator: save as docs/cat-3a-evidence/inputs/owned_missing_ids_input.csv
+--           DELETE IT when the audit run is complete.
+
+with owned as (
+  select distinct
+    coalesce(ires.canonical_card_id, r.card_id)                    as resolved_card_id
+  from public.user_import_rows r
+  join public.user_import_batches b
+    on b.id = r.batch_id and b.status = 'active'
+  left join public.card_identity_resolution ires
+    on ires.alias_card_id = r.card_id
+  where r.match_status = 'matched'
+    and r.card_id is not null
+)
+select
+  e.id                                                             as card_id
+from owned o
+join public.cards_effective e on e.id = o.resolved_card_id
+where e.image_url is null or btrim(e.image_url) = ''
+order by e.id;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Q-A8a — MISSING-IMAGE ROW EXPORT — P1/P2/P3 PROBE INPUT   (gate G-4)
 -- ═══════════════════════════════════════════════════════════════════════════
 -- The complete inventory the external probes classify. Ordered by id so a
@@ -617,23 +788,33 @@ order by e.id;
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Q-A8b — P3-0 CONTROL POOL EXPORT   (gate G-7 input)
 -- ═══════════════════════════════════════════════════════════════════════════
--- Candidate known-valid controls for the Pokémon TCG API reliability gate.
+-- CANDIDATE pool for the Pokémon TCG API reliability gate. Not the controls.
 --
--- A control must be a card we have independent reason to believe EXISTS: a
--- catalog row with a POPULATED image_url, i.e. one TCGdex itself served an
--- asset for. If a probe cannot resolve such a card, the source is unreliable
--- or the probe is unsound — and either way P3 must not run.
+-- ⚠ WHAT A POPULATED image_url DOES AND DOES NOT PROVE — a review correction.
 --
--- This exports a POOL, not the final 20. The final selection needs the
--- pokemontcg.io set inventory (a control is only meaningful in a set whose id
--- matches verbatim, since that is the only lookup shape the runtime performs),
--- and this file deliberately holds NO provider-correspondence knowledge. The
--- probe performs that filtering.
+--   A populated image_url proves TCGdex served an asset for that card. It does
+--   NOT prove the same card id exists in pokemontcg.io. The two providers
+--   disagree about set-id conventions, so a perfectly legitimate provider-ID
+--   mismatch would make a "known-valid" control 404 — and the reliability gate
+--   would fail for a reason that has nothing to do with reliability.
 --
--- Spread is enforced here rather than left to the probe: at most 2 rows per
--- set, ordered by release date, so the pool spans eras and namespaces instead
--- of clustering in one easy modern set. The specification requires controls to
--- span multiple sets, eras and namespaces.
+--   Validity therefore cannot be established by SQL at all. It is established
+--   by the probe's QUALIFICATION pass: only ids that actually resolve to an
+--   exact-ID success against pokemontcg.io become qualified controls, and only
+--   qualified controls are re-probed for the gate. This statement supplies
+--   candidates for that qualification pass and nothing more.
+--
+-- Deliberately NOT done here: any pokemontcg.io knowledge. This file holds no
+-- provider correspondence, so it cannot pre-filter by which set ids match
+-- verbatim. The probe applies that filter.
+--
+-- Diversity is seeded here — at most 2 rows per set across every set in the
+-- catalog — so the qualification pass has early, mid and modern candidates to
+-- work with. Final control selection is a deterministic stratified draw across
+-- the QUALIFIED era range, performed by the probe.
+--
+-- release_date and series are projected because they are the stratification
+-- key. CAT-1 populated both; Q-A4a proves they exist.
 --
 -- Operator: save as docs/cat-3a-evidence/inputs/p3_control_pool_input.csv
 

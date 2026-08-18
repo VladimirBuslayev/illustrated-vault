@@ -232,14 +232,97 @@ ok(/NOT directly comparable at set level/i.test(sqlRaw),
 // ── 9. Query coverage ────────────────────────────────────────────────────────
 console.log('\n9. query coverage');
 
-for (const q of ['Q-A0', 'Q-A1', 'Q-A2', 'Q-A3', 'Q-A4a', 'Q-A4b', 'Q-A4c',
-  'Q-A5a', 'Q-A5b', 'Q-A6a', 'Q-A6b', 'Q-A7a', 'Q-A7b', 'Q-A8a', 'Q-A8b']) {
+for (const q of ['Q-A0', 'Q-A1', 'Q-A2', 'Q-A2b', 'Q-A3', 'Q-A4a', 'Q-A4b', 'Q-A4c',
+  'Q-A5a', 'Q-A5b', 'Q-A6a', 'Q-A6b', 'Q-A7a', 'Q-A7b', 'Q-A7c', 'Q-A8a', 'Q-A8b']) {
   ok(sqlRaw.includes(q), `${q} present`);
 }
 ok(/information_schema\.columns/i.test(code),
   'Q-A4a performs live-schema discovery rather than trusting the repo inventory');
 ok(/has_language_column/i.test(code) && /has_image_source_column/i.test(code),
   'dimension-availability flags are proven from the live schema');
+
+// ── 9b. Q-A2b — Celebrations remeasurement, no pairing ───────────────────────
+console.log('\n9b. Q-A2b Celebrations remeasurement');
+
+ok(/cel25_base_set_live/.test(code)
+  && /cel25_classic_collection_historical/.test(code)
+  && /cel25cc_current/.test(code),
+  'Q-A2b reports all three named Celebrations populations');
+// CAT-2D.3's selector, reproduced verbatim.
+ok(/local_id ~ '\^\[0-9\]\+\$' is not true/.test(code),
+  'the historical partition uses the CAT-2D.3 selector verbatim');
+ok(/local_id ~ '\^\[0-9\]\+\$'\s*$/m.test(code) || /where local_id ~ '\^\[0-9\]\+\$'/.test(code),
+  'the live base-set partition uses the CAT-2D.3 selector verbatim');
+ok(/rows_in_cards_effective/.test(code),
+  'Q-A2b reports effective membership alongside coverage');
+ok(/REMEASUREMENT ONLY/.test(sqlRaw) && /pairs NOTHING/i.test(sqlRaw),
+  'Q-A2b states it performs no pairing');
+// No survivor mapping may appear anywhere near the Celebrations statement.
+ok(!/historical[\s\S]{0,200}(join|=)[\s\S]{0,40}cel25cc/i.test(code),
+  'no historical -> cel25cc join or mapping construct exists');
+
+// ── 9c. Q-A6b — full 192-pair export ─────────────────────────────────────────
+console.log('\n9c. Q-A6b full pair export');
+
+// Slice by the STATEMENT BANNER, not by the first textual mention: the header
+// comment block names several queries, so indexOf('Q-A7c') would start the
+// slice in the header and swallow every statement up to Q-A8a — including
+// Q-A7a's legitimate COUNT(DISTINCT user_id).
+function section(id, nextId) {
+  const start = sqlRaw.indexOf(`-- ${id} —`);
+  const end = sqlRaw.indexOf(`-- ${nextId} —`);
+  if (start === -1) return '';
+  return sqlRaw.slice(start, end > start ? end : undefined);
+}
+
+const qa6b = section('Q-A6b', 'Q-A7a');
+ok(qa6b.includes('alias_state'), 'Q-A6b projects the alias_state column');
+for (const st of ['A1_ALIAS_IMAGE_CANONICAL_IMAGE', 'A2_ALIAS_IMAGE_CANONICAL_MISSING',
+  'A3_ALIAS_MISSING_CANONICAL_IMAGE', 'A4_ALIAS_MISSING_CANONICAL_MISSING']) {
+  ok(qa6b.includes(st), `Q-A6b can emit ${st}`);
+}
+// The defect being pinned: an A2-only WHERE clause would mislabel every A4
+// canonical row as A0 and make the 192-row census impossible.
+ok(!/where[\s\S]{0,200}canonical_image_url is null or btrim\(canonical_image_url\) = ''/i.test(qa6b),
+  'Q-A6b does NOT filter to the A2 subset — all 192 pairs are exported');
+ok(/exactly 192 rows/i.test(qa6b), 'Q-A6b states the expected 192-row count');
+
+// ── 9d. Q-A7c — operator-only owned linkage ──────────────────────────────────
+console.log('\n9d. Q-A7c operator-only owned input');
+
+const qa7c = section('Q-A7c', 'Q-A8a');
+ok(qa7c.length > 0 && !qa7c.includes('Q-A7a —'),
+  'the Q-A7c slice is bounded by its own statement banner');
+ok(/OPERATOR-ONLY/.test(qa7c) && /DO NOT COMMIT/i.test(qa7c),
+  'Q-A7c is labelled operator-only and not-to-be-committed');
+// The projection must be a single card-id column: no user dimension at all.
+const qa7cCode = qa7c.replace(/--[^\n]*/g, '');
+ok(!/user_id/i.test(qa7cCode), 'Q-A7c projects no user_id anywhere');
+ok(!/quantity/i.test(qa7cCode), 'Q-A7c projects no quantity');
+ok(!/batch_id\s+as|\bb\.id\s+as/i.test(qa7cCode), 'Q-A7c projects no batch id');
+ok(/as\s+card_id/i.test(qa7cCode), 'Q-A7c projects a single card_id column');
+ok(/image_url is null or btrim\(e\.image_url\) = ''|e\.image_url is null or btrim\(e\.image_url\) = ''/i.test(qa7cCode),
+  'Q-A7c is scoped to the missing-image population');
+ok(/card_identity_resolution/.test(qa7cCode),
+  'Q-A7c resolves aliases exactly as production ownership does');
+
+// The gitignore rule is what makes "never committed" structural.
+const GITIGNORE = join(ROOT, '.gitignore');
+ok(existsSync(GITIGNORE)
+  && readFileSync(GITIGNORE, 'utf8').includes('docs/cat-3a-evidence/inputs/'),
+  'docs/cat-3a-evidence/inputs/ is gitignored so the owned id list cannot be committed');
+
+// ── 9e. SHA256SUMS semantics are not broadened ───────────────────────────────
+console.log('\n9e. checksum manifest scope');
+
+const SUMS = join(ROOT, 'docs', 'sql', 'SHA256SUMS.txt');
+ok(existsSync(SUMS) && !readFileSync(SUMS, 'utf8').includes('cat-3a'),
+  'CAT-3A is NOT added to the deployment-SQL checksum manifest');
+ok(/deployment-SQL\*{0,2} checksum\s*\n?manifest/.test(doc.replace(/\s+/g, ' '))
+  || /is a \*\*deployment-SQL\*\* checksum/.test(doc.replace(/\s+/g, ' ')),
+  'spec states SHA256SUMS.txt keeps its deployment-only semantics');
+ok(/SHA-256 of the reviewed and executed/.test(doc.replace(/\s+/g, ' ')),
+  'spec records the executed SQL SHA in the CAT-3A evidence manifest instead');
 
 // ── 10. Specification guardrails ─────────────────────────────────────────────
 console.log('\n10. specification guardrails');
@@ -267,8 +350,66 @@ ok(/worst-case sensitivity test/i.test(doc), 'G-10 requires the sensitivity test
 ok(/at least 19 of 20/.test(doc) && /at most 1/.test(doc)
   && /0 false definitive classifications/.test(doc),
   'P3-0 states all three pass conditions');
-ok(/spanning multiple sets, eras and namespaces/.test(doc.replace(/\s+/g, ' ')),
-  'P3-0 requires controls to span sets/eras/namespaces');
+
+// P3-0 must be two-stage, and must say why a populated image_url is not proof
+// of pokemontcg.io validity.
+const flatDoc = doc.replace(/\s+/g, ' ');
+ok(/Stage 1 — qualification/.test(doc) && /Stage 2 — the gate/.test(doc),
+  'P3-0 is specified as two stages');
+ok(/says nothing about whether the same id exists in pokemontcg\.io/.test(flatDoc),
+  'spec explains that a populated image_url does not prove pTCG validity');
+ok(/legitimate provider-ID mismatch, not a reliability failure/i.test(flatDoc),
+  'spec distinguishes provider-ID mismatch from source unreliability');
+ok(/qualified\*{0,2} only by actually resolving to `F3` or `F4`/.test(flatDoc)
+  || /becomes \*\*qualified\*\* only by actually resolving/.test(flatDoc),
+  'only probe-qualified ids become controls');
+ok(/stratified \(quantile\) draw of 20/.test(flatDoc),
+  'stage 2 uses a stratified quantile draw');
+ok(/would concentrate controls in whichever era qualifies first/.test(flatDoc),
+  'spec states why first-N-unique-sets selection was rejected');
+ok(/exact catalog ids only\. No translation, no correspondence, no name\/number lookup/.test(flatDoc),
+  'both stages preserve exact-id-only lookup');
+
+// The unused 50-row sample is gone.
+ok(!/50 missing-image rows drawn deterministically/.test(doc),
+  'the unused 50-row P3-0 sample has been removed');
+
+// G-8 / G-9 semantics.
+ok(/`not_evaluated` is a \*\*distinct third state\*\*/.test(flatDoc),
+  'not_evaluated is defined as distinct from false');
+ok(/\*\*G-8\*\* and \*\*G-9\*\* are `not_evaluated` — \*\*never `true`\*\*/.test(flatDoc),
+  'spec states G-8/G-9 can never be true after a G-7 failure');
+ok(/computed from row count and T assignment alone would report `true`/.test(flatDoc),
+  'spec records the defect the corrected semantics fix');
+
+// P4 non-empty body.
+ok(/NON-EMPTY body/.test(doc), 'P4 requires a non-empty body for ASSET_LIVE');
+ok(/zero bytes \| `ASSET_INDETERMINATE`/.test(doc.replace(/\s+/g, ' '))
+  || /zero bytes \| `ASSET_INDETERMINATE`/.test(doc),
+  'P4 verdict table maps zero bytes to indeterminate');
+
+// Full A dimension.
+ok(/All 192 pairs are exported with their state \(Q-A6b\), not just A2/.test(flatDoc),
+  'spec requires the full 192-pair export');
+ok(/G-3 validates the count explicitly/.test(flatDoc),
+  'spec states G-3 validates the 192 count');
+ok(/would force every A4 canonical row to be labelled `A0`/.test(flatDoc),
+  'spec records why an A2-only export is wrong');
+
+// Active-owned linkage.
+ok(/### 6\.3 Active-owned linkage/.test(doc), 'spec defines the active-owned linkage');
+ok(/must not be committed/.test(flatDoc) && /gitignored/.test(flatDoc),
+  'spec states the owned id list is never committed and is gitignored');
+ok(/committed evidence carries aggregate counts only/i.test(flatDoc),
+  'spec limits committed owned evidence to aggregates');
+ok(/takes no owned-population argument/.test(flatDoc),
+  'spec states the record builder cannot see the owned set');
+
+// Celebrations remeasurement.
+ok(/Q-A2b — Celebrations, remeasurement only/.test(doc),
+  'spec documents Q-A2b');
+ok(/It pairs nothing\.\*{0,2}|\*\*It pairs nothing\.\*\*/.test(flatDoc),
+  'spec states Q-A2b pairs nothing');
 ok(/`F5`|F5.*PTCGIO_VERIFICATION_FAILED/.test(doc),
   'F5 is retained as a distinct fallback state');
 ok(/neither absent nor indeterminate/i.test(doc.replace(/\s+/g, ' ')),

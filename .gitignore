@@ -3,3 +3,9 @@ dist
 .DS_Store
 .env
 .env.local
+
+# CAT-3A: operator-only audit probe inputs. Q-A7c emits the distinct
+# active-owned missing-image card ids (no user ids, no quantities), which is
+# still a projection of what collectors own and must never be committed. Only
+# the aggregate counts the probe derives from it become evidence.
+docs/cat-3a-evidence/inputs/

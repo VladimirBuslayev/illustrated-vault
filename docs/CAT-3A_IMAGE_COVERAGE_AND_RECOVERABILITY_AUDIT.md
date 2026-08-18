@@ -254,9 +254,30 @@ rows are excluded from `cards_effective` by construction
 | **A4** | `ALIAS_MISSING_CANONICAL_MISSING` |
 | **A0** | `NOT_APPLICABLE` — every row outside the 192-pair population |
 
+**All 192 pairs are exported with their state (Q-A6b), not just A2.** Two alias
+states can appear in the missing-image population:
+
+| State | Canonical row is missing an image? |
+|---|---|
+| **A2** alias has image, canonical missing | **yes** |
+| **A4** both missing | **yes** |
+| A1 both have images | no |
+| A3 alias missing, canonical has image | no |
+
+An A2-only export would force every A4 canonical row to be labelled `A0`,
+understating the dimension and making the promised 192-row census artifact
+impossible to produce. A1 and A3 are exported too: the census must reconcile to
+192, and a state that is absent by construction is worth showing to be absent.
+
+**G-3 validates the count explicitly** against the CAT-2D.2 deployed population
+of 192. A different count means the alias table has moved since CAT-2D.2, and
+the audit is re-scoped rather than run against a population nobody approved.
+
 A2 rows additionally carry an asset-liveness verdict from P4 (§7.5):
 `ASSET_LIVE`, `ASSET_DEAD` or `ASSET_INDETERMINATE`. An A2 row is a recovery
-*candidate* only when the retained alias asset is live.
+*candidate* only when the retained alias asset is live. P4 probes A2 rows only —
+A1 and A3 canonical rows already carry an image, and an A4 alias has no image to
+probe.
 
 **No image is copied, propagated, written or proposed as a mapping.** This
 dimension quantifies only. The 192 pairs are already individually admitted
@@ -294,14 +315,30 @@ renders today".
 | **G-0** | Working tree clean; branch cut from current `origin/main`; sync quiesced — no active `sync-cards.yml` run, scheduled trigger remains paused per CAT-2B0 | STOP |
 | **G-1** | **Q-A0** catalog invariants hold and reconcile to the post-CAT-2D.2 expected state | STOP — catalog integrity precedes coverage measurement |
 | **G-2** | **Q-A1 through Q-A5, and Q-A7** complete; Q-A1 and Q-A2 reconcile exactly | STOP |
-| **G-3** | **Q-A6** and **P4** complete; all 192 pairs classified; A-dimension sums to 192 | Record the A-population as partial; withhold O3 |
-| **G-4** | **Q-A8** export produced; row count equals the Q-A1 missing count exactly | STOP — probes must not run against a partial inventory (same fail-closed discipline as `catalogIndexLoader.js:68`) |
+| **G-3** | **Q-A6b** exports exactly **192** pairs, each carrying an A state; **P4** completes over the A2 subset | Record the A-population as PARTIAL; withhold O3 |
+| **G-4** | **Q-A8a** export produced; row count equals the Q-A1 missing count exactly | STOP — probes must not run against a partial inventory (same fail-closed discipline as `catalogIndexLoader.js:68`) |
 | **G-5** | **P1** resolves every distinct catalog `set_id`, or marks it indeterminate | Indeterminate sets propagate T4 to their rows |
 | **G-6** | **P2** assigns exactly one T to every exported row | STOP if any row is unassigned |
-| **G-7** | **P3-0** reliability gate passes (§7.3) | **STOP — P3 does not run.** Source instability is recorded as a standalone finding; CAT-3A reports T- and A-findings only and withholds every F- and O-dependent conclusion |
-| **G-8** | **P3** assigns exactly one F to every row requiring one | Unresolved rows become `F7` → `O0` and feed G-10 |
-| **G-9** | Completeness: every row carries exactly one T, one F, one A and one O; `Σ O = Q-A1 missing total` | STOP |
+| **G-7** | **P3-0** two-stage reliability gate passes (§7.3) | **STOP — P3 does not run.** Source instability is recorded as a standalone finding; CAT-3A reports T- and A-findings only and withholds every F- and O-dependent conclusion |
+| **G-8** | Every row **requiring a fallback verdict** carries exactly one F value from the vocabulary | `not_evaluated` when the fallback phase did not run |
+| **G-9** | Completeness: every missing-image row carries exactly one T, one F, one A **and** one O, and totals reconcile (`Σ O = Q-A1 missing total`) | `not_evaluated` when the fallback phase did not run; STOP if false |
 | **G-10** | **Conclusion gate** — see §6.1 | Withhold the conclusion at the corresponding scope |
+
+### 6.0 G-8 / G-9 may never pass on a G-7 failure
+
+`not_evaluated` is a **distinct third state**, not a synonym for `false`: the
+gate was never tested, which is different from having been tested and failed.
+
+If G-7 fails, no row has an F value and no outcome is derivable, so:
+
+- **G-8** and **G-9** are `not_evaluated` — **never `true`**;
+- every F- and O-dependent figure is withheld, including the whole decision
+  framework;
+- the T and A dimensions remain valid and are still reported.
+
+A completeness gate computed from row count and T assignment alone would report
+`true` on a run that hard-stopped at G-7. That is exactly the green light an
+audit must never emit, and the probe's `computeGates` is written so it cannot.
 
 ### 6.1 G-10 — conclusion gate (three scopes, three different rules)
 
@@ -310,7 +347,7 @@ renders today".
 | Scope | Rule |
 |---|---|
 | **Per-set conclusion** | `O0 = 0` **for that set**. No tolerance. |
-| **Active-owned missing-image conclusion** | `O0 = 0` across the active-owned missing-image population. No tolerance. |
+| **Active-owned missing-image conclusion** | `O0 = 0` across the active-owned missing-image population. No tolerance. Requires the Q-A7c linkage (§6.3). |
 | **Global conclusion** | `O0 < 1%` of total missing rows **may be tolerated only if the worst-case sensitivity test (§6.2) proves the remaining indeterminate rows cannot change the selected roadmap outcome.** |
 
 A global `O0` rate below 1% is **not by itself a sufficient conclusion gate.**
@@ -334,6 +371,39 @@ Then re-run the §8 decision framework against the inflated counts.
   conclusion is **withheld** and CAT-3A reports scoped findings only.
 - If the recommendation is **unchanged even under that worst case**, the global
   conclusion may proceed, and the sensitivity margin is recorded.
+
+### 6.3 Active-owned linkage — Q-A7c, and why it is operator-only
+
+The active-owned `O0 = 0` gate and the decision framework's active-owned
+weighting both need **per-row linkage** between a recoverability outcome (which
+only the probe computes) and the owned population (which only the database
+knows). Q-A7a and Q-A7b aggregate, so neither can supply it. Without the linkage
+the active-owned gate is unmeasurable and would have to be silently dropped.
+
+**Q-A7c** supplies it as a bare list of distinct catalog card ids representing
+the active-owned missing-image population.
+
+| Emitted | Not emitted |
+|---|---|
+| distinct catalog card ids, one column | user id · batch id · row id · quantity · anything per-user |
+
+There is no user dimension in the projection at all. It is nonetheless a
+projection of what the collector base collectively owns, which is not public
+information — so it is an **input**, never an artifact:
+
+- the raw id list **must not be committed**. `docs/cat-3a-evidence/inputs/` is
+  gitignored so it cannot be committed by accident, and the operator deletes it
+  when the run completes;
+- the probe uses it **only** to compute aggregate active-owned outcome counts;
+- **committed evidence carries aggregate counts only**;
+- the probe's `buildEvidenceRecord` takes no owned-population argument, so there
+  is no code path by which an owned id reaches `image_gaps.csv`. The safety
+  harness asserts that structurally, against the exported evidence header and
+  the record builder's own signature.
+
+If the two exports are taken at different times the id sets will not reconcile.
+The probe reports `reconciles: false` in that case and the active-owned figures
+must not be trusted.
 
 ---
 
@@ -369,23 +439,51 @@ then classified indeterminate — never absent.
   be safely encoded is `T4 / unencodable_id`.
 - Output: exactly one T per exported row.
 
-### 7.3 P3-0 — Pokémon TCG API reliability gate
+### 7.3 P3-0 — Pokémon TCG API reliability gate (two stages)
 
 Runs before P3. **P3 is unreachable if this gate fails.**
 
-- **Controls: 20 known-valid ids.** Catalog rows with a **populated**
-  `image_url` whose `set_id` matches a pokemontcg.io `set.id` verbatim — i.e.
-  cards known to exist in both sources. Selected deterministically, and
-  **spanning multiple sets, eras and namespaces rather than clustering in one
-  easy set**: at most 2 controls per set, drawn across the ordered set list so
-  early-era, mid-era and modern namespaces are all represented.
-- **Sample:** 50 missing-image rows drawn deterministically across F-eligible
-  sets.
+#### Why two stages
+
+Stage 2 requires controls that are **known-valid pokemontcg.io ids**. A catalog
+row with a populated `image_url` proves only that *TCGdex* served an asset — it
+says nothing about whether the same id exists in pokemontcg.io. Nor does a
+verbatim-matching set namespace: the providers agree on some set ids while still
+disagreeing about individual card ids inside them.
+
+Probing such a card and getting a 404 is a **legitimate provider-ID mismatch,
+not a reliability failure**. Feeding it to the gate as a "known-valid control"
+would trip condition 3 and hard-stop the audit over a healthy source.
+
+Validity therefore cannot be established by SQL. It is established by probing.
+
+#### Stage 1 — qualification
+
+- Candidate pool: Q-A8b (populated-image catalog rows, at most 2 per set across
+  every set), filtered to sets whose id matches a pokemontcg.io `set.id`
+  verbatim, then a **deterministic stratified draw** of up to 120 candidates
+  across the release-ordered pool so every era is sampled.
+- Each candidate is probed by its **exact catalog id**.
+- A candidate becomes **qualified** only by actually resolving to `F3` or `F4`
+  — an exact-id success.
+- Fewer than 20 qualified → the gate fails with an explicit reason. That
+  outcome is itself a finding about provider-ID overlap, not a source-health
+  verdict.
+
+#### Stage 2 — the gate
+
+- Controls: a **deterministic stratified (quantile) draw of 20** from the
+  qualified set, spread across the qualified era/set range. Quantile positions
+  rather than "the first 20 unique sets in release order", which would
+  concentrate controls in whichever era qualifies first and prove nothing about
+  the other namespaces.
+- Each is re-probed. The gate measures how **reliably known-good ids resolve** —
+  which is the property it is supposed to test.
 - **Pass requires all three:**
   1. **at least 19 of 20** controls reach the expected definitive-valid result;
   2. **at most 1** control ends indeterminate;
-  3. **0 false definitive classifications** — no known-valid control may finish
-     as `PTCGIO_EXACT_ID_ABSENT` or `PTCGIO_VERIFICATION_FAILED`.
+  3. **0 false definitive classifications** — no qualified control may finish as
+     `PTCGIO_EXACT_ID_ABSENT` or `PTCGIO_VERIFICATION_FAILED`.
 - **On failure:** STOP at G-7. P3 does not run. Source instability is recorded
   as a first-class finding: the runtime maps 5xx to `error`, never caches it,
   and re-requests after a 60 s memory cooldown
@@ -393,8 +491,13 @@ Runs before P3. **P3 is unreachable if this gate fails.**
   fallback tier non-deterministically.
 
 Condition 3 is the important one. It is what distinguishes a *slow* source from
-an *unsound* one: a control that comes back "absent" or "verification failed"
-means the probe would misclassify real rows, and no amount of retrying fixes it.
+an *unsound* one: a control now **known** to exist that comes back "absent" or
+"verification failed" means the probe would misclassify real rows, and no amount
+of retrying fixes it.
+
+**Preserved across both stages:** exact catalog ids only. No translation, no
+correspondence, no name/number lookup to find another identity. A candidate that
+does not resolve under its own id is simply not qualified.
 
 ### 7.4 P3 — exact-ID fallback probe
 
@@ -422,8 +525,19 @@ Required by the Q-A6 decision. Without it, Q-A6 produces an unactionable number.
 - Domain: the **A2** subset only (alias has image, canonical missing).
 - `GET {alias_image_url}/low.webp` against `assets.tcgdex.net` — an
   already-approved host, and the exact URL `imgSmall` would construct.
-- Verdicts: `ASSET_LIVE` (2xx with an image content-type), `ASSET_DEAD`
-  (404/410), or `ASSET_INDETERMINATE` (429/5xx/transport after budget).
+- **`ASSET_LIVE` requires all three of: a 2xx, an `image/*` content type, and a
+  NON-EMPTY body.** The body is consumed and its byte length checked. Status and
+  content type alone are not sufficient — a CDN can answer 200 with the right
+  content type and zero bytes, and calling that "live" would admit a recovery
+  candidate whose asset does not actually render.
+
+| Observation | Verdict |
+|---|---|
+| 2xx + `image/*` + bytes > 0 | `ASSET_LIVE` |
+| 2xx + `image/*` + zero bytes | `ASSET_INDETERMINATE` |
+| 2xx + non-image content type | `ASSET_INDETERMINATE` |
+| 404 / 410 | `ASSET_DEAD` |
+| 429 / 5xx / transport after budget | `ASSET_INDETERMINATE` |
 - This is CAT-0's **Probe A**, which was blocked pending
   `src/utils/imageUrl.js`. That file now exists and has been inspected, so the
   probe is unblocked — but it is scoped **only** to the A2 population.
@@ -499,7 +613,48 @@ Runs only if G-10 passes, at the scope G-10 permits.
   Q-A7 is written to return counts only for exactly that reason;
 - base-table choice is stated explicitly per query and is load-bearing.
   `cards_effective` excludes the 192 alias rows; raw `cards` includes them.
-  Q-A6 is the only query that reads raw `cards` for the alias population.
+  Exactly two statements read raw `cards` for a population the view cannot
+  express: **Q-A2b** (the historical Celebrations partition, which no column in
+  the view separates) and **Q-A6** (the alias rows, which the view excludes by
+  construction). No other statement may;
+- **Q-A7c is operator-only and is never committed** (§6.3).
+  `docs/cat-3a-evidence/inputs/` is gitignored to enforce that.
+
+#### Query inventory
+
+| Query | Purpose | Gate |
+|---|---|---|
+| **Q-A0** | Catalog invariants and post-CAT-2D.2 reconciliation | G-1 |
+| **Q-A1** | Global coverage, both base tables; NULL and BLANK counted separately | G-2 |
+| **Q-A2** | Per-set coverage, complete enumeration | G-2 |
+| **Q-A2b** | **Celebrations named populations** — `cel25` live numeric partition, historical Classic Collection partition, `cel25cc`; remeasurement only | G-2 |
+| **Q-A3** | Coverage partitions and concentration | G-2 |
+| **Q-A4a/b/c** | Live-schema dimension discovery; coverage by series; by release year | G-2 |
+| **Q-A5a/b** | `image_url` shape census; distinct hosts | G-2 |
+| **Q-A6a** | Approved-alias image census, aggregate by state | G-3 |
+| **Q-A6b** | **Full 192-pair state export** — probe input | G-3 |
+| **Q-A7a/b** | Active-owned exposure, global and by set; counts only | G-2 |
+| **Q-A7c** | **Active-owned missing-image card ids** — operator-only probe input | G-10 |
+| **Q-A8a** | Missing-image row export — probe input | G-4 |
+| **Q-A8b** | P3-0 control candidate pool — probe input | G-7 |
+
+#### Q-A2b — Celebrations, remeasurement only
+
+Q-A2 groups by `set_id`, and the live Celebrations base set and the historical
+Classic Collection reprints both live under `set_id = 'cel25'`. Grouping by set
+therefore cannot report them separately, and the figure CAT-2D.3 called *"the
+single most decision-relevant number in the audit"* is invisible in Q-A2's
+output.
+
+Q-A2b reuses **CAT-2D.3's population selector verbatim** and reports rows total,
+image missing, image populated and `cards_effective` membership for each of the
+three populations.
+
+**It pairs nothing.** No historical → survivor mapping is proposed, derived or
+implied. CAT-2D.3's admission rules are untouched. The selector's known
+limitation — it proves size/range/gap/duplicate consistency but not membership —
+is carried forward explicitly, and does not matter here because coverage is
+reported for both partitions and their total.
 
 ### 9.2 Probes — `scripts/cat3a-image-probe.mjs`
 
@@ -528,11 +683,20 @@ the live catalog**, not asserted from the repo.
 
 | Artifact | Content |
 |---|---|
-| `docs/cat-3a-evidence/manifest.json` | Baselines, capture timestamps, probe version, gate results, threshold values, sensitivity result, validation record |
+| `docs/cat-3a-evidence/manifest.json` | Baselines, capture timestamps, probe version, gate results (including `not_evaluated` states), threshold values, sensitivity result, **the SHA-256 of the executed `cat-3a-image-coverage-baseline.sql`**, validation record |
 | `docs/cat-3a-evidence/image_coverage_by_set.csv` | Q-A2 and Q-A3 |
 | `docs/cat-3a-evidence/upstream_image_availability.csv` | P1 |
-| `docs/cat-3a-evidence/alias_pair_image_census.csv` | Q-A6 and P4 (192 rows) |
-| `docs/cat-3a-evidence/image_gaps.csv` | Per-row `T`, `F`, `A`, `O` plus reason codes and the three `*_match` values, preserving `true`/`false`/`null` semantics. This is the artifact CAT-0 planned and could not materialize |
+| `docs/cat-3a-evidence/alias_pair_image_census.csv` | Q-A6b and P4 — **exactly 192 rows**, every approved pair with its A state; liveness populated for A2, `ASSET_NOT_APPLICABLE` elsewhere |
+| `docs/cat-3a-evidence/image_gaps.csv` | Per-row `T`, `F`, `A`, `O` plus reason codes and the three `*_match` values, preserving `true`/`false`/`null` semantics. **No ownership column** — see §6.3. This is the artifact CAT-0 planned and could not materialize |
+
+**Not an artifact, ever:** `docs/cat-3a-evidence/inputs/` — the operator-only
+SQL exports, including the Q-A7c owned id list. Gitignored.
+
+**On checksums.** `docs/sql/SHA256SUMS.txt` is a **deployment-SQL** checksum
+manifest covering the OL-0D deployment set. CAT-3A does not broaden its
+semantics and adds nothing to it. The SHA-256 of the reviewed and executed
+CAT-3A baseline SQL is recorded in this slice's own evidence manifest instead,
+which is where an audit's execution provenance belongs.
 
 ---
 
@@ -549,3 +713,10 @@ implement any repair.
 
 Commit 1 additionally carries **no production output, no evidence CSV, no
 findings, and no roadmap / current-state closeout.**
+
+### 11.1 The one file outside `docs/` and `scripts/`
+
+`.gitignore` gains a single rule, `docs/cat-3a-evidence/inputs/`. It exists to
+make §6.3's "the raw owned id list must never be committed" structural rather
+than procedural. It ignores a path that does not yet exist and changes no
+existing repository behavior.

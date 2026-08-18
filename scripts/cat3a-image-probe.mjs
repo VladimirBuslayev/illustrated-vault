@@ -56,14 +56,32 @@
 //
 //   node scripts/cat3a-image-probe.mjs --input <dir> --out <dir> [--phase p]
 //
-//   --input   directory holding the Q-A8a / Q-A8b / Q-A6b CSV exports:
-//               image_gaps_input.csv        (Q-A8a)  — required for p1/p2/p3
-//               p3_control_pool_input.csv   (Q-A8b)  — required for p30/p3
-//               a2_alias_assets_input.csv   (Q-A6b)  — required for p4
+//   --input   directory holding the SQL exports:
+//               image_gaps_input.csv         (Q-A8a) — required
+//               alias_pairs_input.csv        (Q-A6b) — all 192 approved pairs
+//               p3_control_pool_input.csv    (Q-A8b) — control candidates
+//               owned_missing_ids_input.csv  (Q-A7c) — OPERATOR-ONLY, see below
 //   --out     directory for evidence output (created if absent)
 //   --phase   all (default) | p1 | p2 | p30 | p3 | p4
 //
 //   No environment variable is read. No API key is sent — see KEYLESS below.
+//
+// THE OPERATOR-ONLY OWNED INPUT
+//
+//   owned_missing_ids_input.csv is a bare list of catalog card ids describing
+//   the ACTIVE-OWNED missing-image population. It carries no user id, no batch
+//   id and no quantity, but it is still a projection of what the collector base
+//   owns, so it is an INPUT and never an artifact.
+//
+//   This file reads it for exactly one purpose: computing AGGREGATE
+//   active-owned outcome counts, which the G-10 active-owned gate and the
+//   decision framework's weighting both require and which no aggregate SQL
+//   could supply. The owned id set is deliberately NOT threaded into
+//   buildEvidenceRecord, so there is no code path by which an owned id can
+//   reach image_gaps.csv — the safety harness asserts that structurally.
+//
+//   docs/cat-3a-evidence/inputs/ is gitignored so the raw list cannot be
+//   committed by accident.
 //
 // KEYLESS BY DESIGN
 //
@@ -97,6 +115,20 @@ const MIN_REQUEST_SPACING_MS = 250;
 const MAX_ATTEMPTS = 3;
 const BACKOFF_MS = [1000, 4000, 16000];
 const MAX_RETRY_AFTER_MS = 30000;
+
+// ── Population constants ─────────────────────────────────────────────────────
+// The CAT-2D.2 deployed alias population. G-3 validates the Q-A6b export
+// against this exactly. If it ever differs, the alias table has moved since
+// CAT-2D.2 and the audit must be re-scoped rather than run against a
+// population nobody approved.
+export const EXPECTED_ALIAS_PAIRS = 192;
+
+// P3-0 staging. The qualification pass establishes which candidate ids actually
+// exist in pokemontcg.io; the gate then measures how RELIABLY those known-good
+// ids resolve. Qualifying more than 20 leaves room for candidates that are
+// legitimately absent from the fallback provider.
+const P30_QUALIFY_CANDIDATES = 120;
+const P30_CONTROL_COUNT = 20;
 
 // ── Measurement vocabulary ───────────────────────────────────────────────────
 export const T = {
@@ -327,6 +359,58 @@ export function sensitivityOutcome({ t, f, a, assetLiveness, outcome }) {
 }
 
 /**
+ * P4 asset-liveness classification.
+ *
+ * ASSET_LIVE requires ALL THREE of: a 2xx, an image/* content type, and a
+ * NON-EMPTY body. Status and content type alone are not enough — a CDN can
+ * answer 200 with the right content type and zero bytes, and calling that
+ * "live" would put a recovery candidate into the decision framework whose asset
+ * does not actually render. The body is consumed for exactly this check.
+ */
+export function classifyAssetResponse({ kind, contentType, byteLength, reason }) {
+  if (kind === 'absent') return { liveness: ASSET.DEAD, reason: 'asset_404' };
+  if (kind !== 'ok') return { liveness: ASSET.INDETERMINATE, reason: reason || 'asset_unresolved' };
+  const ct = (contentType || '').toLowerCase();
+  if (!ct.startsWith('image/')) {
+    return { liveness: ASSET.INDETERMINATE, reason: `unexpected_content_type:${ct || 'none'}` };
+  }
+  if (!Number.isFinite(byteLength) || byteLength <= 0) {
+    return { liveness: ASSET.INDETERMINATE, reason: 'empty_body' };
+  }
+  return { liveness: ASSET.LIVE, reason: `${ct}:${byteLength}b` };
+}
+
+/**
+ * Deterministic stratified draw of `count` items across an ordered list.
+ *
+ * Used to pick P3-0 controls across the QUALIFIED era/set range. Taking the
+ * first N unique sets in release order would concentrate controls in whichever
+ * era happens to qualify first — usually the oldest — and would prove nothing
+ * about the modern namespaces. Quantile positions spread the draw across the
+ * whole range instead.
+ *
+ * Deterministic: same input, same output, so a re-run is comparable.
+ */
+export function stratifiedSample(items, count) {
+  const n = items.length;
+  if (n === 0 || count <= 0) return [];
+  if (n <= count) return [...items];
+  const picked = [];
+  const used = new Set();
+  for (let i = 0; i < count; i++) {
+    let idx = Math.round((i * (n - 1)) / (count - 1));
+    // Collisions are possible at small n; advance to the next free slot rather
+    // than returning a short list.
+    while (used.has(idx) && idx < n - 1) idx++;
+    while (used.has(idx) && idx > 0) idx--;
+    if (used.has(idx)) continue;
+    used.add(idx);
+    picked.push(items[idx]);
+  }
+  return picked;
+}
+
+/**
  * P3-0 gate evaluation. All three conditions must hold.
  *
  * Condition 3 is the one that matters most. Conditions 1 and 2 detect a SLOW or
@@ -436,14 +520,19 @@ function retryAfterMs(res) {
 /**
  * One bounded GET.
  *
- * Returns { kind: 'ok' | 'absent' | 'indeterminate', status, json?, contentType?, reason? }.
+ * Returns { kind: 'ok' | 'absent' | 'indeterminate', status, json?, contentType?,
+ * byteLength?, reason? }.
+ *
+ * `mode` selects what the body is used for:
+ *   'json'  — parse it (TCGdex / pokemontcg.io)
+ *   'bytes' — consume it and report byteLength (P4 asset liveness)
  *
  * 404/410 returns immediately and is NEVER retried — it is a settled answer and
  * retrying it would only slow the run. Everything else consumes the retry budget
  * and then falls through to indeterminate. There is no branch anywhere in this
  * function that converts a retry exhaustion into 'absent'.
  */
-async function httpGet(url, { parseJson = true } = {}) {
+async function httpGet(url, { mode = 'json' } = {}) {
   const host = (() => { try { return new URL(url).host; } catch { return 'invalid'; } })();
   stats.byHost[host] = (stats.byHost[host] || 0) + 1;
 
@@ -474,7 +563,17 @@ async function httpGet(url, { parseJson = true } = {}) {
     }
     if (kind === 'ok') {
       const contentType = res.headers && res.headers.get ? res.headers.get('content-type') : null;
-      if (!parseJson) return { kind: 'ok', status: res.status, contentType };
+      if (mode === 'bytes') {
+        // The body is consumed, not assumed: a 200 with the right content type
+        // and zero bytes must not be reported as a live asset.
+        try {
+          const buf = await res.arrayBuffer();
+          return { kind: 'ok', status: res.status, contentType, byteLength: buf.byteLength };
+        } catch {
+          lastReason = 'body_read_failure';
+          continue;
+        }
+      }
       try {
         return { kind: 'ok', status: res.status, contentType, json: await res.json() };
       } catch {
@@ -619,40 +718,68 @@ async function probePtcgio(row) {
 }
 
 /**
- * P3-0 — reliability gate. Selects controls that SPAN sets/eras rather than
- * clustering, then probes them. P3 is unreachable unless this passes.
+ * P3-0 — TWO-STAGE reliability gate. P3 is unreachable unless this passes.
+ *
+ * ⚠ WHY TWO STAGES (a review correction).
+ *
+ *   Stage 2 needs controls that are KNOWN-VALID pokemontcg.io ids. A catalog
+ *   row with a populated image_url only proves TCGdex served an asset; it says
+ *   nothing about whether the same id exists in pokemontcg.io. Nor does a
+ *   verbatim-matching set namespace — the providers agree on some set ids while
+ *   still disagreeing about individual card ids within them.
+ *
+ *   Probing such a card and getting a 404 is a legitimate provider-ID mismatch,
+ *   NOT a reliability failure. Feeding it to the gate as a "known-valid
+ *   control" would trip condition 3 (zero false definitives) and hard-stop an
+ *   audit over a healthy source.
+ *
+ *   So stage 1 QUALIFIES: a candidate becomes a control only by actually
+ *   resolving to F3/F4 — exact-id success against the verbatim id. Stage 2 then
+ *   re-probes a stratified draw of qualified ids and measures how RELIABLY
+ *   known-good ids resolve. That is the property the gate is supposed to test.
+ *
+ *   Preserved throughout: exact catalog ids only. No translation, no
+ *   correspondence, no name/number lookup to find a different identity. A
+ *   candidate that does not resolve under its own id is simply not qualified.
  */
 async function runP30(controlPool, ptcgioSetIds, log) {
-  const eligible = controlPool.filter(r => ptcgioSetIds.has(r.set_id));
-  log(`P3-0 — control pool ${controlPool.length}; verbatim-reachable ${eligible.length}`);
+  const reachable = controlPool.filter(r => ptcgioSetIds.has(r.set_id));
+  log(`P3-0 — pool ${controlPool.length}; verbatim-reachable ${reachable.length}`);
 
-  // Spread first: one per set across the release-ordered pool, then a second
-  // pass allowing a second control per set only if 20 were not reached. A gate
-  // measured on 20 cards from one modern set would prove nothing about the
-  // namespaces that actually carry the missing rows.
-  const chosen = [];
-  const usedSets = new Set();
-  for (const r of eligible) {
-    if (chosen.length >= 20) break;
-    if (usedSets.has(r.set_id)) continue;
-    usedSets.add(r.set_id);
-    chosen.push(r);
-  }
-  for (const r of eligible) {
-    if (chosen.length >= 20) break;
-    if (chosen.includes(r)) continue;
-    chosen.push(r);
-  }
+  // Stage 1 — qualification. Stratify the candidate draw across the
+  // release-ordered pool so qualification itself samples every era.
+  const candidates = stratifiedSample(reachable, P30_QUALIFY_CANDIDATES);
+  log(`P3-0 stage 1 — qualifying ${candidates.length} candidates`);
 
-  if (chosen.length < 20) {
+  const qualified = [];
+  const qualification = [];
+  for (const r of candidates) {
+    const v = await probePtcgio(r);
+    const isQualified = v.f === F.EXACT_VERIFIED || v.f === F.VERIFIED_NO_IMAGE;
+    qualification.push({ id: r.id, set_id: r.set_id, f: v.f, qualified: isQualified });
+    if (isQualified) qualified.push(r);
+    if (qualified.length >= P30_QUALIFY_CANDIDATES) break;
+  }
+  log(`P3-0 stage 1 — qualified ${qualified.length} of ${candidates.length}`);
+
+  if (qualified.length < P30_CONTROL_COUNT) {
     return {
-      selected: chosen.length,
-      distinct_sets: usedSets.size,
+      qualification,
+      qualified_count: qualified.length,
+      selected: 0,
+      distinct_sets: 0,
       results: [],
-      gate: { passed: false, reason: `only ${chosen.length} eligible controls; 20 required` },
+      gate: {
+        passed: false,
+        reason: `only ${qualified.length} qualified controls; ${P30_CONTROL_COUNT} required. `
+          + 'Too few candidate ids exist in pokemontcg.io under their own catalog id to '
+          + 'measure reliability at all — which is itself a finding about provider-ID overlap.',
+      },
     };
   }
 
+  // Stage 2 — the gate. Stratified draw across the QUALIFIED era/set range.
+  const chosen = stratifiedSample(qualified, P30_CONTROL_COUNT);
   const results = [];
   for (const r of chosen) {
     const v = await probePtcgio(r);
@@ -662,7 +789,14 @@ async function runP30(controlPool, ptcgioSetIds, log) {
 
   const gate = evaluateReliabilityGate(results);
   gate.distinct_sets = new Set(results.map(r => r.set_id)).size;
-  return { selected: chosen.length, distinct_sets: gate.distinct_sets, results, gate };
+  return {
+    qualification,
+    qualified_count: qualified.length,
+    selected: chosen.length,
+    distinct_sets: gate.distinct_sets,
+    results,
+    gate,
+  };
 }
 
 /** P3 — assign exactly one F to every row that needs one. */
@@ -728,7 +862,12 @@ async function runP3(rows, tByRow, ptcgioSetIds, log) {
   return { fByRow: out, f2Validation, f2Unsound, f2Count: f2Rows.length };
 }
 
-/** P4 — approved-alias asset liveness on assets.tcgdex.net. */
+/**
+ * P4 — approved-alias asset liveness on assets.tcgdex.net.
+ *
+ * Runs over the A2 subset ONLY. A1/A3/A4 pairs have nothing to test: A1 and A3
+ * canonical rows already carry an image, and an A4 alias has no image to probe.
+ */
 async function runP4(a2Rows, log) {
   log(`P4 — alias asset liveness over ${a2Rows.length} A2 rows`);
   const out = new Map();
@@ -742,16 +881,9 @@ async function runP4(a2Rows, log) {
       });
       continue;
     }
-    const res = await httpGet(url, { parseJson: false });
-    let liveness = ASSET.INDETERMINATE;
-    let reason = res.reason || 'unknown';
-    if (res.kind === 'absent') { liveness = ASSET.DEAD; reason = 'asset_404'; }
-    else if (res.kind === 'ok') {
-      const ct = (res.contentType || '').toLowerCase();
-      if (ct.startsWith('image/')) { liveness = ASSET.LIVE; reason = ct; }
-      else { liveness = ASSET.INDETERMINATE; reason = `unexpected_content_type:${ct || 'none'}`; }
-    }
-    out.set(r.canonical_card_id, { liveness, reason, status: res.status ?? null });
+    const res = await httpGet(url, { mode: 'bytes' });
+    const verdict = classifyAssetResponse(res);
+    out.set(r.canonical_card_id, { ...verdict, status: res.status ?? null });
   }
   return out;
 }
@@ -779,6 +911,115 @@ function readInput(dir, file, required) {
   return parseCsv(readFileSync(path, 'utf8'));
 }
 
+
+// ── Evidence record shape ────────────────────────────────────────────────────
+// The per-row evidence header is a MODULE CONSTANT rather than an inline
+// literal so the safety harness can assert what image_gaps.csv may contain.
+// There is deliberately no owned/ownership column: the operator-only owned id
+// list feeds aggregate tallies only and must never reach a committed artifact.
+export const EVIDENCE_HEADER = [
+  'id', 'set_id', 'set_name', 'local_id', 'name',
+  'tcgdex_state', 'tcgdex_reason',
+  'ptcgio_state', 'ptcgio_reason', 'ptcgio_status',
+  'id_match', 'number_match', 'name_match', 'set_match',
+  'alias_state', 'alias_asset_liveness',
+  'outcome', 'sensitivity_outcome',
+];
+
+/**
+ * Build one evidence record.
+ *
+ * ⚠ This function deliberately takes NO owned-population argument. Active-owned
+ *   figures are computed as aggregates in main() by intersecting the outcome
+ *   map with the operator-only id set — never by stamping an ownership flag
+ *   onto a row. Because the owned set is not in scope here, there is no code
+ *   path by which an owned id can be written into image_gaps.csv.
+ */
+export function buildEvidenceRecord({ row, t, fRec, a, assetLiveness, fallbackPhaseRan }) {
+  const f = fRec ? fRec.f : (fallbackPhaseRan ? F.INDETERMINATE : '');
+  const outcome = fallbackPhaseRan
+    ? deriveOutcome({ t: t.t, f, a, assetLiveness })
+    : '';
+  const sensitivity = fallbackPhaseRan
+    ? sensitivityOutcome({ t: t.t, f, a, assetLiveness, outcome })
+    : '';
+  const checks = fRec && fRec.checks ? fRec.checks : null;
+
+  return {
+    id: row.id,
+    set_id: row.set_id,
+    set_name: row.set_name,
+    local_id: row.local_id,
+    name: row.name,
+    tcgdex_state: t.t,
+    tcgdex_reason: t.reason,
+    ptcgio_state: f,
+    ptcgio_reason: fRec ? fRec.reason : '',
+    ptcgio_status: fRec && fRec.status !== null && fRec.status !== undefined ? fRec.status : '',
+    id_match: checks ? String(checks.id_match) : '',
+    number_match: checks ? String(checks.number_match) : '',
+    name_match: checks ? String(checks.name_match) : '',
+    set_match: checks ? String(checks.set_match) : '',
+    alias_state: a,
+    alias_asset_liveness: assetLiveness,
+    outcome,
+    sensitivity_outcome: sensitivity,
+  };
+}
+
+/**
+ * Gate results.
+ *
+ * ⚠ G-8 and G-9 can NEVER be true when G-7 failed (a review correction).
+ *
+ *   The earlier version computed G-9 from row count and T assignment alone, so
+ *   a run that hard-stopped at the reliability gate — with no F assigned to any
+ *   row and no outcome derivable — still reported "completeness: true". That is
+ *   exactly the kind of green light an audit must not emit.
+ *
+ *   Correct semantics:
+ *     G-8  every row REQUIRING a fallback verdict carries exactly one F value.
+ *     G-9  every row carries exactly one T, F, A and O, and totals reconcile.
+ *     Both are 'not_evaluated' — never true — when the fallback phase did not
+ *     run. 'not_evaluated' is a distinct third state, not a synonym for false:
+ *     the gate was not tested, which is different from having been tested and
+ *     failed.
+ */
+export function computeGates({ records, expectedRows, setStates, p30, fallbackPhaseRan, aliasPairs }) {
+  const NOT_EVALUATED = 'not_evaluated';
+
+  const allSetsResolved = [...setStates.values()].every(s => s.state !== 'SET_INDETERMINATE');
+  const tValues = new Set(Object.values(T));
+  const fValues = new Set(Object.values(F));
+  const aValues = new Set(Object.values(A));
+  const oValues = new Set(Object.values(O));
+
+  const everyRowHasT = records.length === expectedRows
+    && records.every(r => tValues.has(r.tcgdex_state));
+
+  const g8 = !fallbackPhaseRan
+    ? NOT_EVALUATED
+    : records.every(r => fValues.has(r.ptcgio_state));
+
+  const g9 = !fallbackPhaseRan
+    ? NOT_EVALUATED
+    : (records.length === expectedRows
+      && everyRowHasT
+      && records.every(r => fValues.has(r.ptcgio_state))
+      && records.every(r => aValues.has(r.alias_state))
+      && records.every(r => oValues.has(r.outcome)));
+
+  return {
+    'G-3_alias_pairs_complete': aliasPairs.length === EXPECTED_ALIAS_PAIRS,
+    'G-3_alias_pairs_seen': aliasPairs.length,
+    'G-5_all_sets_resolved': allSetsResolved,
+    'G-6_all_rows_have_T': everyRowHasT,
+    'G-7_ptcgio_reliability': p30 ? p30.gate.passed : NOT_EVALUATED,
+    'G-8_fallback_assigned': g8,
+    'G-9_completeness': g9,
+  };
+}
+
 export async function main(argv) {
   const args = parseArgs(argv);
   if (!args.input || !args.out) {
@@ -792,8 +1033,18 @@ export async function main(argv) {
   const startedAt = new Date().toISOString();
   const gaps = readInput(args.input, 'image_gaps_input.csv', true);
   const controlPool = readInput(args.input, 'p3_control_pool_input.csv', false) || [];
-  const a2Rows = readInput(args.input, 'a2_alias_assets_input.csv', false) || [];
-  log(`Input — missing-image rows: ${gaps.length}; control pool: ${controlPool.length}; A2 rows: ${a2Rows.length}`);
+  const aliasPairs = readInput(args.input, 'alias_pairs_input.csv', false) || [];
+  // OPERATOR-ONLY. Never written to any artifact; used for aggregates only.
+  const ownedRows = readInput(args.input, 'owned_missing_ids_input.csv', false) || [];
+  const ownedIds = new Set(ownedRows.map(r => r.card_id).filter(Boolean));
+
+  log(`Input — missing-image rows: ${gaps.length}; control pool: ${controlPool.length}; `
+    + `alias pairs: ${aliasPairs.length}; active-owned missing ids: ${ownedIds.size}`);
+
+  if (aliasPairs.length !== EXPECTED_ALIAS_PAIRS) {
+    log(`⚠ G-3 — alias pair input holds ${aliasPairs.length}, expected ${EXPECTED_ALIAS_PAIRS}. `
+      + 'The A dimension will be reported as PARTIAL and O3 must be withheld.');
+  }
 
   const catalogSetIds = [...new Set(gaps.map(r => r.set_id))].sort();
 
@@ -813,9 +1064,18 @@ export async function main(argv) {
 
   const tByRow = await runP2(gaps, p1, log);
 
-  // ── A dimension + P4 ───────────────────────────────────────────────────────
+  // ── A dimension, from the FULL approved-pair export ────────────────────────
+  // Every canonical survivor gets its real state. A2 and A4 are the two states
+  // that can appear in the missing-image population; A1 and A3 canonical rows
+  // carry an image and are therefore not in it. Assigning A0 to an A4 row — as
+  // an A2-only input would force — would understate the dimension and make the
+  // 192-row census artifact impossible.
   const aByRow = new Map();
-  for (const r of a2Rows) aByRow.set(r.canonical_card_id, A.ALIAS_ONLY);
+  for (const p of aliasPairs) {
+    if (!p.canonical_card_id || !p.alias_state) continue;
+    aByRow.set(p.canonical_card_id, p.alias_state);
+  }
+  const a2Rows = aliasPairs.filter(p => p.alias_state === A.ALIAS_ONLY);
   const assetByRow = a2Rows.length > 0 ? await runP4(a2Rows, log) : new Map();
 
   // ── P3-0 / P3 ──────────────────────────────────────────────────────────────
@@ -833,7 +1093,8 @@ export async function main(argv) {
       fallbackPhaseRan = true;
     } else {
       // G-7. The specification requires a hard stop here: without a sound
-      // fallback measurement, every F- and O-dependent conclusion is withheld.
+      // fallback measurement, every F- and O-dependent conclusion is withheld,
+      // and G-8/G-9 report not_evaluated rather than a misleading pass.
       log('G-7 FAILED — P3 not run. F- and O-dependent conclusions are withheld.');
     }
   }
@@ -847,75 +1108,43 @@ export async function main(argv) {
     const assetLiveness = a === A.ALIAS_ONLY
       ? (asset ? asset.liveness : ASSET.INDETERMINATE)
       : ASSET.NOT_APPLICABLE;
-
-    const f = fRec ? fRec.f : (fallbackPhaseRan ? F.INDETERMINATE : '');
-    const outcome = fallbackPhaseRan
-      ? deriveOutcome({ t: t.t, f, a, assetLiveness })
-      : '';
-    const sensitivity = fallbackPhaseRan
-      ? sensitivityOutcome({ t: t.t, f, a, assetLiveness, outcome })
-      : '';
-    const checks = fRec && fRec.checks ? fRec.checks : null;
-
-    return {
-      id: row.id,
-      set_id: row.set_id,
-      set_name: row.set_name,
-      local_id: row.local_id,
-      name: row.name,
-      tcgdex_state: t.t,
-      tcgdex_reason: t.reason,
-      ptcgio_state: f,
-      ptcgio_reason: fRec ? fRec.reason : '',
-      ptcgio_status: fRec && fRec.status !== null && fRec.status !== undefined ? fRec.status : '',
-      id_match: checks ? String(checks.id_match) : '',
-      number_match: checks ? String(checks.number_match) : '',
-      name_match: checks ? String(checks.name_match) : '',
-      set_match: checks ? String(checks.set_match) : '',
-      alias_state: a,
-      alias_asset_liveness: assetLiveness,
-      outcome,
-      sensitivity_outcome: sensitivity,
-    };
+    return buildEvidenceRecord({ row, t, fRec, a, assetLiveness, fallbackPhaseRan });
   });
 
-  writeFileSync(
-    join(args.out, 'image_gaps.csv'),
-    toCsv(
-      ['id', 'set_id', 'set_name', 'local_id', 'name', 'tcgdex_state', 'tcgdex_reason',
-        'ptcgio_state', 'ptcgio_reason', 'ptcgio_status', 'id_match', 'number_match',
-        'name_match', 'set_match', 'alias_state', 'alias_asset_liveness', 'outcome',
-        'sensitivity_outcome'],
-      records,
-    ),
-  );
+  writeFileSync(join(args.out, 'image_gaps.csv'), toCsv(EVIDENCE_HEADER, records));
 
-  if (a2Rows.length > 0) {
+  // ── Alias census — ALL approved pairs, not just A2 ─────────────────────────
+  if (aliasPairs.length > 0) {
     writeFileSync(
       join(args.out, 'alias_pair_image_census.csv'),
       toCsv(
         ['alias_card_id', 'canonical_card_id', 'canonical_set_id', 'canonical_local_id',
           'canonical_name', 'alias_state', 'asset_liveness', 'asset_reason', 'asset_status'],
-        a2Rows.map(r => {
-          const v = assetByRow.get(r.canonical_card_id) || {};
+        aliasPairs.map(p => {
+          const v = assetByRow.get(p.canonical_card_id);
           return {
-            alias_card_id: r.alias_card_id,
-            canonical_card_id: r.canonical_card_id,
-            canonical_set_id: r.canonical_set_id,
-            canonical_local_id: r.canonical_local_id,
-            canonical_name: r.canonical_name,
-            alias_state: A.ALIAS_ONLY,
-            asset_liveness: v.liveness ?? ASSET.INDETERMINATE,
-            asset_reason: v.reason ?? '',
-            asset_status: v.status ?? '',
+            alias_card_id: p.alias_card_id,
+            canonical_card_id: p.canonical_card_id,
+            canonical_set_id: p.canonical_set_id,
+            canonical_local_id: p.canonical_local_id,
+            canonical_name: p.canonical_name,
+            alias_state: p.alias_state,
+            // Liveness is meaningful for A2 only; every other state records
+            // NOT_APPLICABLE rather than an empty cell that could read as a
+            // failed probe.
+            asset_liveness: p.alias_state === A.ALIAS_ONLY
+              ? (v ? v.liveness : ASSET.INDETERMINATE)
+              : ASSET.NOT_APPLICABLE,
+            asset_reason: v ? v.reason : '',
+            asset_status: v && v.status !== null && v.status !== undefined ? v.status : '',
           };
         }),
       ),
     );
   }
 
-  // ── Tallies, gates, manifest ───────────────────────────────────────────────
-  const tally = (key) => records.reduce((acc, r) => {
+  // ── Tallies ────────────────────────────────────────────────────────────────
+  const tallyOver = (rows, key) => rows.reduce((acc, r) => {
     const k = r[key] || '(none)';
     acc[k] = (acc[k] || 0) + 1;
     return acc;
@@ -923,18 +1152,44 @@ export async function main(argv) {
 
   const o0 = records.filter(r => r.outcome === O.INDETERMINATE).length;
   const o0Rate = records.length > 0 ? (100 * o0) / records.length : 0;
-  const unclassifiedT = records.filter(r => !r.tcgdex_state).length;
+
+  // ── Active-owned aggregates ────────────────────────────────────────────────
+  // The ONLY use of the operator-only owned id set. It is intersected with the
+  // in-memory record list to produce counts; no owned id is written anywhere.
+  const ownedRecords = ownedIds.size > 0
+    ? records.filter(r => ownedIds.has(r.id))
+    : [];
+  const ownedO0 = ownedRecords.filter(r => r.outcome === O.INDETERMINATE).length;
+  const activeOwned = ownedIds.size === 0
+    ? { available: false, note: 'owned_missing_ids_input.csv not supplied — the active-owned G-10 gate cannot be evaluated' }
+    : {
+      available: true,
+      owned_missing_rows_supplied: ownedIds.size,
+      owned_missing_rows_matched_in_evidence: ownedRecords.length,
+      // A mismatch means the two exports were taken at different times and the
+      // owned figures must not be trusted.
+      reconciles: ownedRecords.length === ownedIds.size,
+      outcome: tallyOver(ownedRecords, 'outcome'),
+      sensitivity_outcome: tallyOver(ownedRecords, 'sensitivity_outcome'),
+      o0_rows: ownedO0,
+      'G-10_active_owned_o0_is_zero': fallbackPhaseRan ? ownedO0 === 0 : 'not_evaluated',
+    };
+
+  const gates = computeGates({
+    records, expectedRows: gaps.length, setStates: p1.setStates, p30, fallbackPhaseRan, aliasPairs,
+  });
 
   const manifest = {
     audit: 'CAT-3A — Image Coverage & Recoverability Audit',
-    probe_version: 1,
+    probe_version: 2,
     started_at: startedAt,
     completed_at: new Date().toISOString(),
     keyless: true,
     inputs: {
       missing_image_rows: gaps.length,
       control_pool_rows: controlPool.length,
-      a2_alias_rows: a2Rows.length,
+      alias_pairs: aliasPairs.length,
+      active_owned_missing_ids: ownedIds.size,
       distinct_catalog_sets: catalogSetIds.length,
     },
     p1: {
@@ -943,34 +1198,52 @@ export async function main(argv) {
       sets_indeterminate: [...p1.setStates.values()].filter(s => s.state === 'SET_INDETERMINATE').length,
       upstream_sets_not_in_catalog: p1.upstreamSetsNotInCatalog,
     },
-    p3_0: p30 ? { selected: p30.selected, distinct_sets: p30.distinct_sets, gate: p30.gate } : null,
-    p3: p3
-      ? { f2_derived_rows: p3.f2Count, f2_validation_sample: p3.f2Validation.length, f2_derivation_unsound: p3.f2Unsound }
+    p3_0: p30
+      ? {
+        qualification_candidates: p30.qualification ? p30.qualification.length : 0,
+        qualified_count: p30.qualified_count ?? 0,
+        controls_selected: p30.selected,
+        distinct_sets: p30.distinct_sets,
+        gate: p30.gate,
+      }
       : null,
+    p3: p3
+      ? {
+        f2_derived_rows: p3.f2Count,
+        f2_validation_sample: p3.f2Validation.length,
+        f2_derivation_unsound: p3.f2Unsound,
+      }
+      : null,
+    p4: {
+      a2_rows_probed: a2Rows.length,
+      liveness: [...assetByRow.values()].reduce((acc, v) => {
+        acc[v.liveness] = (acc[v.liveness] || 0) + 1;
+        return acc;
+      }, {}),
+    },
     fallback_phase_ran: fallbackPhaseRan,
     tallies: {
-      tcgdex_state: tally('tcgdex_state'),
-      ptcgio_state: tally('ptcgio_state'),
-      alias_state: tally('alias_state'),
-      outcome: tally('outcome'),
-      sensitivity_outcome: tally('sensitivity_outcome'),
+      tcgdex_state: tallyOver(records, 'tcgdex_state'),
+      ptcgio_state: tallyOver(records, 'ptcgio_state'),
+      alias_state: tallyOver(records, 'alias_state'),
+      outcome: tallyOver(records, 'outcome'),
+      sensitivity_outcome: tallyOver(records, 'sensitivity_outcome'),
     },
+    active_owned: activeOwned,
     gates: {
-      'G-5_all_sets_resolved':
-        [...p1.setStates.values()].every(s => s.state !== 'SET_INDETERMINATE'),
-      'G-6_all_rows_have_T': unclassifiedT === 0,
-      'G-7_ptcgio_reliability': p30 ? p30.gate.passed : null,
-      'G-8_fallback_assigned': fallbackPhaseRan,
-      'G-9_completeness': records.length === gaps.length && unclassifiedT === 0,
-      // G-10 is NOT decided here. The raw rate and the sensitivity tally are the
-      // inputs; whether the global conclusion may proceed is a review judgement
-      // recorded in the specification document, not a boolean this script sets.
+      ...gates,
+      // G-10 is NOT decided here. The raw rate, the sensitivity tally and the
+      // active-owned figures are its inputs; whether the global conclusion may
+      // proceed is a review judgement recorded in the specification document,
+      // not a boolean this script sets.
       'G-10_inputs': {
         o0_rows: o0,
         o0_rate_pct: Number(o0Rate.toFixed(4)),
         o0_below_1pct: o0Rate < 1,
-        note: 'A rate below 1% is NOT sufficient on its own. The worst-case sensitivity '
-          + 'tally must show the selected decision path is unchanged. See spec §6.1/§6.2.',
+        active_owned_o0_rows: activeOwned.available ? ownedO0 : null,
+        note: 'A global rate below 1% is NOT sufficient on its own. The worst-case '
+          + 'sensitivity tally must show the selected decision path is unchanged, and the '
+          + 'per-set and active-owned scopes require O0 = 0 with no tolerance. See spec §6.1/§6.2.',
       },
     },
     request_stats: stats,
@@ -978,7 +1251,7 @@ export async function main(argv) {
 
   writeFileSync(join(args.out, 'probe_manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   log(`\nWrote evidence to ${args.out}`);
-  log(JSON.stringify(manifest.tallies, null, 2));
+  log(JSON.stringify({ tallies: manifest.tallies, gates: manifest.gates }, null, 2));
 }
 
 // Executed only when invoked directly, so the safety harness can import the

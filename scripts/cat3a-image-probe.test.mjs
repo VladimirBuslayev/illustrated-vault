@@ -353,6 +353,162 @@ const g = probe.evaluateReliabilityGate(controls({ [F.EXACT_VERIFIED]: 19, [F.EX
 ok(g.conditions.c3_zero_false_definitive === false && g.conditions.c1_valid_at_least_19 === true,
   'the three gate conditions are reported independently');
 
+// ── 10b. P3-0 two-stage qualification ────────────────────────────────────────
+console.log('\n10b. P3-0 two-stage qualification');
+
+ok(/Stage 1 — qualification/.test(src) && /Stage 2 — the gate/.test(src),
+  'runP30 is implemented in two stages');
+ok(/const isQualified = v\.f === F\.EXACT_VERIFIED \|\| v\.f === F\.VERIFIED_NO_IMAGE/.test(codeOnly),
+  'a candidate qualifies only by an actual exact-ID success');
+ok(/qualified\.length < P30_CONTROL_COUNT/.test(codeOnly),
+  'too few qualified controls fails the gate explicitly rather than proceeding');
+ok(/stratifiedSample\(qualified, P30_CONTROL_COUNT\)/.test(codeOnly),
+  'stage 2 draws controls from the QUALIFIED set, stratified');
+ok(/stratifiedSample\(reachable, P30_QUALIFY_CANDIDATES\)/.test(codeOnly),
+  'stage 1 candidates are themselves stratified across the pool');
+// The rejected design: first-N-unique-sets in release order.
+ok(!/usedSets/.test(codeOnly),
+  'the first-N-unique-sets selection has been removed');
+ok(!/50/.test(codeOnly.match(/async function runP30[\s\S]*?\n}/)?.[0] || ''),
+  'the unused 50-row P3-0 sample is gone');
+
+// stratifiedSample must genuinely span the range, not take a prefix.
+const seq = Array.from({ length: 100 }, (_, i) => i);
+const drawn = probe.stratifiedSample(seq, 20);
+ok(drawn.length === 20, 'stratified draw returns the requested count');
+ok(drawn[0] === 0 && drawn[drawn.length - 1] === 99,
+  'stratified draw spans both ends of the range');
+ok(drawn.some(v => v > 40 && v < 60), 'stratified draw covers the middle of the range');
+ok(new Set(drawn).size === drawn.length, 'stratified draw has no duplicates');
+ok(JSON.stringify(probe.stratifiedSample(seq, 20)) === JSON.stringify(drawn),
+  'stratified draw is deterministic');
+ok(probe.stratifiedSample([1, 2, 3], 20).length === 3, 'a short list is returned whole');
+ok(probe.stratifiedSample([], 20).length === 0, 'an empty list yields an empty draw');
+
+// ── 10c. P4 asset liveness requires a non-empty body ─────────────────────────
+console.log('\n10c. P4 asset liveness');
+
+const asset = (o) => probe.classifyAssetResponse(o).liveness;
+ok(asset({ kind: 'ok', contentType: 'image/webp', byteLength: 1024 }) === ASSET.LIVE,
+  '200 + image + bytes -> LIVE');
+ok(asset({ kind: 'ok', contentType: 'image/webp', byteLength: 0 }) === ASSET.INDETERMINATE,
+  '200 + image + ZERO bytes -> INDETERMINATE, never LIVE');
+ok(asset({ kind: 'ok', contentType: 'text/html', byteLength: 4096 }) === ASSET.INDETERMINATE,
+  '200 + non-image -> INDETERMINATE');
+ok(asset({ kind: 'ok', contentType: null, byteLength: 10 }) === ASSET.INDETERMINATE,
+  '200 + missing content type -> INDETERMINATE');
+ok(asset({ kind: 'absent', status: 404 }) === ASSET.DEAD, '404 -> DEAD');
+ok(asset({ kind: 'absent', status: 410 }) === ASSET.DEAD, '410 -> DEAD');
+ok(asset({ kind: 'indeterminate', reason: 'http_503' }) === ASSET.INDETERMINATE,
+  '5xx -> INDETERMINATE');
+ok(asset({ kind: 'indeterminate', reason: 'http_429' }) === ASSET.INDETERMINATE,
+  '429 -> INDETERMINATE');
+ok(probe.classifyAssetResponse({ kind: 'ok', contentType: 'image/png', byteLength: 0 }).reason
+  === 'empty_body', 'the empty-body reason is recorded distinctly');
+// The body must actually be consumed, not inferred from a header.
+ok(/mode: 'bytes'/.test(codeOnly) && /arrayBuffer\(\)/.test(codeOnly),
+  'P4 consumes the response body rather than trusting content-length');
+
+// ── 10d. G-8 / G-9 can never pass after a G-7 failure ────────────────────────
+console.log('\n10d. gate semantics on the G-7 failure path');
+
+const okRecord = (over = {}) => ({
+  id: 'x-1', tcgdex_state: T.PRESENT_NO_IMAGE, ptcgio_state: F.EXACT_ID_ABSENT,
+  alias_state: A.NOT_APPLICABLE, outcome: O.NOT_RECOVERABLE, ...over,
+});
+const setStatesOk = new Map([['x', { state: 'SET_PRESENT' }]]);
+const pairs192 = Array.from({ length: 192 }, (_, i) => ({ canonical_card_id: `c-${i}` }));
+
+const gatesFailPath = probe.computeGates({
+  records: [okRecord({ ptcgio_state: '', outcome: '' })],
+  expectedRows: 1, setStates: setStatesOk,
+  p30: { gate: { passed: false } }, fallbackPhaseRan: false, aliasPairs: pairs192,
+});
+ok(gatesFailPath['G-7_ptcgio_reliability'] === false, 'G-7 reports the failure');
+ok(gatesFailPath['G-8_fallback_assigned'] === 'not_evaluated',
+  'G-8 is not_evaluated after a G-7 failure — never true');
+ok(gatesFailPath['G-9_completeness'] === 'not_evaluated',
+  'G-9 is not_evaluated after a G-7 failure — never true');
+ok(gatesFailPath['G-6_all_rows_have_T'] === true,
+  'the T dimension remains valid and is still reported');
+
+const gatesNoP30 = probe.computeGates({
+  records: [okRecord({ ptcgio_state: '', outcome: '' })],
+  expectedRows: 1, setStates: setStatesOk,
+  p30: null, fallbackPhaseRan: false, aliasPairs: pairs192,
+});
+ok(gatesNoP30['G-7_ptcgio_reliability'] === 'not_evaluated',
+  'an unrun P3-0 is not_evaluated, not false');
+ok(gatesNoP30['G-9_completeness'] !== true, 'G-9 is never true without the fallback phase');
+
+const gatesHappy = probe.computeGates({
+  records: [okRecord()], expectedRows: 1, setStates: setStatesOk,
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192,
+});
+ok(gatesHappy['G-8_fallback_assigned'] === true, 'G-8 passes on a complete run');
+ok(gatesHappy['G-9_completeness'] === true, 'G-9 passes on a complete run');
+
+// G-9 must fail on a genuinely incomplete run, not merely on a G-7 stop.
+const gatesShort = probe.computeGates({
+  records: [okRecord()], expectedRows: 2, setStates: setStatesOk,
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192,
+});
+ok(gatesShort['G-9_completeness'] === false, 'G-9 fails when totals do not reconcile');
+
+const gatesBadO = probe.computeGates({
+  records: [okRecord({ outcome: 'garbage' })], expectedRows: 1, setStates: setStatesOk,
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192,
+});
+ok(gatesBadO['G-9_completeness'] === false, 'G-9 fails when a row carries no valid O');
+
+// ── 10e. G-3 validates the 192-pair population ───────────────────────────────
+console.log('\n10e. G-3 alias population');
+
+ok(probe.EXPECTED_ALIAS_PAIRS === 192, 'the expected alias population is 192');
+ok(gatesHappy['G-3_alias_pairs_complete'] === true, 'G-3 passes at exactly 192 pairs');
+const gates191 = probe.computeGates({
+  records: [okRecord()], expectedRows: 1, setStates: setStatesOk,
+  p30: { gate: { passed: true } }, fallbackPhaseRan: true, aliasPairs: pairs192.slice(0, 191),
+});
+ok(gates191['G-3_alias_pairs_complete'] === false, 'G-3 fails at 191 pairs');
+ok(gates191['G-3_alias_pairs_seen'] === 191, 'G-3 reports the observed count');
+ok(/alias_pairs_input\.csv/.test(codeOnly) && !/a2_alias_assets_input/.test(codeOnly),
+  'the probe ingests the FULL pair export, not an A2-only file');
+ok(/p\.alias_state === A\.ALIAS_ONLY/.test(codeOnly),
+  'P4 is scoped to A2 by the ingested state');
+ok(/aliasPairs\.map\(/.test(codeOnly),
+  'the alias census artifact is built from all ingested pairs, not the A2 subset');
+
+// ── 10f. Owned linkage never reaches per-row evidence ────────────────────────
+console.log('\n10f. operator-only owned linkage');
+
+ok(/owned_missing_ids_input\.csv/.test(codeOnly), 'the owned id input is read');
+const headerKeys = probe.EVIDENCE_HEADER.join(',');
+ok(!/own|user|collector|quantity/i.test(headerKeys),
+  'the evidence header carries no ownership, user or quantity column');
+// Structural: the record builder cannot see the owned set, so no code path can
+// stamp ownership onto a committed row.
+const builderSig = codeOnly.match(/export function buildEvidenceRecord\(\{[^}]*\}\)/)?.[0] || '';
+ok(builderSig.length > 0 && !/owned/i.test(builderSig),
+  'buildEvidenceRecord takes no owned-population argument');
+const builtRow = probe.buildEvidenceRecord({
+  row: { id: 'x-1', set_id: 'x', set_name: 'X', local_id: '1', name: 'Pikachu' },
+  t: { t: T.PRESENT_NO_IMAGE, reason: 'card_image_absent' },
+  fRec: { f: F.EXACT_ID_ABSENT, reason: 'ptcgio_404', status: 404, checks: null },
+  a: A.NOT_APPLICABLE, assetLiveness: ASSET.NOT_APPLICABLE, fallbackPhaseRan: true,
+});
+ok(Object.keys(builtRow).every(k => probe.EVIDENCE_HEADER.includes(k)),
+  'a built record emits only declared evidence columns');
+ok(!Object.keys(builtRow).some(k => /own|user/i.test(k)),
+  'a built record has no ownership key');
+ok(builtRow.outcome === O.NOT_RECOVERABLE, 'a built record carries its derived outcome');
+// ownedIds may only be used for aggregates.
+const ownedUses = [...codeOnly.matchAll(/ownedIds/g)].length;
+ok(ownedUses >= 2 && !/toCsv\([^)]*owned/i.test(codeOnly),
+  'the owned id set is never passed to a CSV writer');
+ok(/active_owned/.test(codeOnly) && /G-10_active_owned_o0_is_zero/.test(codeOnly),
+  'the active-owned O0 = 0 gate input is computed');
+
 // ── 11. CSV round-trip ───────────────────────────────────────────────────────
 console.log('\n11. CSV handling');
 
