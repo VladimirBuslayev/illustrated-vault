@@ -468,17 +468,71 @@ ok(/Not LOAD-BEARING\.\*\* Every ownership signal is zero/.test(docFlat),
   'the doc records WHY it is not load-bearing — every ownership signal zero');
 ok(/More than DORMANT\.\*\* Both populations are fully present/.test(docFlat),
   'the doc records WHY it is more than dormant — full catalog coexistence');
-ok(/Nothing is at risk while we wait/.test(docFlat),
-  'the doc records why deferral is safe');
+// ── Deferral safety is TIME-BOUND, not perpetual ─────────────────────────
+// The counts can change while CAT-2D.3 is deferred, because the historical ids
+// stay effective and reachable. The doc must say so and must require a
+// re-measure rather than presenting the zeros as durable.
+ok(/As of the 2026-08-18 audit, there is no current collector-state or\s+reference migration burden/.test(docFlat),
+  'deferral safety is stated as of the audit date, not in perpetuity');
+ok(!/Nothing is at risk while we wait/.test(docFlat) &&
+   !/no\s+accumulating damage/.test(docFlat) &&
+   !/\*\*The migration stays cheap\.\*\*/.test(docFlat),
+  'the open-ended "nothing is at risk / no accumulating damage / stays cheap" claims are gone');
+ok(/cheap \*only while those counts remain zero\*/.test(docFlat),
+  'the doc states a future migration is cheap only while the counts remain zero');
+ok(/These counts can change while CAT-2D\.3 is deferred/.test(docFlat),
+  'the doc states the counts can change during deferral');
+ok(/Re-run Q-B and Q-C before any future implementation decision/.test(docFlat),
+  'the doc requires re-running Q-B and Q-C before a future decision');
+ok(/revisit triggers below are\s+\*\*part of the deferral contract\*\*/.test(docFlat) ||
+   /part of the deferral contract/.test(docFlat),
+  'the revisit triggers are stated as part of the deferral contract');
+ok(/THE DEFERRAL IS TIME-BOUND/.test(sql) &&
+   /RE-RUN Q-B AND Q-C before any\s+implementation decision/.test(sql.replace(/--/g, ' ').replace(/\s+/g, ' ')),
+  'the SQL header carries the same time-bound deferral contract');
 
-// Q-F is the finding that drives the roadmap call.
-ok(/both Classic Collection populations are \*\*0 ?\/ ?25 imaged\*\*/i.test(docFlat) ||
-   /0 \/ 25 imaged/i.test(docFlat),
-  'the doc records that both Classic Collection populations are 0/25 imaged');
-ok(/fully effective/i.test(docFlat) && /render no art/i.test(docFlat),
-  'the doc states the populations are effective yet render no art');
-ok(/imagery outranks a duplicate the\s+data does not depend on|imagery outranks a duplicate/i.test(sql.replace(/--/g, ' ').replace(/\s+/g, ' ')),
-  'the SQL records the roadmap reasoning: imagery outranks the duplicate');
+// ── Q-F proves CATALOG IMAGE-FIELD completeness, not UI rendering ────────
+console.log('\nQ-F claims are catalog-field, not rendering');
+ok(/fully effective but 0\/25 have populated catalog `image_url` values/.test(docFlat.replace(/\*/g, '')) &&
+   /0\/25 have a populated `image_url`/.test(docFlat.replace(/\*/g, '')),
+  'both the banner and Q-F state the finding as effective-but-no-populated-image_url');
+ok(/\*\*Image completeness is therefore the stronger proven catalog-quality defect\.\*\*/.test(docFlat),
+  'the doc frames image completeness as the stronger PROVEN catalog-quality defect');
+ok(/Q-F measured `cards_effective`\s+membership and `image_url` presence — catalog \*fields\*/.test(docFlat) ||
+   /catalog \*fields\*/.test(docFlat),
+  'the doc states Q-F measured catalog fields');
+ok(/It did not measure the\s+UI/.test(docFlat) && /downstream exposure remains unproven/i.test(docFlat),
+  'the doc states the UI was not measured and downstream exposure is unproven');
+// Affirmative rendering / what-the-collector-sees claims are forbidden outright.
+for (const claim of ['render no art', 'renders art', 'renders no art',
+                     'the collector sees 50', 'not one of them renders',
+                     'art-less catalog entries']) {
+  ok(!new RegExp(claim, 'i').test(docFlat) && !new RegExp(claim, 'i').test(sql),
+    `no affirmative rendering claim: "${claim}"`);
+}
+ok(/measured the catalog field, not the UI/.test(docFlat),
+  'the status banner distinguishes the catalog field from the UI');
+
+// ── The two populations are NOT a proven duplicate ───────────────────────
+console.log('\ncoexistence, not a proven duplicate');
+for (const claim of ['removal of a duplicate', 'imagery outranks a duplicate',
+                     'duplicate presentation persists', 'Deduplicating them would leave']) {
+  ok(!new RegExp(claim, 'i').test(docFlat) && !new RegExp(claim, 'i').test(sql),
+    `no proven-duplicate claim: "${claim}"`);
+}
+ok(/resolution of a catalog coexistence/.test(docFlat),
+  'the doc calls it a catalog coexistence, not a duplicate');
+ok(/Identity-remap \/ deduplication work, if the 25 pairs are later corroborated/.test(docFlat),
+  'deduplication is stated as conditional on the 25 pairs being corroborated');
+ok(/presentation coexistence/i.test(docFlat) && /presentation coexistence/i.test(sql),
+  'both files use "presentation coexistence" wording');
+ok(/outrank a coexistence the data does not depend on/.test(docFlat),
+  'the roadmap comparison names a coexistence, not a duplicate');
+ok(/Co-presence alone is not a proven duplicate/.test(sql),
+  'the Q-E comment says co-presence alone is not a proven duplicate');
+// The scope statement must survive all of this.
+ok(/Gate 0 makes NO alias decision and proposes NO mapping/.test(sql),
+  'Gate 0 still states it makes no alias decision and proposes no mapping');
 
 // The reachability nuance the review insisted on.
 ok(/All 25 historical rows are artist-query reachable/.test(docFlat),

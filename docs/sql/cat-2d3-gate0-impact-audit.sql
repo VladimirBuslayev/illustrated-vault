@@ -31,10 +31,28 @@
 -- branch — the FK-reachable figure of 1 covers only the curated path and must
 -- not be reported as overall reachability.
 --
--- The decisive finding was Q-F: BOTH Classic Collection populations are 0/25
--- imaged while fully effective. Deduplicating them would leave 25 entries that
--- still render no art. In a visual archive, imagery outranks a duplicate the
--- data does not depend on.
+-- The decisive finding was Q-F: BOTH Classic Collection populations are fully
+-- effective but 0/25 have populated catalog image_url values. Image
+-- completeness is therefore the stronger PROVEN catalog-quality defect.
+--
+-- Stated precisely, because Q-F measured catalog FIELDS and not the UI:
+-- cards_effective membership and image_url presence were measured; rendering
+-- paths, fallbacks and which surfaces a collector opens were not. Downstream
+-- exposure remains unproven.
+--
+-- Identity-remap / deduplication work, if the 25 pairs are later corroborated,
+-- would resolve the catalog coexistence and still leave 25 effective rows with
+-- no image field. Populating the imagery improves the set under either identity
+-- and needs no individually corroborated identity claims. In a visual archive,
+-- that outranks a coexistence the data does not depend on.
+--
+-- ⚠ THE DEFERRAL IS TIME-BOUND. As of the 2026-08-18 audit there is no current
+--   collector-state or reference migration burden. That can change while
+--   CAT-2D.3 is deferred, because the historical ids remain effective and
+--   artist-query reachable — a favourite, an intent, a binder row, a price
+--   point or a matching CSV import would end the zero. A future migration is
+--   cheap ONLY while those counts remain zero, so RE-RUN Q-B AND Q-C before any
+--   implementation decision rather than carrying these figures forward.
 --
 -- This file is retained as the audit definition and as the means to RE-MEASURE.
 -- Re-running it is how a future slice confirms these figures still hold rather
@@ -163,7 +181,7 @@
 -- liveness partitions the population; it does not map it.
 --
 -- Deliberately NOT done anywhere in this file: pairing any historical row to
--- any cel25cc survivor. Q-E reports name overlap as a duplicate-presentation
+-- any cel25cc survivor. Q-E reports name overlap as a presentation-coexistence
 -- diagnostic and says so in its own output column.
 
 
@@ -987,8 +1005,8 @@ select
   (select count(*) from public.artists t
     where t.signature_card_id in (select id from historical))     as artists_signature_reference_rows,
   -- VISIBLE signal: concurrent catalog presence + the name-overlap diagnostic.
-  -- Co-presence alone is not "duplicate presentation" — Gate 0 has no approved
-  -- mapping and asserts no row-to-row identity.
+  -- Co-presence alone is not a proven duplicate — Gate 0 has no approved
+  -- mapping and asserts no row-to-row identity. It is presentation coexistence.
   (select count(*) from historical h join public.cards_effective ce on ce.id = h.id)
                                                                   as historical_present_in_catalog,
   (select count(*) from survivors s join public.cards_effective ce on ce.id = s.id)

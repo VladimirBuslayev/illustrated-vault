@@ -11,9 +11,11 @@ Both populations are nonetheless fully present in `cards_effective` (25 + 25),
 24 of 25 share a normalised name, and **all 25 historical rows are artist-query
 reachable**.
 
-**The stronger current product issue is imagery, not identity.** Both Classic
-Collection populations are **0/25 imaged** while fully effective — 50 catalog
-entries that render no art under either identity. See §7 Q-F.
+**The stronger *proven* catalog-quality defect is imagery, not identity.** Both
+Classic Collection populations are fully effective (25/25 in `cards_effective`)
+but **0/25 have a populated `image_url`**, under either identity. Gate 0
+measured the catalog field, not the UI — actual rendering and exposure remain
+unproven. See §7 Q-F.
 
 No alias exists, no mapping is proposed, no migration or schema change is
 suggested, no write of any kind was made, the sync schedule remains paused, and
@@ -29,8 +31,8 @@ no application code changed. **Gate 0 makes no alias decision.**
 
 CAT-2D.3 is a 25-pair, individually corroborated identity remap — genuinely
 expensive work. It is worth doing early only if collector truth currently
-depends on those old IDs, or if the duplicate presentation is materially
-damaging the artist-first experience. Gate 0 measures both rather than assuming
+depends on those old IDs, or if the catalog coexistence is materially damaging
+the artist-first experience. Gate 0 measures both rather than assuming
 either.
 
 This gate can also conclude **"the evidence is mixed"**. That is a permitted
@@ -67,7 +69,7 @@ Established and not re-litigated here:
   `cards_effective` 23,588, merged as `d01c8ad`.
 
 **No historical → survivor mapping is created, inferred or implied by this
-gate.** Exact-name correspondence may be *reported* as a duplicate-presentation
+gate.** Exact-name correspondence may be *reported* as a presentation-coexistence
 diagnostic and is labelled as such in the SQL output itself; it is never
 identity evidence.
 
@@ -421,8 +423,8 @@ Signals that would argue for **deferring** CAT-2D.3:
 - Q-B active matched rows = 0 → no collector's ownership currently resolves
   through a historical Celebrations ID;
 - Q-C **collector-authored** totals ≈ 0 → no overrides, favorites, intents,
-  binder rows or price history to migrate, so the eventual migration stays cheap
-  and no collector-authored state is at risk while we wait;
+  binder rows or price history to migrate **as measured**, so a future migration
+  carries no collector-state burden at the time of the audit;
 - Q-D `historical_fk_reachable` = 0 → the legacy rows are not reachable by the
   artist-query path at all, so the strategically important surface is unaffected.
 
@@ -719,9 +721,17 @@ rows where the collector arguably expects 25.
 | historical `cel25` (Classic Collection) | 25 | **0** | **25** | 25 |
 
 **This is the decision-relevant result.** Both Classic Collection populations
-are **0 / 25 imaged** while both are **fully effective**. The collector sees 50
-Classic Collection entries in the catalog and **not one of them renders art** —
-under either identity.
+are **fully effective but 0/25 have populated catalog `image_url` values** — 50
+effective catalog rows, none of which carries an image field, under either
+identity.
+
+**Image completeness is therefore the stronger proven catalog-quality defect.**
+
+> ⚠ **What this does and does not prove.** Q-F measured `cards_effective`
+> membership and `image_url` presence — catalog *fields*. It did not measure the
+> UI. What a collector actually sees depends on rendering paths, fallbacks and
+> which surfaces they open, none of which Gate 0 exercised. The defect is proven
+> at the catalog layer; downstream exposure remains unproven.
 
 CAT-0's 2026-07-27 figure for `cel25cc` (25/25 image-missing) still holds, and
 the historical population is in exactly the same state.
@@ -766,35 +776,52 @@ does not depend on the old IDs at all, and the coexistence is real and visible.
 > Do **not** create aliases or begin the 25-pair corroboration work now.
 > **Prioritise catalog / image completeness next.**
 
-**Why defer:**
+**Why defer — stated as of the audit, not in perpetuity:**
 
-- **Nothing is at risk while we wait.** Zero ownership load, zero
-  collector-authored state, zero references of any kind. There is no
-  accumulating damage and no user whose collection depends on a retired ID.
-- **The migration stays cheap.** With zero references, a future CAT-2D.3 has
-  nothing to migrate — only the 25 alias rows themselves, once corroborated.
-- **The 25-pair corroboration is the expensive part** and it buys, today, only
-  the removal of a duplicate that no collector's data touches.
+- **As of the 2026-08-18 audit, there is no current collector-state or
+  reference migration burden.** Zero ownership load, zero collector-authored
+  state, zero references of any kind, and no collector whose collection resolves
+  through a retired ID.
+- **A future migration is cheap *only while those counts remain zero*.** With
+  zero references measured, a future CAT-2D.3 would have nothing to migrate
+  beyond the 25 alias rows themselves, once corroborated.
+- **The 25-pair corroboration is the expensive part**, and as measured it buys
+  only the resolution of a catalog coexistence that no collector's data touches.
+
+> ### ⚠ The deferral is time-bound, and that is part of the contract
+>
+> **These counts can change while CAT-2D.3 is deferred**, because the historical
+> IDs remain effective and artist-query reachable. A collector can favourite one,
+> set an intent on it, add it to a binder, save a price point, or import a CSV
+> that matches it — at which point the reference load is no longer zero and the
+> migration is no longer free.
+>
+> **Re-run Q-B and Q-C before any future implementation decision.** Do not carry
+> these figures forward as if they were durable. The revisit triggers below are
+> therefore **part of the deferral contract**, not advisory notes.
 
 **Why image completeness is the stronger claim on the next slice:**
 
 Q-F is the finding that matters. **Both** Classic Collection populations are
-0/25 imaged while fully effective. Deduplicating them would leave the collector
-with 25 entries that still render no art — a tidier catalog that is no more
-usable. Fixing the imagery makes the set visible under either identity, and it
-does so *without* requiring 25 individually corroborated identity claims.
+fully effective but **0/25 have populated `image_url` values**. Identity-remap /
+deduplication work, if the 25 pairs are later corroborated, would resolve the
+catalog coexistence and still leave 25 effective rows with no image field —
+tidier at the identity layer, unchanged at the visual one. Populating the
+imagery improves the set under *either* identity, and does so **without**
+requiring 25 individually corroborated identity claims.
 
-In a product whose stated spine is a **visual archive**, 50 art-less catalog
-entries outrank a duplicate the data does not depend on.
+In a product whose stated spine is a **visual archive**, 50 effective catalog
+rows with no image field outrank a coexistence the data does not depend on.
 
-**What defers with it:** the duplicate presentation and the `fukuda`
-artist-page coexistence persist until CAT-2D.3 runs. Both are cosmetic under
-this evidence; neither touches collector truth.
+**What defers with it:** the presentation coexistence and the `fukuda`
+artist-page coexistence persist until CAT-2D.3 runs. Both are presentation-level
+under this evidence; neither touches collector truth.
 
-**Revisit if any of these change:** a non-zero Q-B active matched count · any
-collector-authored reference appearing · a curated artist entry making the
-duplication prominent · or the Classic Collection gaining imagery, which would
-make the duplication visible in a way it currently is not.
+**Revisit triggers — part of the deferral contract, checked by re-running Q-B
+and Q-C:** a non-zero Q-B active matched count · any collector-authored
+reference appearing · a curated artist entry making the coexistence prominent ·
+or the Classic Collection gaining `image_url` values, which would raise the
+visibility of the coexistence above its current level.
 
 ---
 
