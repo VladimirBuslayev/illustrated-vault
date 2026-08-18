@@ -1,9 +1,13 @@
 # CAT-2D.3 Gate 0 — Celebrations production impact audit
 
-**Status: PARTIALLY RUN — GATE STOPPED.** Q-C0 executed in production on
-2026-08-18 and returned one `STOP` row: `public.artists.signature_card_id`, a
-card-id-like column the CAT-2D reference inventory never knew about. **Q-B and
-every later query are blocked** until Q-C1…Q-C3 resolve it — see **§4a**.
+**Status: PARTIALLY RUN — population gate PASSED, Q-C0 finding RESOLVED.**
+Q-A0, Q-A1 and upstream set equality all passed. Q-C0 returned one STOP —
+`public.artists.signature_card_id` — and Q-C1…Q-C3 have now resolved it: a real
+direct catalog reference (FK to `cards(id)`) that is **currently unpopulated**, so
+there is nothing to repair. See **§4a**.
+
+**No STOP condition is firing. Q-B is the next production statement** — not yet
+run.
 
 No alias exists, no migration or schema change is proposed, no write of any kind
 has been made, the sync schedule remains paused, and no application code changed.
@@ -217,18 +221,21 @@ is human.
 
 ---
 
-## 4a. ⛔ OPEN FINDING — Gate 0 is currently STOPPED
+## 4a. ✅ RESOLVED FINDING — `public.artists.signature_card_id`
 
-**Q-C0 ran in production on 2026-08-18 and returned one STOP row:**
+**Verdict: direct catalog reference — global artist/catalog metadata.
+Structurally real, currently dormant. No repair required.**
+
+Q-C0 ran in production on 2026-08-18 and returned one STOP row:
 
 ```
 BASE TABLE | artists | signature_card_id | text
            | STOP: unclassified card-id-like reference | false
 ```
 
-**Q-B and every later Gate 0 query are blocked until this resolves.** This is
-Q-C0 working exactly as designed — it caught a card-id-bearing column that the
-CAT-2D reference inventory never knew about.
+That blocked the gate until Q-C1…Q-C3 resolved it. This is Q-C0 working exactly
+as designed — it caught a card-id-bearing column the CAT-2D reference inventory
+never knew about, and the gate refused to proceed on a name.
 
 ### What the repository says about it: nothing
 
@@ -277,21 +284,101 @@ aliased-away value would be wrong whenever that happens. Q-C1…Q-C3 measure the
 `artists` is **global artist/catalog metadata** with no user dimension, so these
 outputs contain no user-identifying values and are safe to commit.
 
-### How the finding resolves
+### Production results — 2026-08-18
 
-Both branches are conditional on evidence not yet in hand. Neither is pre-empted:
+**Q-C1 — definition and constraints.** The decisive statement:
 
-- **If it IS a direct catalog reference** (values resolve to `public.cards`):
-  classify it in Q-C0 as such and extend Q-C / Q-G — as **global catalog
-  metadata**, alongside `card_extras`, and **never** folded into
+| Property | Value |
+|---|---|
+| type | `text` |
+| nullable | YES |
+| default | none |
+| **FOREIGN KEY** | **`FOREIGN KEY (signature_card_id) REFERENCES cards(id)`** |
+| index | none |
+
+**The FK settles the classification.** It is a direct catalog reference by
+construction, whatever the repository does or does not document about it.
+
+**Q-C2 — population and resolution.** Every count zero:
+
+| Measure | Value |
+|---|---|
+| `artists_rows_total` | 28 |
+| `rows_with_signature_card_id` | **0** |
+| `distinct_signature_card_ids` | 0 |
+| `resolve_to_a_cards_row` | 0 |
+| `dangling_no_cards_row` | 0 |
+| `present_in_cards_effective` | 0 |
+| **`already_aliased_by_cat2d2`** | **0** |
+| `references_cat2d3_historical` | 0 |
+
+**Q-C3 — per-row detail.** Success, **0 rows returned** — consistent with Q-C2.
+
+### Verdict
+
+| Question | Answer |
+|---|---|
+| Is it a direct reference to `public.cards.id`? | **Yes** — FK proves it |
+| Does a constraint exist, and what does it target? | Yes — FK → `cards(id)` |
+| How many artist rows populate it? | **0** of 28 |
+| Do any reference the 25 CAT-2D.3 historical IDs? | **No** — 0 |
+| Are any already alias IDs / non-effective? | **No** — 0 |
+| Does runtime code read it? | No — but see the caveat below |
+
+- **No CAT-2D.2 stale-reference defect.** `already_aliased_by_cat2d2` = 0. The
+  slice's inventory gap caused no live damage.
+- **No CAT-2D.3 production impact today.** Nothing references the historical
+  Celebrations population.
+- **Nothing to repair.**
+
+> ### ⚠ Two things the zero population does *not* mean
+>
+> **1. It does not mean this is "not a catalog reference."** The FK settles
+> *classification*; the population settles *impact*. Separate questions, and
+> here the answers differ: a real reference that happens to be empty.
+>
+> **2. It does not make the column safe to forget.** The FK guarantees the
+> referenced row **exists**; it does not guarantee the row is **canonical** —
+> the same distinction CAT-2D.1 §1 drew for `canonical_card_id`, where the FK
+> proves existence and only the trigger proves canonicality. Aliasing deletes
+> nothing, so a future populated value could point at an aliased ID and the FK
+> would accept it happily.
+>
+> That is why the column is now carried in **Q-C** and **Q-G** rather than
+> dismissed as dormant, and why Q-C1…Q-C3 are retained rather than deleted:
+> re-running them is how a future slice re-confirms the column is still empty
+> instead of assuming it.
+
+### The lasting lesson
+
+CAT-2D.2's reference inventory was a **static six-table list** from the design's
+[Q8] evidence, never checked against the live schema. `artists.signature_card_id`
+carries a FK to `cards(id)` and was simply never considered. It happened to be
+empty, so nothing broke — **that is luck, not design.**
+
+Any future slice that migrates card IDs must run a **Q-C0-style
+`information_schema` sweep** rather than inherit a static list. This is recorded
+in the SQL alongside the Q-C inventory.
+
+### How the finding was resolved
+
+Two branches were defined in advance; **the first was taken**, on the FK evidence:
+
+- ✅ **It IS a direct catalog reference.** Q-C0 now classifies it as
+  `direct catalog reference (FK to cards.id) — global artist/catalog metadata`.
+  **Q-C** inventories it as a seventh entry, labelled *catalog/editorial
+  metadata (global, not collector-authored)* — using its real column name,
+  `signature_card_id`, with owner and binder counts NULL by nature since
+  `artists` has neither. **Q-G** reports
+  `artists_signature_reference_rows` as its own global-metadata metric alongside
+  `card_extras_reference_rows`, and **never** inside
   `collector_authored_reference_rows`. `artists` has no `user_id`; nothing in it
   is collector-authored.
-- **If it is NOT a catalog reference** (values dangle, or the constraint shows a
-  different target): classify it per the evidence and record why identity
-  remapping cannot reach it.
+- ❌ *Not taken:* "not a catalog reference". The FK ruled this out.
 
-Q-C / Q-G are **deliberately not extended yet.** Doing so before Q-C1…Q-C3 would
-be exactly the name-based inference this gate exists to avoid.
+The generalized STOP rule is unchanged and still armed for genuinely unresolved
+future columns: **any `reference_class` beginning with `STOP:` halts the gate.**
+Resolving this one did not weaken it.
 
 ---
 
@@ -375,21 +462,14 @@ owner.
 | 2. **Q-A1** — 50-row enumeration, read through | ✅ **PASSED** |
 | 3. **Upstream** `cel25` set equality | ✅ **PASSED** |
 | → population gate | ✅ **PASSED** — the 25-row historical population is established |
-| 4. **Q-C0** — card-id-like columns, classified | ⛔ **RAN, STOP FIRING** — `artists.signature_card_id` (§4a) |
+| 4. **Q-C0** — card-id-like columns, classified | ✅ **RAN** — one STOP, since **RESOLVED** |
+| 5. **Q-C1 / Q-C2 / Q-C3** — resolve `artists.signature_card_id` | ✅ **PASSED** — §4a |
+| → STOP conditions | ✅ **NONE FIRING** |
 
-**Next, in order, reviewing between each:**
+**Next: `Q-B` — ownership impact.** Not yet run.
 
-5. **Q-C1** — definition and constraints → review
-6. **Q-C2** — population and resolution → review
-7. **Q-C3** — per-row detail → review
-8. **Classify** the §4a finding against its two branches
-
-**Only then unblock Q-B onward** (Q-B, Q-C, Q-D, Q-D2, Q-E, Q-F, Q-G — in any
-order, each independently self-contained).
-
-**Q-B and every later query are blocked right now.** The population gate passing
-does not unblock them on its own: Q-C0's STOP is a separate, currently-firing
-condition.
+Then Q-C, Q-D, Q-D2, Q-E, Q-F, Q-G — in any order, each independently
+self-contained — and finally classify against §5.
 
 ### Output handling
 
@@ -401,10 +481,9 @@ commit user UUIDs, binder IDs or row IDs.**
 
 ## 7. Production results
 
-> **PARTIALLY RUN — GATE STOPPED.** The population gate passed in full; Q-C0
-> then returned a STOP (§4a). Q-B…Q-G have not run and must not until the
-> finding is classified. Paste remaining output below, then classify
-> against §5.
+> **PARTIALLY RUN — no STOP firing.** The population gate passed in full, and
+> Q-C0's STOP was resolved by Q-C1…Q-C3 (§4a). **Q-B onward have not run.**
+> Paste remaining output below, then classify against §5.
 
 ### Population gate — ✅ PASSED (all three checks, 2026-08-18)
 
@@ -463,7 +542,7 @@ Upstream `cel25` membership matched the numeric `cel25-1`…`cel25-25` partition
 
 ### Q-C0 — card-id-like columns, classified
 
-**RUN 2026-08-18. Returned one STOP row — see §4a.**
+**RUN 2026-08-18.** Returned one STOP row — **since resolved**, see §4a.
 
 ```
 BASE TABLE | artists | signature_card_id | text
@@ -471,49 +550,62 @@ BASE TABLE | artists | signature_card_id | text
 ```
 
 - [x] Q-C0 executed
-- [ ] **No row classified `STOP: …`** — ⛔ **FAILS.** `artists.signature_card_id`
-      is unresolved. Q-C0 now returns it as
-      `STOP: UNRESOLVED — undocumented card-id-like reference, run Q-C1..Q-C3`
-- [ ] Expected classes only: direct catalog reference · immutable import
+- [x] **No unresolved `STOP:` row remains.** `artists.signature_card_id` is now
+      classified `direct catalog reference (FK to cards.id) — global
+      artist/catalog metadata`, and is carried in Q-C and Q-G
+- [x] Expected classes only: direct catalog reference · immutable import
       evidence · identity infrastructure · membership reference
 
-> **Q-B and every later query remain blocked** until Q-C1…Q-C3 resolve this.
+> The generalized rule stays armed: any future `reference_class` beginning with
+> `STOP:` halts the gate.
 
-### Q-C1 — `artists.signature_card_id` definition and constraints
-
-```
-(pending)
-```
-
-- [ ] Is there a FOREIGN KEY, and what does it target?
-- [ ] Type / nullability / default recorded
-
-### Q-C2 — does it hold catalog card ids, and are any stale?
+### Q-C1 — `artists.signature_card_id` definition and constraints ✅
 
 ```
-(pending)
+type text | nullable YES | no default | no index
+FOREIGN KEY (signature_card_id) REFERENCES cards(id)
 ```
 
-- [ ] `dangling_no_cards_row` — the discriminator
-- [ ] **`already_aliased_by_cat2d2` = 0** — ⚠ non-zero is a stale reference in
-      production today and a defect in a *closed* slice
-- [ ] `references_cat2d3_historical` recorded
+- [x] **FOREIGN KEY exists, targeting `cards(id)`** — settles the classification
+- [x] Type / nullability / default recorded
 
-### Q-C3 — per-row detail
+### Q-C2 — does it hold catalog card ids, and are any stale? ✅
 
 ```
-(pending)
+artists_rows_total            = 28
+rows_with_signature_card_id   = 0
+distinct_signature_card_ids   = 0
+resolve_to_a_cards_row        = 0
+dangling_no_cards_row         = 0
+present_in_cards_effective    = 0
+already_aliased_by_cat2d2     = 0
+references_cat2d3_historical  = 0
 ```
 
-- [ ] Classification decided on **values**, not counts
+- [x] `dangling_no_cards_row` = 0 — no dangling values (the column is empty)
+- [x] **`already_aliased_by_cat2d2` = 0** — no stale reference in production;
+      CAT-2D.2's inventory gap caused no live damage
+- [x] `references_cat2d3_historical` = 0 — no CAT-2D.3 impact today
 
-### Resolution of the §4a finding
+### Q-C3 — per-row detail ✅
 
-> **Pending.** One of: *direct catalog reference (global catalog metadata)* →
-> classify in Q-C0 and extend Q-C / Q-G alongside `card_extras`, never folded
-> into the collector-authored total · or *not a catalog reference* → classify
-> per evidence and record why identity remapping cannot reach it.
+```
+success, 0 rows returned
+```
 
+- [x] Consistent with Q-C2 — the column is unpopulated
+
+### Resolution of the §4a finding ✅
+
+> **Direct catalog reference — global artist/catalog metadata.** Structurally
+> real (FK to `cards(id)`), currently dormant (0 of 28 rows populated). No
+> CAT-2D.2 stale-reference defect, no CAT-2D.3 impact, **nothing to repair.**
+>
+> Now classified in Q-C0, inventoried in Q-C as global metadata, and reported in
+> Q-G as its own metric — never inside `collector_authored_reference_rows`.
+>
+> The zero population means **no repair is needed**, not that this is "not a
+> catalog reference". See §4a for why that distinction matters going forward.
 
 ### Q-B — ownership impact
 
@@ -606,9 +698,10 @@ measuring the wrong rows. Re-derive the population before running Q-B…Q-G.
   immutable import evidence, identity infrastructure or membership reference are
   expected and are **not** findings.
 
-  **CURRENTLY FIRING (2026-08-18):** `public.artists.signature_card_id` — see
-  §4a. Q-C0 now returns it as `STOP: UNRESOLVED`, so this condition stays
-  triggered until Q-C1…Q-C3 are run and the finding is classified;
+  **NOT CURRENTLY FIRING.** It fired on 2026-08-18 for
+  `public.artists.signature_card_id` and was resolved by Q-C1…Q-C3 — see §4a.
+  That column is now classified and inventoried, and the rule remains armed for
+  genuinely unresolved future columns;
 - the current schema differs materially from what the CAT-2D docs expect (e.g. a
   named table absent, a unique constraint changed);
 - answering any question would require an unapproved identity mapping;

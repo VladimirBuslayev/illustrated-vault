@@ -200,11 +200,12 @@ const sqlFlat = sql.replace(/--/g, ' ').replace(/\s+/g, ' ');
 ok(/Q-B\.\.Q-G may not be run until it passes/.test(sqlFlat) &&
    /ALL THREE MUST PASS BEFORE Q-B\.\.Q-G MAY RUN/.test(sqlFlat),
   'the SQL states that Q-B..Q-G may not run until the population gate passes');
-ok(/\*\*Q-B and every later query are blocked right now\.\*\*/.test(doc),
-  'the doc records that Q-B is blocked NOW — by the Q-C0 STOP, not by the population gate');
-ok(/population gate passing\s*\n?does not unblock them on its own/.test(doc.replace(/\s+/g, ' ')) ||
-   /does not unblock them on its own/.test(doc),
-  'the doc distinguishes the passed population gate from the still-firing STOP');
+ok(/\*\*Next: `Q-B` — ownership impact\.\*\* Not yet run\./.test(doc),
+  'the doc names Q-B as the next production statement, not yet run');
+ok(/STOP conditions \| ✅ \*\*NONE FIRING\*\*/.test(doc),
+  'the doc records that no STOP condition is firing');
+ok(!/Q-B and every later query are blocked right now/.test(doc),
+  'the obsolete "Q-B is blocked right now" wording is gone');
 
 // ── The population selector is explicit and falsifiable ─────────────────────
 console.log('\npopulation selector is explicit and falsifiable');
@@ -263,12 +264,16 @@ ok(/must keep the\n--   'STOP:' prefix/.test(sql),
   'the SQL requires future STOP classes to keep the prefix so the rule keeps working unedited');
 ok(!/only an entry it marks 'STOP: unclassified' is a/.test(sql),
   'the later Q-C comment no longer says only STOP: unclassified is a finding');
-ok(/ANY class beginning with 'STOP:' is a finding/.test(sql),
+ok(/ANY class beginning with 'STOP:' is a finding/.test(sql.replace(/--/g, ' ').replace(/\s+/g, ' ')),
   'the Q-C comment states the general STOP: rule too');
-ok(/AS OF 2026-08-18 THIS LIST IS KNOWN INCOMPLETE/.test(sql),
-  'the Q-C inventory is marked known-incomplete pending Q-C1..Q-C3');
-ok(/No row classified `STOP: /.test(doc),
-  'the doc checklist asks for zero STOP-classified rows, not zero uncovered tables');
+ok(/SEVEN entries below/.test(sql),
+  'the Q-C inventory is now seven entries — the six CAT-2D tables plus artists');
+ok(/CAT-2D.2's INVENTORY WAS INCOMPLETE, and this is the lasting lesson/.test(sql),
+  'the file records WHY the inventory was short: a static list never checked against the live schema');
+ok(/must run a Q-C0-style sweep rather than inherit a static list/.test(sql),
+  'the file states the forward rule for any future card-id migration');
+ok(/No unresolved `STOP:` row remains/.test(doc),
+  'the doc checklist records that no unresolved STOP row remains');
 
 // ── The artists.signature_card_id finding (Q-C0 production STOP, 2026-08-18) ─
 //
@@ -278,16 +283,40 @@ ok(/No row classified `STOP: /.test(doc),
 // doc or built bundle — so it is named but STILL BLOCKING, and Q-C1..Q-C3 exist
 // to resolve it. These pins stop it from being quietly promoted to a
 // classification on the strength of its name.
-console.log('\nartists.signature_card_id finding stays blocking');
+console.log('\nartists.signature_card_id finding is RESOLVED');
 ok(/artists' and c\.column_name = 'signature_card_id'/.test(code),
   'Q-C0 names artists.signature_card_id explicitly rather than leaving it to the default');
-ok(/STOP: UNRESOLVED — undocumented card-id-like reference, run Q-C1\.\.Q-C3/.test(code),
-  'its Q-C0 class still begins with STOP — the gate stays stopped');
-ok(!/artists[\s\S]{0,200}'direct catalog reference/.test(code),
-  'it has NOT been promoted to "direct catalog reference" without evidence');
-ok(!/public\.artists/.test(
-     splitStatements(code).filter((st) => st.includes('collector_authored_reference_rows')).join('')),
-  'artists is not folded into the collector-authored total');
+ok(!/STOP: UNRESOLVED/.test(code),
+  'no STOP: UNRESOLVED class remains — the finding is resolved, not merely renamed');
+ok(/'direct catalog reference \(FK to cards\.id\) — global artist\/catalog metadata — covered by Q-C'/.test(code),
+  'Q-C0 classifies it as a direct catalog reference AND as global metadata');
+// The classification rests on the FK, not on the column name. Pin the evidence.
+ok(/FOREIGN KEY \(signature_card_id\) REFERENCES cards\(id\)/.test(sql),
+  'the FK that settles the classification is recorded in the file');
+ok(/CLASSIFICATION AND IMPACT ARE DIFFERENT QUESTIONS/.test(sql),
+  'the file keeps classification and impact apart');
+ok(/That is dormancy, NOT evidence that/.test(sql.replace(/\s+/g, ' ')),
+  'the file states that a zero population does not make it "not a catalog reference"');
+ok(/the FK would accept it happily/.test(sql.replace(/--/g, ' ').replace(/\s+/g, ' ')),
+  'the file records that the FK proves existence, not canonicality — a future value could be an aliased id');
+
+// STILL GUARANTEED after the reclassification: artists is global metadata and
+// must never inflate a collector-impact number. This pin now tests the SUM
+// BLOCK specifically, because Q-G legitimately mentions public.artists in its
+// own separate metric.
+const qgStatement = splitStatements(code)
+  .find((st) => st.includes('collector_authored_reference_rows')) || '';
+const collectorSumBlock = qgStatement
+  ? qgStatement.slice(0, qgStatement.indexOf('as collector_authored_reference_rows')).slice(-900)
+  : '';
+ok(collectorSumBlock.length > 0 && !collectorSumBlock.includes('public.artists'),
+  'artists is NOT folded into the collector-authored total');
+ok(/as\s+artists_signature_reference_rows/.test(code),
+  'artists has its own global-metadata metric in Q-G, alongside card_extras');
+ok(/from public\.artists t where t\.signature_card_id in \(select id from historical\)/.test(code),
+  'Q-C inventories artists.signature_card_id using its real column name');
+ok(/'artists\.signature_card_id',\s*\n\s*'catalog\/editorial metadata \(global, not collector-authored\)'/.test(code),
+  'Q-C labels it as global catalog metadata, not collector-authored');
 
 // The three diagnostics exist, are read-only, and answer the specific questions.
 for (const q of ['Q-C1', 'Q-C2', 'Q-C3']) {
@@ -316,10 +345,13 @@ ok(/ABSENCE FROM RUNTIME CODE IS NOT EVIDENCE OF ZERO IMPACT/.test(sql),
   'the SQL states that no current reader does not mean no impact');
 ok(/LIVE FINDING ABOUT A CLOSED SLICE/.test(sql),
   'the SQL flags the CAT-2D.2 implication if these are catalog card ids');
-ok(/GATE STOPPED/.test(doc) && /## 4a\./.test(doc),
-  'the doc status banner and §4a record the open finding');
-ok(/CURRENTLY FIRING \(2026-08-18\)/.test(doc),
-  'the stop condition is marked as currently firing rather than hypothetical');
+ok(/## 4a\. ✅ RESOLVED FINDING/.test(doc),
+  '§4a records the finding as resolved');
+ok(/\*\*NOT CURRENTLY FIRING\.\*\*/.test(doc),
+  'the stop condition is marked not currently firing, with the date it did fire');
+ok(/rule remains armed for\s+genuinely unresolved future columns/.test(doc.replace(/\s+/g, ' ')) ||
+   /remains armed for/.test(doc),
+  'the doc states the STOP rule stays armed for future columns');
 
 // ── card_extras is catalog metadata, not collector-authored state ───────────
 console.log('\ncard_extras is not collector-authored state');
@@ -403,8 +435,33 @@ ok(/Mixed evidence is a permitted outcome/.test(doc),
 // record that truth, and must not still claim the audit has not been run.
 ok(!/\*\*Not yet run\.\*\*/.test(doc) && !/Status: prepared, NOT run/.test(doc),
   'no "not yet run" wording survives anywhere in the doc');
-ok(/PARTIALLY RUN — GATE STOPPED/.test(doc),
-  'the doc records the real execution state: partially run, gate stopped');
+ok(/PARTIALLY RUN — population gate PASSED, Q-C0 finding RESOLVED/.test(doc),
+  'the doc status banner records the real execution state');
+ok(/\*\*No STOP condition is firing\. Q-B is the next production statement\*\*/.test(doc),
+  'the banner names Q-B as next and says no STOP is firing');
+ok(!/GATE STOPPED/.test(doc),
+  'no "GATE STOPPED" wording survives');
+
+// The verdict itself, and the distinction the review insisted on.
+ok(/Verdict: direct catalog reference — global artist\/catalog metadata\./.test(doc.replace(/\s+/g, ' ')),
+  'the doc states the verdict plainly');
+ok(/FOREIGN KEY \(signature_card_id\) REFERENCES cards\(id\)/.test(doc),
+  'the FK evidence is recorded in the doc');
+ok(/`already_aliased_by_cat2d2`\*\* \| \*\*0\*\*/.test(doc) || /already_aliased_by_cat2d2/.test(doc),
+  'the zero stale-reference result is recorded');
+// Blockquote markers survive whitespace collapsing and split phrases in
+// half, so strip leading '>' per line before flattening.
+// Blockquote markers survive whitespace collapsing and split phrases in half,
+// so strip a leading '>' per line before flattening.
+const NL = String.fromCharCode(10);
+const docFlat = doc.split(NL).map((l) => l.replace(/^\s*>\s?/, '')).join(' ')
+  .replace(/\s+/g, ' ');
+ok(/no repair is needed\*\*, not that this is "not a catalog reference"/.test(docFlat),
+  'the doc states that zero population means no repair needed, NOT "not a catalog reference"');
+ok(/It does not mean this is "not a catalog reference\."/.test(docFlat),
+  'the same distinction is drawn in the §4a caveat');
+ok(/that is luck, not design/i.test(doc),
+  'the doc records that CAT-2D.2 escaped damage by luck, not design');
 ok(/### Population gate — ✅ PASSED \(all three checks, 2026-08-18\)/.test(doc),
   'the population gate is recorded as passed, with its date');
 ok(/- \[x\] `cel25_total_rows` = 50/.test(doc) && /- \[x\] `cel25cc_rows` = 25/.test(doc),

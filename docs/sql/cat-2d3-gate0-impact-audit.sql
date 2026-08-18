@@ -285,13 +285,23 @@ select
       then 'identity infrastructure — the alias map itself'
     when c.table_name = 'user_binder_layout_items' and c.column_name = 'binder_card_id'
       then 'membership reference (FK to user_binder_cards) — NOT a catalog card id — structurally immune'
-    -- FOUND IN PRODUCTION, 2026-08-18. Q-C0 returned this column as
-    -- unclassified, which is exactly what it exists to do. It is named here so
-    -- the finding is not rediscovered from scratch — but it is deliberately
-    -- STILL A STOP, because its semantics remain UNESTABLISHED. See the
-    -- Q-C1..Q-C3 diagnostics below and the audit doc §4a.
+    -- RESOLVED 2026-08-18 by Q-C1..Q-C3. Q-C0 first returned this column as
+    -- unclassified — exactly what it exists to do — and Q-C1 then settled it
+    -- decisively: there IS a FOREIGN KEY, signature_card_id REFERENCES
+    -- cards(id). That is a direct catalog reference by construction, whatever
+    -- the repo does or does not document about it.
+    --
+    -- artists is GLOBAL artist/catalog metadata: no user_id column, nothing in
+    -- it collector-authored. It therefore sits with card_extras, NOT with the
+    -- collector-authored tables (see Q-C and Q-G).
+    --
+    -- ⚠ CLASSIFICATION AND IMPACT ARE DIFFERENT QUESTIONS. Q-C2/Q-C3 measured
+    --   the column as EMPTY in production (0 of 28 artists rows populated), so
+    --   there is nothing to repair today. That is dormancy, NOT evidence that
+    --   this is "not a catalog reference" — the FK says it is one. It stays in
+    --   the inventory precisely so a future populated value is covered.
     when c.table_name = 'artists' and c.column_name = 'signature_card_id'
-      then 'STOP: UNRESOLVED — undocumented card-id-like reference, run Q-C1..Q-C3'
+      then 'direct catalog reference (FK to cards.id) — global artist/catalog metadata — covered by Q-C'
     when c.table_name in ('card_extras', 'card_overrides', 'card_favorites',
                           'price_history', 'user_card_intent', 'user_binder_cards')
          and c.column_name = 'card_id'
@@ -340,10 +350,37 @@ order by
 --     its four information_schema uses are all cards_effective /
 --     card_identity_resolution COLUMN-CONTRACT checks.
 --
--- SO ITS SEMANTICS CANNOT BE ESTABLISHED FROM REPO EVIDENCE, AND ARE NOT
--- GUESSED HERE. The column name is suggestive; a name is not evidence. It is
--- classified STOP in Q-C0 and stays that way until these three statements are
--- run and reviewed.
+-- SO ITS SEMANTICS COULD NOT BE ESTABLISHED FROM REPO EVIDENCE, AND WERE NOT
+-- GUESSED. The column name is suggestive; a name is not evidence.
+--
+-- ✅ RESOLVED 2026-08-18 — these three statements ran and settled it:
+--
+--   Q-C1  type text, nullable, no default, NO index, and decisively:
+--         FOREIGN KEY (signature_card_id) REFERENCES cards(id).
+--         -> It IS a direct catalog reference. Q-C0 now classifies it as such.
+--   Q-C2  28 artists rows, 0 populated. Every derived count 0: no dangling
+--         value, none in cards_effective, NONE already aliased by CAT-2D.2,
+--         none referencing the CAT-2D.3 historical population.
+--   Q-C3  0 rows returned, consistent with Q-C2.
+--
+--   => No CAT-2D.2 stale-reference defect. No CAT-2D.3 impact today. Nothing
+--      to repair.
+--
+-- ⚠ TWO THINGS THE ZERO POPULATION DOES NOT MEAN.
+--   1. It does NOT mean this is "not a catalog reference". The FK settles
+--      classification; the population settles impact. They are separate
+--      questions and the answers here differ: real reference, currently empty.
+--   2. It does NOT make the column safe to forget. The FK guarantees the
+--      referenced row EXISTS; it does not guarantee the row is CANONICAL —
+--      the same distinction CAT-2D.1 §1 drew for canonical_card_id, where the
+--      FK proves existence and only the trigger proves canonicality. Aliasing
+--      deletes nothing, so a future populated value could point at an aliased
+--      id and the FK would accept it happily. That is exactly why the column
+--      is now carried in Q-C and Q-G rather than dismissed as dormant.
+--
+-- These statements are retained, not deleted: they are the evidence for the
+-- classification, and re-running them is how a future slice re-confirms the
+-- column is still empty before assuming so.
 --
 -- ⚠ THIS MAY BE A LIVE FINDING ABOUT A CLOSED SLICE, NOT ONLY A CAT-2D.3
 --   QUESTION. If this column does hold catalog card ids, then CAT-2D.2 aliased
@@ -573,17 +610,19 @@ order by rs.batch_status;
 --   move, but it must NOT be added to a collector-impact total. Q-G keeps the
 --   two apart for exactly this reason.
 --
--- The six tables below are the CAT-2D reference inventory, re-verified by
--- CAT-2D.2's production Phase A. Q-C0 above classifies every card-id-like
--- column in the live schema, and ANY class beginning with 'STOP:' is a finding
--- that halts the gate — not just the default 'STOP: unclassified'.
+-- SEVEN entries below. Six are the CAT-2D reference inventory re-verified by
+-- CAT-2D.2's production Phase A; the seventh, artists.signature_card_id, was
+-- found by Q-C0 on 2026-08-18 and added once Q-C1 proved its FK to cards(id).
+-- Q-C0 above classifies every card-id-like column in the live schema, and ANY
+-- class beginning with 'STOP:' is a finding that halts the gate — not just the
+-- default 'STOP: unclassified'.
 --
--- ⚠ AS OF 2026-08-18 THIS LIST IS KNOWN INCOMPLETE. Q-C0 returned
---   artists.signature_card_id as STOP: UNRESOLVED. Whether it belongs in this
---   inventory is exactly what Q-C1..Q-C3 exist to establish, and Q-C is
---   deliberately NOT extended until they answer. If it does belong, it is
---   GLOBAL CATALOG METADATA alongside card_extras — artists has no user_id and
---   nothing in it is collector-authored.
+-- ⚠ CAT-2D.2's INVENTORY WAS INCOMPLETE, and this is the lasting lesson. Its
+--   six-table list came from the design's [Q8] evidence and was never checked
+--   against the live schema. artists.signature_card_id carries a FK to
+--   cards(id) and was simply never considered. It happened to be empty, so
+--   nothing broke — that is luck, not design. Any future slice that migrates
+--   card ids must run a Q-C0-style sweep rather than inherit a static list.
 --
 -- Excluded deliberately, with reasons:
 --   user_import_rows           — immutable historical evidence, covered by Q-B
@@ -637,6 +676,14 @@ select 'user_binder_cards', 'collector-authored',
   from public.user_binder_cards t
   join public.user_binders ub on ub.id = t.binder_id
   where t.card_id in (select id from historical)
+union all
+-- Added 2026-08-18. The column is signature_card_id, not card_id, and artists
+-- has neither user_id nor binder_id — it is global metadata, so both owner
+-- counts are NULL by nature rather than by omission.
+select 'artists.signature_card_id',
+       'catalog/editorial metadata (global, not collector-authored)',
+       count(*), count(distinct t.signature_card_id), null::bigint, null::bigint
+  from public.artists t where t.signature_card_id in (select id from historical)
 order by table_name;
 
 
@@ -901,9 +948,13 @@ select
     (select count(*) from public.user_card_intent  t where t.card_id in (select id from historical)) +
     (select count(*) from public.user_binder_cards t where t.card_id in (select id from historical))
   )                                                               as collector_authored_reference_rows,
-  -- Reported SEPARATELY: a catalog-metadata migration signal, not collector impact.
+  -- Reported SEPARATELY: catalog-metadata migration signals, not collector
+  -- impact. Both tables are global — card_extras and artists each lack a
+  -- user_id — so neither may enter the total above.
   (select count(*) from public.card_extras t where t.card_id in (select id from historical))
                                                                   as card_extras_reference_rows,
+  (select count(*) from public.artists t
+    where t.signature_card_id in (select id from historical))     as artists_signature_reference_rows,
   -- VISIBLE signal: concurrent catalog presence + the name-overlap diagnostic.
   -- Co-presence alone is not "duplicate presentation" — Gate 0 has no approved
   -- mapping and asserts no row-to-row identity.
