@@ -154,6 +154,42 @@ ok(claimIdx === -1 || /not universally true/.test(doc.slice(claimIdx, claimIdx +
   'the "single numeric historical row breaks it" phrasing survives only as a quoted, corrected overstatement');
 ok(!/^(?!.*not true).*a single numeric historical row would break/im.test(sql),
   'the SQL never asserts that a single numeric historical row would break Q-A0');
+// The Q-A0 flag's own inline comment used to claim a stray numeric historical
+// row "would break it". It cannot: that is the exact substitution case Q-A0 is
+// blind to. Pin the corrected scope wording so it cannot drift back.
+ok(!/stray numeric historical row would break/i.test(sql),
+  'the Q-A0 inline comment no longer claims a stray numeric row necessarily breaks the flag');
+ok(/SCOPE OF THIS FLAG: it proves SIZE, RANGE, GAP and DUPLICATE consistency/.test(sql),
+  'the Q-A0 flag states what it proves — size, range, gap, duplicate consistency');
+ok(/It does NOT prove MEMBERSHIP/.test(sql),
+  'the Q-A0 flag states that it does not prove membership');
+ok(/liveness \(gate check 3\) is the independent discriminator for membership/.test(sql),
+  'the Q-A0 flag points at upstream liveness as the membership discriminator');
+
+// §9 stop conditions must name the three-part population gate explicitly, and
+// the Q-C0 rule must fire on an unclassified row rather than on any table Q-C
+// does not cover.
+ok(/\*\*Q-A0 fails any flag\*\*/.test(doc),
+  'stop conditions name Q-A0 failure explicitly');
+ok(/\*\*Q-A1's enumeration is incoherent\*\*/.test(doc),
+  'stop conditions name an incoherent Q-A1 enumeration explicitly');
+ok(/\*\*the upstream live-ID set differs from Q-A1's numeric partition\*\*/.test(doc),
+  'stop conditions name an upstream/numeric-partition mismatch explicitly');
+ok(/Q-C0 returns any row classified `STOP: unclassified card-id-like reference`/.test(doc),
+  'the Q-C0 stop condition fires on an unclassified row');
+ok(!/Q-C0 reveals a `card_id`-bearing table Q-C does not cover/.test(doc),
+  'the old "any table Q-C does not cover" stop rule is gone');
+ok(/expected and are \*\*not\*\* findings/.test(doc.replace(/\s+/g, ' ')),
+  'the doc says the other Q-C0 classes are expected, not findings');
+
+// §7 result headings must match the corrected question names.
+ok(/### Q-C — mutable direct catalog references, by class/.test(doc),
+  'the Q-C result heading matches its corrected name');
+ok(/### Q-E — concurrent catalog presence/.test(doc),
+  'the Q-E result heading matches its corrected name');
+ok(!/### Q-C — collector-authored mutable state/.test(doc) &&
+   !/### Q-E — duplicate catalog exposure/.test(doc),
+  'the stale Q-C / Q-E result headings are gone');
 ok(/independent discriminator/.test(sql) && /independent discriminator/.test(doc),
   'upstream liveness is named as the independent discriminator in both files');
 ok(/as SETS, not just as counts|as sets, not\njust as counts|\*\*as sets, not\njust as counts\*\*/.test(sql + doc),

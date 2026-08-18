@@ -362,7 +362,7 @@ commit user UUIDs, binder IDs or row IDs.**
 (pending)
 ```
 
-### Q-C — collector-authored mutable state
+### Q-C — mutable direct catalog references, by class
 
 ```
 (pending)
@@ -374,7 +374,7 @@ commit user UUIDs, binder IDs or row IDs.**
 (pending)
 ```
 
-### Q-E — duplicate catalog exposure
+### Q-E — concurrent catalog presence
 
 ```
 (pending)
@@ -427,11 +427,25 @@ corroborated pairs, no fuzzy matching, its own named evidence class.
 
 Stop and report rather than proceeding if:
 
-- **Q-A0 fails any check**, or upstream corroboration disagrees with the numeric
-  partition → the population is wrong; every downstream figure is measuring the
-  wrong rows;
-- **Q-C0 reveals a `card_id`-bearing table Q-C does not cover** → an unmeasured
-  reference class;
+**The population gate — any one of the three checks failing is a stop:**
+
+- **Q-A0 fails any flag** → size, range, gap or duplicate consistency is broken;
+- **Q-A1's enumeration is incoherent** → a row looks misplaced across the two
+  partitions on read-through;
+- **the upstream live-ID set differs from Q-A1's numeric partition** → membership
+  is wrong. This is the discriminator Q-A0 cannot supply: a stored numeric ID
+  missing from upstream is a historical row hiding in the base-set partition, and
+  an upstream ID missing from storage is a base-set row never ingested.
+
+In any of those cases the population is wrong and every downstream figure is
+measuring the wrong rows. Re-derive the population before running Q-B…Q-G.
+
+**Everything else:**
+
+- **Q-C0 returns any row classified `STOP: unclassified card-id-like reference`**
+  → stop and inspect the new or unaccounted-for reference. Rows classified as
+  immutable import evidence, identity infrastructure or membership reference are
+  expected and are **not** findings;
 - the current schema differs materially from what the CAT-2D docs expect (e.g. a
   named table absent, a unique constraint changed);
 - answering any question would require an unapproved identity mapping;

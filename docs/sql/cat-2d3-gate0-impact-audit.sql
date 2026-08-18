@@ -173,8 +173,13 @@ select
   (select count(*) from historical)                               as candidate_historical_rows,
   (select count(*) from base_set)                                 as candidate_base_set_rows,
   -- The complement must be a COMPLETE 1..25: same count, same min, same max,
-  -- and no duplicates. This is what turns the regex from an assumption into a
-  -- testable claim — a stray numeric historical row would break it.
+  -- and no duplicates.
+  --
+  -- SCOPE OF THIS FLAG: it proves SIZE, RANGE, GAP and DUPLICATE consistency.
+  -- It does NOT prove MEMBERSHIP. A numeric-local_id historical row occupying
+  -- a number whose live base-set row is absent from storage would satisfy
+  -- every clause below while sitting in the wrong partition. Upstream
+  -- liveness (gate check 3) is the independent discriminator for membership.
   (select count(*) = 25
       and count(distinct (local_id)::int) = 25
       and min((local_id)::int) = 1
