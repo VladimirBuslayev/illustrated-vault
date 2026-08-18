@@ -51,6 +51,12 @@ const read = (p) => lf(readFileSync(p, 'utf8'));
 const sql = read(SQL_PATH);
 const doc = read(DOC_PATH);
 
+// Blockquote markers survive whitespace collapsing and split phrases in half,
+// so strip a leading '>' per line before flattening.
+const NL = String.fromCharCode(10);
+const docFlat = doc.split(NL).map((l) => l.replace(/^\s*>\s?/, '')).join(' ')
+  .replace(/\s+/g, ' ');
+
 // Comments are where this file explains itself at length, and several forbidden
 // keywords legitimately appear there ("no DDL", "never rewritten", ...). Every
 // safety assertion therefore runs over EXECUTABLE SQL only.
@@ -200,12 +206,15 @@ const sqlFlat = sql.replace(/--/g, ' ').replace(/\s+/g, ' ');
 ok(/Q-B\.\.Q-G may not be run until it passes/.test(sqlFlat) &&
    /ALL THREE MUST PASS BEFORE Q-B\.\.Q-G MAY RUN/.test(sqlFlat),
   'the SQL states that Q-B..Q-G may not run until the population gate passes');
-ok(/\*\*Next: `Q-B` — ownership impact\.\*\* Not yet run\./.test(doc),
-  'the doc names Q-B as the next production statement, not yet run');
-ok(/STOP conditions \| ✅ \*\*NONE FIRING\*\*/.test(doc),
+ok(/\*\*Run order — ✅ ALL STATEMENTS EXECUTED, 2026-08-18:\*\*/.test(doc),
+  'the run order records every statement as executed');
+ok(/\*\*Nothing further to run\.\*\* The audit is closed/.test(docFlat),
+  'the doc states the audit is closed with nothing further to run');
+ok(/STOP conditions \| ✅ NONE FIRING/.test(doc),
   'the doc records that no STOP condition is firing');
-ok(!/Q-B and every later query are blocked right now/.test(doc),
-  'the obsolete "Q-B is blocked right now" wording is gone');
+ok(!/Q-B and every later query are blocked right now/.test(doc) &&
+   !/Next production statement: \*\*`Q-B`\*\*/.test(doc),
+  'no "Q-B is next / blocked" wording survives');
 
 // ── The population selector is explicit and falsifiable ─────────────────────
 console.log('\npopulation selector is explicit and falsifiable');
@@ -435,12 +444,64 @@ ok(/Mixed evidence is a permitted outcome/.test(doc),
 // record that truth, and must not still claim the audit has not been run.
 ok(!/\*\*Not yet run\.\*\*/.test(doc) && !/Status: prepared, NOT run/.test(doc),
   'no "not yet run" wording survives anywhere in the doc');
-ok(/PARTIALLY RUN — population gate PASSED, Q-C0 finding RESOLVED/.test(doc),
-  'the doc status banner records the real execution state');
-ok(/\*\*No STOP condition is firing\. Q-B is the next production statement\*\*/.test(doc),
-  'the banner names Q-B as next and says no STOP is firing');
-ok(!/GATE STOPPED/.test(doc),
-  'no "GATE STOPPED" wording survives');
+ok(/\*\*Status: ✅ COMPLETE — Q-A0 through Q-G all executed in production, 2026-08-18\.\*\*/.test(doc),
+  'the doc status banner records the audit as complete');
+ok(!/GATE STOPPED/.test(doc) && !/PARTIALLY RUN/.test(doc),
+  'no "GATE STOPPED" or "PARTIALLY RUN" wording survives');
+
+// ── Final classification and recommendation ───────────────────────────────
+console.log('\nfinal classification and recommendation');
+ok(/## Classification: \*\*VISIBLE BUT NON-LOAD-BEARING\*\*/.test(doc),
+  'the banner states the classification');
+ok(/# VISIBLE BUT NON-LOAD-BEARING/.test(doc),
+  '§7 states the classification as its own verdict heading');
+ok(/# DEFER CAT-2D\.3/.test(doc),
+  '§7 states the recommendation to DEFER CAT-2D.3');
+ok(/prioritise catalog \/ image completeness next/i.test(docFlat),
+  'the recommendation names catalog/image completeness as the next slice');
+ok(/Classification:   VISIBLE BUT NON-LOAD-BEARING/.test(sql) &&
+   /Recommendation:   DEFER CAT-2D\.3/.test(sql),
+  'the SQL header carries the same classification and recommendation');
+
+// The reasoning must be recorded, not just the verdict.
+ok(/Not LOAD-BEARING\.\*\* Every ownership signal is zero/.test(docFlat),
+  'the doc records WHY it is not load-bearing — every ownership signal zero');
+ok(/More than DORMANT\.\*\* Both populations are fully present/.test(docFlat),
+  'the doc records WHY it is more than dormant — full catalog coexistence');
+ok(/Nothing is at risk while we wait/.test(docFlat),
+  'the doc records why deferral is safe');
+
+// Q-F is the finding that drives the roadmap call.
+ok(/both Classic Collection populations are \*\*0 ?\/ ?25 imaged\*\*/i.test(docFlat) ||
+   /0 \/ 25 imaged/i.test(docFlat),
+  'the doc records that both Classic Collection populations are 0/25 imaged');
+ok(/fully effective/i.test(docFlat) && /render no art/i.test(docFlat),
+  'the doc states the populations are effective yet render no art');
+ok(/imagery outranks a duplicate the\s+data does not depend on|imagery outranks a duplicate/i.test(sql.replace(/--/g, ' ').replace(/\s+/g, ' ')),
+  'the SQL records the roadmap reasoning: imagery outranks the duplicate');
+
+// The reachability nuance the review insisted on.
+ok(/All 25 historical rows are artist-query reachable/.test(docFlat),
+  'the doc states all 25 historical rows are artist-query reachable');
+ok(/is \*not\* the\s*(?:###\s*)?artist-reachability figure/.test(docFlat) ||
+   /not the artist-reachability figure/.test(docFlat),
+  'the doc warns that historical_fk_reachable = 1 is not overall reachability');
+ok(/Rendering remains unproven/i.test(docFlat),
+  'the doc states rendering remains unproven');
+ok(/must\s+not be reported as overall reachability/.test(sql.replace(/--/g, ' ').replace(/\s+/g, ' ')),
+  'the SQL header carries the same reachability caveat');
+
+// Name overlap stays diagnostic even now that the numbers are in.
+ok(/Name overlap remains DIAGNOSTIC ONLY/.test(docFlat),
+  'name overlap is still labelled diagnostic only in the recorded results');
+ok(/creates and implies \*\*no\s*mapping\*\*|implies \*\*no mapping\*\*/.test(docFlat),
+  'the recorded results state that name overlap implies no mapping');
+
+// The Q-C0 lesson must survive the closeout.
+ok(/CAT-2D.2's INVENTORY WAS INCOMPLETE, and this is the lasting lesson/.test(sql),
+  'the live-schema discovery lesson is kept');
+ok(/must run a Q-C0-style sweep rather than inherit a static list/.test(sql),
+  'the forward rule for future card-id migrations is kept');
 
 // The verdict itself, and the distinction the review insisted on.
 ok(/Verdict: direct catalog reference — global artist\/catalog metadata\./.test(doc.replace(/\s+/g, ' ')),
@@ -449,13 +510,6 @@ ok(/FOREIGN KEY \(signature_card_id\) REFERENCES cards\(id\)/.test(doc),
   'the FK evidence is recorded in the doc');
 ok(/`already_aliased_by_cat2d2`\*\* \| \*\*0\*\*/.test(doc) || /already_aliased_by_cat2d2/.test(doc),
   'the zero stale-reference result is recorded');
-// Blockquote markers survive whitespace collapsing and split phrases in
-// half, so strip leading '>' per line before flattening.
-// Blockquote markers survive whitespace collapsing and split phrases in half,
-// so strip a leading '>' per line before flattening.
-const NL = String.fromCharCode(10);
-const docFlat = doc.split(NL).map((l) => l.replace(/^\s*>\s?/, '')).join(' ')
-  .replace(/\s+/g, ' ');
 ok(/no repair is needed\*\*, not that this is "not a catalog reference"/.test(docFlat),
   'the doc states that zero population means no repair needed, NOT "not a catalog reference"');
 ok(/It does not mean this is "not a catalog reference\."/.test(docFlat),
@@ -473,8 +527,10 @@ ok(/Returned all \*\*50\*\* rows/.test(doc) && /- \[x\] No `cel25` row is alread
 ok(/matched the numeric `cel25-1`…`cel25-25` partition\s*\n?\*\*exactly, as sets\*\*/.test(doc) ||
    /exactly, as sets/.test(doc),
   'upstream set equality is recorded as passed');
-ok(/\(pending\)/.test(doc),
-  'the still-unrun statements remain marked pending');
+ok(!/\(pending\)/.test(doc),
+  'no statement is left marked pending — every one has a recorded result');
+ok(/### Q-B — ownership impact ✅/.test(doc) && /### Q-G — severity roll-up ✅/.test(doc),
+  'Q-B through Q-G are all marked executed with results');
 ok(/Gate 0 \*\*does not\*\*/.test(doc) || /Gate 0 \*\*makes no alias decision/.test(doc),
   'the doc states explicitly that Gate 0 makes no alias decision');
 

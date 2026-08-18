@@ -15,6 +15,37 @@
 -- docs/CAT-2D.3_CELEBRATIONS_IDENTITY_REMAP.md §3.
 --
 -- ─────────────────────────────────────────────────────────────────────────
+-- ✅ EXECUTED AND CLOSED — 2026-08-18
+-- ─────────────────────────────────────────────────────────────────────────
+-- Q-A0 through Q-G all ran in production. Results, classification and
+-- recommendation are recorded in docs/CAT-2D.3_GATE0_IMPACT_AUDIT.md §7.
+--
+--   Classification:   VISIBLE BUT NON-LOAD-BEARING
+--   Recommendation:   DEFER CAT-2D.3 — prioritise catalog / image completeness
+--
+-- Every ownership and reference signal came back ZERO: no active matched rows,
+-- no impacted users, no collector-authored state, no catalog-metadata
+-- references. Both populations are nonetheless fully present in
+-- cards_effective (25 + 25), 24 of 25 share a normalised name, and ALL 25
+-- historical rows are artist-query reachable via the dynamic illustrator
+-- branch — the FK-reachable figure of 1 covers only the curated path and must
+-- not be reported as overall reachability.
+--
+-- The decisive finding was Q-F: BOTH Classic Collection populations are 0/25
+-- imaged while fully effective. Deduplicating them would leave 25 entries that
+-- still render no art. In a visual archive, imagery outranks a duplicate the
+-- data does not depend on.
+--
+-- This file is retained as the audit definition and as the means to RE-MEASURE.
+-- Re-running it is how a future slice confirms these figures still hold rather
+-- than assuming they do — particularly Q-B and Q-C, which are the signals that
+-- would change if deferral stopped being safe.
+--
+-- Gate 0 made NO alias decision and proposed NO mapping. CAT-2D.3's admission
+-- rules (25 individually corroborated pairs, no fuzzy matching, its own named
+-- evidence class) are untouched.
+--
+-- ─────────────────────────────────────────────────────────────────────────
 -- EXECUTION CONTRACT
 -- ─────────────────────────────────────────────────────────────────────────
 --   * every statement is SELECT-only — no DDL, no DML, no RPC, no sync;

@@ -1,19 +1,23 @@
 # CAT-2D.3 Gate 0 — Celebrations production impact audit
 
-**Status: PARTIALLY RUN — population gate PASSED, Q-C0 finding RESOLVED.**
-Q-A0, Q-A1 and upstream set equality all passed. Q-C0 returned one STOP —
-`public.artists.signature_card_id` — and Q-C1…Q-C3 have now resolved it: a real
-direct catalog reference (FK to `cards(id)`) that is **currently unpopulated**, so
-there is nothing to repair. See **§4a**.
+**Status: ✅ COMPLETE — Q-A0 through Q-G all executed in production, 2026-08-18.**
 
-**No STOP condition is firing. Q-B is the next production statement** — not yet
-run.
+> ## Classification: **VISIBLE BUT NON-LOAD-BEARING**
+> ## Recommendation: **DEFER CAT-2D.3** — prioritise catalog / image completeness next
 
-No alias exists, no migration or schema change is proposed, no write of any kind
-has been made, the sync schedule remains paused, and no application code changed.
+Every ownership and reference signal is **zero**: no active matched rows, no
+impacted users, no collector-authored state, no catalog-metadata references.
+Both populations are nonetheless fully present in `cards_effective` (25 + 25),
+24 of 25 share a normalised name, and **all 25 historical rows are artist-query
+reachable**.
 
-**Gate 0 makes no alias decision and proposes no mapping.** It exists to answer
-one prioritisation question with evidence instead of intuition.
+**The stronger current product issue is imagery, not identity.** Both Classic
+Collection populations are **0/25 imaged** while fully effective — 50 catalog
+entries that render no art under either identity. See §7 Q-F.
+
+No alias exists, no mapping is proposed, no migration or schema change is
+suggested, no write of any kind was made, the sync schedule remains paused, and
+no application code changed. **Gate 0 makes no alias decision.**
 
 ---
 
@@ -454,22 +458,27 @@ owner.
 - Global diagnostics across all users, so RLS must not scope them; that is why
   no JWT context is established. No user UUID appears in the file.
 
-**Run order — current state as of 2026-08-18:**
+**Run order — ✅ ALL STATEMENTS EXECUTED, 2026-08-18:**
 
 | Step | State |
 |---|---|
-| 1. **Q-A0** — consistency flags | ✅ **PASSED** |
-| 2. **Q-A1** — 50-row enumeration, read through | ✅ **PASSED** |
-| 3. **Upstream** `cel25` set equality | ✅ **PASSED** |
-| → population gate | ✅ **PASSED** — the 25-row historical population is established |
-| 4. **Q-C0** — card-id-like columns, classified | ✅ **RAN** — one STOP, since **RESOLVED** |
-| 5. **Q-C1 / Q-C2 / Q-C3** — resolve `artists.signature_card_id` | ✅ **PASSED** — §4a |
-| → STOP conditions | ✅ **NONE FIRING** |
+| 1. **Q-A0** — consistency flags | ✅ PASSED |
+| 2. **Q-A1** — 50-row enumeration, read through | ✅ PASSED |
+| 3. **Upstream** `cel25` set equality | ✅ PASSED |
+| → population gate | ✅ **PASSED** |
+| 4. **Q-C0** — card-id-like columns, classified | ✅ RAN — one STOP, since RESOLVED |
+| 5. **Q-C1 / Q-C2 / Q-C3** — resolve `artists.signature_card_id` | ✅ PASSED — §4a |
+| → STOP conditions | ✅ NONE FIRING |
+| 6. **Q-B** — ownership impact | ✅ RAN — all zero |
+| 7. **Q-C** — mutable references by class | ✅ RAN — all seven zero |
+| 8. **Q-D / Q-D2** — artist reachability | ✅ RAN |
+| 9. **Q-E** — concurrent catalog presence | ✅ RAN |
+| 10. **Q-F** — image / completeness | ✅ RAN |
+| 11. **Q-G** — severity roll-up | ✅ RAN |
+| → classification | ✅ **VISIBLE BUT NON-LOAD-BEARING** |
 
-**Next: `Q-B` — ownership impact.** Not yet run.
-
-Then Q-C, Q-D, Q-D2, Q-E, Q-F, Q-G — in any order, each independently
-self-contained — and finally classify against §5.
+**Nothing further to run.** The audit is closed; the recommendation is to
+**defer CAT-2D.3** and prioritise catalog / image completeness.
 
 ### Output handling
 
@@ -481,9 +490,8 @@ commit user UUIDs, binder IDs or row IDs.**
 
 ## 7. Production results
 
-> **PARTIALLY RUN — no STOP firing.** The population gate passed in full, and
-> Q-C0's STOP was resolved by Q-C1…Q-C3 (§4a). **Q-B onward have not run.**
-> Paste remaining output below, then classify against §5.
+> **✅ COMPLETE.** Every statement ran in production on 2026-08-18. Results
+> recorded below; classification and recommendation at the end of this section.
 
 ### Population gate — ✅ PASSED (all three checks, 2026-08-18)
 
@@ -607,51 +615,186 @@ success, 0 rows returned
 > The zero population means **no repair is needed**, not that this is "not a
 > catalog reference". See §4a for why that distinction matters going forward.
 
-### Q-B — ownership impact
+### Q-B — ownership impact ✅
 
 ```
-(pending)
+batch_status | matched_rows | impacted_users | distinct_ids | quantity | candidate_only | all_rows
+-------------+--------------+----------------+--------------+----------+----------------+---------
+active       |            0 |              0 |            0 |        0 |              0 |    6,359
+superseded   |            0 |              0 |            0 |        0 |              0 |   35,548
 ```
 
-### Q-C — mutable direct catalog references, by class
+**Zero across every class.** No collector's ownership resolves through a
+historical Celebrations ID — not in the active snapshot, not in superseded
+batches, and not even as a `candidate_card_ids` diagnostic. 41,907 import rows
+scanned in total.
 
-```
-(pending)
-```
+### Q-C — mutable direct catalog references, by class ✅
 
-### Q-D / Q-D2 — artist-first impact
+**All seven classes returned zero.**
 
-```
-(pending)
-```
+| Table | Class | Rows referencing historical |
+|---|---|---|
+| `artists.signature_card_id` | catalog/editorial metadata (global) | **0** |
+| `card_extras` | catalog/editorial metadata (global) | **0** |
+| `card_favorites` | collector-authored | **0** |
+| `card_overrides` | collector-authored | **0** |
+| `price_history` | collector-authored | **0** |
+| `user_binder_cards` | collector-authored | **0** |
+| `user_card_intent` | collector-authored | **0** |
 
-### Q-E — concurrent catalog presence
+No collector-authored state and no catalog metadata points at any of the 25
+historical IDs. A future CAT-2D.3 migration would have **no references to
+migrate** as of today.
 
-```
-(pending)
-```
+### Q-D / Q-D2 — artist-first impact ✅
 
-### Q-F — image / completeness comparison
+**Q-D — per `artist_id`:**
 
-```
-(pending)
-```
+| artist_id | historical rows / reachable | cel25cc rows / reachable |
+|---|---|---|
+| `fukuda` | 1 / 1 | 1 / 1 |
+| `midori-harada` | 0 | 1 / 1 |
 
-### Q-G — severity roll-up
+**Q-D2 — totals:**
 
-```
-(pending)
-```
+| Measure | historical | cel25cc |
+|---|---|---|
+| rows | 25 | 25 |
+| with `artist_id` | 1 | 2 |
+| **FK reachable** | 1 | 2 |
+| **illustrator reachable** | **25** | **25** |
+| illustrator but no `artist_id` | 24 | 23 |
+| distinct artists | 1 | 2 |
+
+> ### ⚠ Read this correctly — `historical_fk_reachable = 1` is *not* the
+> ### artist-reachability figure
+>
+> **All 25 historical rows are artist-query reachable**, via
+> `illustrator_reachable = 25`. `cardService.fetchArtistCards`'s **dynamic**
+> branch matches on exact `illustrator` equality *or* `artist_id`, so a NULL
+> `artist_id` does not make a row unreachable — 24 of the 25 are reachable by
+> illustrator string alone.
+>
+> The FK figure of **1** describes only the narrower *curated* FK path. Reporting
+> it as overall reachability would understate the artist-first exposure
+> twenty-five-fold.
+>
+> **Rendering remains unproven either way.** Reachability means a query *can*
+> return the row; whether any collector sees it also requires an artist entry to
+> exist for that identity and for someone to open that page. Gate 0 measured
+> reachability, which is what it can measure.
+
+**The concrete coexistence case:** `fukuda` is reachable in **both** populations
+— one historical row and one `cel25cc` row, each reachable. An artist query for
+that identity can return both.
+
+### Q-E — concurrent catalog presence ✅
+
+| Measure | Value |
+|---|---|
+| historical rows | 25 |
+| **historical in `cards_effective`** | **25** |
+| `cel25cc` rows | 25 |
+| **`cel25cc` in `cards_effective`** | **25** |
+| historical names also in `cel25cc` | 24 |
+| historical names with no `cel25cc` match | 1 |
+| non-unique normalised names within either population | 0 |
+
+**Both populations are fully present in the canonical catalog** — 50 effective
+rows where the collector arguably expects 25.
+
+> **Name overlap remains DIAGNOSTIC ONLY.** 24 of 25 sharing a normalised name
+> is a presentation signal, not alias evidence, and it creates and implies **no
+> mapping**. CAT-2D.3 §3 still requires per-pair corroboration; nothing here
+> supplies it. The one name with no `cel25cc` match is itself a reason the
+> name-based shortcut must not be taken.
+
+### Q-F — image / completeness comparison ✅
+
+| Population | rows | with image | missing image | in `cards_effective` |
+|---|---|---|---|---|
+| base-set `cel25` (live Celebrations) | 25 | **24** | 1 | 25 |
+| `cel25cc` (current survivors) | 25 | **0** | **25** | 25 |
+| historical `cel25` (Classic Collection) | 25 | **0** | **25** | 25 |
+
+**This is the decision-relevant result.** Both Classic Collection populations
+are **0 / 25 imaged** while both are **fully effective**. The collector sees 50
+Classic Collection entries in the catalog and **not one of them renders art** —
+under either identity.
+
+CAT-0's 2026-07-27 figure for `cel25cc` (25/25 image-missing) still holds, and
+the historical population is in exactly the same state.
+
+### Q-G — severity roll-up ✅
+
+| Signal | Value |
+|---|---|
+| historical population | 25 |
+| active matched rows / users / distinct IDs / quantity | **0 / 0 / 0 / 0** |
+| **collector-authored reference rows** | **0** |
+| `card_extras` reference rows | 0 |
+| `artists.signature` reference rows | 0 |
+| historical present in catalog | 25 |
+| survivors present in catalog | 25 |
+| historical names also in `cel25cc` | 24 |
+| historical FK reachable | 1 *(see Q-D2 — illustrator reachability is 25)* |
+| scope | Gate 0 makes **NO** alias decision and proposes **NO** mapping |
 
 ### Classification
 
-> **Pending.** One of LOAD-BEARING NOW / VISIBLE BUT NON-LOAD-BEARING /
-> DORMANT / mixed-with-explanation, per §5.
+> # VISIBLE BUT NON-LOAD-BEARING
+
+Against §5:
+
+- **Not LOAD-BEARING.** Every ownership signal is zero — no active matched rows,
+  no impacted users, no quantity, not even a candidate-only diagnostic across
+  41,907 import rows. Every collector-authored table is zero. Both global
+  catalog-metadata references are zero.
+- **More than DORMANT.** Both populations are fully present in
+  `cards_effective` (25 + 25), 24 of 25 share a normalised name, and **all 25
+  historical rows are artist-query reachable** — with `fukuda` reachable in both
+  populations under one `artist_id`.
+
+The evidence is not mixed: it lands squarely in the middle band. Collector truth
+does not depend on the old IDs at all, and the coexistence is real and visible.
 
 ### Recommendation
 
-> **Pending.** Prioritise CAT-2D.3, or defer it in favour of catalog/image
-> completeness — with the reasoning tied to specific figures above.
+> # DEFER CAT-2D.3
+>
+> Do **not** create aliases or begin the 25-pair corroboration work now.
+> **Prioritise catalog / image completeness next.**
+
+**Why defer:**
+
+- **Nothing is at risk while we wait.** Zero ownership load, zero
+  collector-authored state, zero references of any kind. There is no
+  accumulating damage and no user whose collection depends on a retired ID.
+- **The migration stays cheap.** With zero references, a future CAT-2D.3 has
+  nothing to migrate — only the 25 alias rows themselves, once corroborated.
+- **The 25-pair corroboration is the expensive part** and it buys, today, only
+  the removal of a duplicate that no collector's data touches.
+
+**Why image completeness is the stronger claim on the next slice:**
+
+Q-F is the finding that matters. **Both** Classic Collection populations are
+0/25 imaged while fully effective. Deduplicating them would leave the collector
+with 25 entries that still render no art — a tidier catalog that is no more
+usable. Fixing the imagery makes the set visible under either identity, and it
+does so *without* requiring 25 individually corroborated identity claims.
+
+In a product whose stated spine is a **visual archive**, 50 art-less catalog
+entries outrank a duplicate the data does not depend on.
+
+**What defers with it:** the duplicate presentation and the `fukuda`
+artist-page coexistence persist until CAT-2D.3 runs. Both are cosmetic under
+this evidence; neither touches collector truth.
+
+**Revisit if any of these change:** a non-zero Q-B active matched count · any
+collector-authored reference appearing · a curated artist entry making the
+duplication prominent · or the Classic Collection gaining imagery, which would
+make the duplication visible in a way it currently is not.
 
 ---
 
