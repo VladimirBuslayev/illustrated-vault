@@ -1,0 +1,234 @@
+{
+  "audit": "CAT-3A — Image Coverage & Recoverability Audit",
+  "status": "CLOSED — SCOPED PARTIAL",
+  "audit_type": "diagnostic_read_only",
+  "package_generated": "2026-08-19",
+  "production_changes": "none",
+  "spec": "docs/CAT-3A_IMAGE_COVERAGE_AND_RECOVERABILITY_AUDIT.md",
+  "sql": "docs/sql/cat-3a-image-coverage-baseline.sql",
+
+  "closure_summary": {
+    "T_dimension": "complete and decision-grade",
+    "A_dimension_and_P4": "complete and decision-grade",
+    "F_dimension": "WITHHELD — G-7 failed twice; no F value was assigned to any row",
+    "O_dimension": "WITHHELD — no outcome was derived for any row",
+    "G-8": "not_evaluated",
+    "G-9": "not_evaluated",
+    "G-10": "withheld / not_evaluated at every scope",
+    "decision_framework": "DID NOT RUN — G-10 did not pass. CAT-3A therefore selected NO implementation slice.",
+    "third_reliability_run": "not performed, by explicit decision"
+  },
+
+  "production_sql_execution": {
+    "executed": "2026-08-18",
+    "captured_at_Q-A0": "2026-08-18T23:41:01.499034+00:00",
+    "statements_run": "Q-A0 through Q-A8b",
+    "sql_sha256_at_execution": "ebce21ec138cadecc1638f006a41326b22f966bce5287ee6cf8f42b2ae53a5e5",
+    "sql_sha256_note": "A later comment-only correction to the Q-A2 header changed this file's hash. The EXECUTABLE SQL is byte-identical to the text executed in production, verified by a comments-stripped diff against the pre-correction commit. See closeout: Q-A4a wording correction.",
+    "reviewed_head": "98b9d06ef76137d79849f193af7d23af3c5c3062"
+  },
+
+  "gates": {
+    "G-0_preflight": "PASS",
+    "G-1_catalog_invariants": "PASS",
+    "G-2_baseline": "PASS",
+    "G-3_alias_population": "PASS — 192 pairs seen, 192 expected, 0 unresolved",
+    "G-4_export_completeness": "PASS — 1,640 exported = 1,640 measured",
+    "G-5_all_sets_resolved": "PASS — 67/67, 0 indeterminate",
+    "G-6_all_rows_have_T": "PASS — 1,640/1,640",
+    "G-7_ptcgio_reliability": "FAIL — two consecutive unchanged keyless runs",
+    "G-8_fallback_assigned": "not_evaluated",
+    "G-8_f2_validation": "not_evaluated",
+    "G-9_completeness": "not_evaluated",
+    "G-10_conclusion": "withheld at per-set, active-owned and global scope"
+  },
+
+  "baseline": {
+    "cards": 23780,
+    "card_identity_aliases": 192,
+    "cards_effective": 23588,
+    "cards_effective_distinct_ids": 23588,
+    "cards_effective_null_ids": 0,
+    "card_extras": 5,
+    "alias_chain_violations": 0,
+    "alias_targets_missing_from_cards": 0,
+    "alias_targets_not_effective": 0,
+    "alias_sources_missing_from_cards": 0
+  },
+
+  "coverage": {
+    "sets_total": 214,
+    "cards_total": 23588,
+    "image_missing": 1640,
+    "image_populated": 21948,
+    "sets_fully_covered": 147,
+    "sets_fully_missing": 51,
+    "sets_partially_missing": 16,
+    "missing_rows_in_fully_missing_sets": 1370,
+    "missing_rows_in_partially_missing_sets": 270,
+    "pct_concentrated_in_fully_missing_sets": 83.54,
+    "active_owned_distinct_cards": 4998,
+    "active_owned_image_missing": 117,
+    "owned_ids_outside_effective_catalog": 0
+  },
+
+  "T_dimension_decision_grade": {
+    "T1_TCGDEX_IMAGE_AVAILABLE": 0,
+    "T2_TCGDEX_ENTITY_PRESENT_IMAGE_ABSENT": 1495,
+    "T3_TCGDEX_ENTITY_ABSENT": 145,
+    "T4_TCGDEX_INDETERMINATE": 0,
+    "T3_breakdown": {
+      "set_namespace_absent": 120,
+      "card_absent": 25
+    },
+    "T3_set_namespace_absent_detail": "The four retired Trainer Gallery namespaces — swsh9.5tg, swsh10.5tg, swsh11.5tg, swsh12.5tg — 30 rows each. Confirms failure mode FM-4 (namespace retirement, no delete/rename pass).",
+    "T3_card_absent_detail": "The 25 historical Celebrations Classic Collection rows under set_id cel25. TCGdex 404s on them because provider identity moved to cel25cc-CC###. Independently reproduces CAT-2D.3 Gate 0 without using its selector.",
+    "conclusion": "Not one of the 1,640 missing-image rows has an image available at TCGdex today. The 'DB stale / missed ingestion' hypothesis is FALSIFIED against a complete measurement. Broad TCGdex ingestion repair is NOT justified.",
+    "reproducibility": "Run 1 and run 2 produced IDENTICAL per-row T for all 1,640 rows, ~11.5 hours apart against a live third-party source."
+  },
+
+  "A_dimension_decision_grade": {
+    "approved_pairs": 192,
+    "A1_ALIAS_IMAGE_CANONICAL_IMAGE": 0,
+    "A2_ALIAS_IMAGE_CANONICAL_MISSING": 192,
+    "A3_ALIAS_MISSING_CANONICAL_IMAGE": 0,
+    "A4_ALIAS_MISSING_CANONICAL_MISSING": 0,
+    "A_UNRESOLVED": 0,
+    "A0_NOT_APPLICABLE_rows_in_gap_population": 1448,
+    "canonical_set_split": { "swsh4.5sv": 122, "swsh12.5gg": 70 },
+    "P4_asset_liveness": { "ASSET_LIVE": 192, "ASSET_DEAD": 0, "ASSET_INDETERMINATE": 0 },
+    "active_owned_in_A2": 45,
+    "active_owned_total": 117,
+    "note": "Every CAT-2D.2-approved alias holds a live TCGdex asset its canonical survivor lacks. This is a measurement, not a repair authorization."
+  },
+
+  "P3_0_reliability_attempts": [
+    {
+      "run": 1,
+      "window": "2026-08-19T01:07:48Z/2026-08-19T01:39:22Z",
+      "pool": 326,
+      "verbatim_reachable": 242,
+      "candidates_probed": 120,
+      "qualified": 90,
+      "controls": 20,
+      "distinct_sets": 20,
+      "valid": 18,
+      "indeterminate": 2,
+      "false_definitive": 0,
+      "result": "FAIL",
+      "indeterminate_controls": ["ex9-10", "pl1-10"]
+    },
+    {
+      "run": 2,
+      "window": "2026-08-19T12:42:56Z/2026-08-19T13:09:41Z",
+      "pool": 326,
+      "verbatim_reachable": 242,
+      "candidates_probed": 120,
+      "qualified": 91,
+      "controls": 20,
+      "distinct_sets": 20,
+      "valid": 16,
+      "indeterminate": 4,
+      "false_definitive": 0,
+      "result": "FAIL",
+      "indeterminate_controls": ["base1-1", "ex10-10", "pop7-10", "pl3-10"]
+    }
+  ],
+
+  "P3_0_interpretation": {
+    "criteria": "unchanged across both runs: >=19/20 valid, <=1 indeterminate, 0 false definitive; keyless, matching the production runtime contract",
+    "qualification": "succeeded comfortably in both runs (90 and 91 qualified of 120 probed), so the failure is not a shortage of known-valid controls",
+    "false_definitive_zero": "In both runs pokemontcg.io never misidentified a known-good card. It failed to answer, rather than answering wrongly.",
+    "meaning": "This is a failure of the keyless fallback source to meet the audit's reliability threshold. It is NOT evidence about F or O coverage, and MUST NOT be read as one.",
+    "gate_integrity": "The gate was not relaxed, modified or retried opportunistically. No third run was performed."
+  },
+
+  "F_and_O_dimensions": {
+    "F": "WITHHELD — not measured. Every row carries an EMPTY ptcgio_state in image_gaps.csv.",
+    "O": "WITHHELD — not derived. Every row carries an EMPTY outcome and sensitivity_outcome.",
+    "explicit_warning": "Empty is NOT zero and NOT 'nothing recoverable'. No statement about recoverability via the Pokemon TCG API fallback is supported by this package.",
+    "o0_rows_reported_as_zero": "The probe manifest reports o0_rows = 0. This is VACUOUS — no outcome was derived, so there were no rows to be indeterminate. It must not be read as 'no indeterminate population'.",
+    "worst_case_sensitivity": "not run — there are no O0 rows to promote because no O values exist"
+  },
+
+  "active_owned_scope": {
+    "input_present": true,
+    "supplied_ids": 117,
+    "independent_expected_count_Q-A7d": 117,
+    "matched_in_evidence": 117,
+    "reconciles": true,
+    "weighting": "withheld",
+    "G-10_active_owned_o0_is_zero": "not_evaluated",
+    "note": "The scope reconciled cleanly, but its O0 gate and O1/O3 weighting are withheld because no outcome was derived. Reconciliation success is not a decision.",
+    "privacy": "The 117 owned card ids were an operator-only input under docs/cat-3a-evidence/inputs/ (gitignored) and were deleted after the run. No ownership dimension appears in any committed artifact."
+  },
+
+  "scope_limits_preserved": {
+    "CAT-0_51_fully_missing_sets": "CAT-0's statement that the 51 fully image-missing sets are structural upstream absences remains FORMALLY UNRESOLVED, because G-9 and G-10 did not pass. CAT-3A does not close it.",
+    "surface_exposure": "CAT-3A measured catalog fields and source availability. It did NOT measure surface rendering or collector-visible exposure.",
+    "decision_framework": "did not run"
+  },
+
+  "artifacts_materialized": [
+    {
+      "file": "image_coverage_by_set.csv",
+      "source": "Q-A2 production output, 2026-08-19 rerun",
+      "rows": 214,
+      "validation": "cards_total 23588, image_missing 1640, image_populated 21948, fully_covered 147, fully_missing 51, partially_missing 16, unclassified 0 — all reconcile to Q-A3"
+    },
+    {
+      "file": "image_gaps.csv",
+      "source": "probe run 2 (canonical artifact set)",
+      "rows": 1640,
+      "columns_populated": "T and A complete; ptcgio_state, outcome and sensitivity_outcome are DELIBERATELY EMPTY",
+      "validation": "per-set missing counts match Q-A2 exactly across all 67 sets holding gaps"
+    },
+    {
+      "file": "alias_pair_image_census.csv",
+      "source": "probe run 2 (Q-A6b input + P4)",
+      "rows": 192,
+      "validation": "192/192 A2, 192/192 ASSET_LIVE, zero unresolved"
+    },
+    {
+      "file": "upstream_image_availability.csv",
+      "source": "probe run 2 (P1)",
+      "rows": 67,
+      "validation": "4 SET_ABSENT, 0 SET_INDETERMINATE, 16 sets carry at least one upstream image, 47 carry none"
+    }
+  ],
+
+  "artifacts_not_materialized": [
+    {
+      "file": "per-row F/O evidence",
+      "reason": "G-7 failed twice; P3 never ran. Fabricating or inferring these values is prohibited.",
+      "regeneration": "Re-run scripts/cat3a-image-probe.mjs once the Pokemon TCG API can pass the unchanged P3-0 gate."
+    }
+  ],
+
+  "canonical_probe_run": {
+    "run": 2,
+    "probe_version": 3,
+    "keyless": true,
+    "requests": 1779,
+    "retries": 107,
+    "by_host": { "api.tcgdex.net": 1339, "assets.tcgdex.net": 192, "api.pokemontcg.io": 141 },
+    "why_run_2": "Latest run, per the closeout instruction. Run 1 produced identical T and A results; the two differ only in which controls failed the reliability gate."
+  },
+
+  "post_cat3a_roadmap_recommendation": {
+    "status": "RECOMMENDATION ONLY — not a CAT-3A decision, because the Decision Framework did not run",
+    "slice": "Narrow D-ALIAS durability / image-override prerequisite",
+    "basis": "Independently decision-grade A evidence: 192/192 approved pairs are A2; 192/192 retained TCGdex assets are ASSET_LIVE; 45 of 117 active-owned missing-image cards are in A2.",
+    "policy_accepted": "A retained provider-history image may be an admissible source for its canonical survivor ONLY where CAT-2D.2 has already independently established that the pair represents the same physical printing. Scoped to those 192 pairs and nothing else.",
+    "not_authorized": "No production image write is authorized. Direct writes to cards.image_url remain blocked because durability and provenance under future sync are unresolved: mapCardToRow performs a full-row upsert that rewrites image_url from upstream (sync-cards.mjs:332), there is no image provenance column (CAT-0 F-9), and card_extras overrides illustrator only.",
+    "consequence_if_written_today": "A value written now would be silently reverted the next time that set is not skipped by the incremental predicate, with nothing recording that it was ever deliberate."
+  },
+
+  "privacy_and_containment": {
+    "operator_only_inputs": "docs/cat-3a-evidence/inputs/ is gitignored and uncommitted. It held image_gaps_input.csv, alias_pairs_input.csv, p3_control_pool_input.csv, owned_missing_ids_input.csv and owned_expected_count_input.csv.",
+    "ownership_ids_in_committed_evidence": "none — no committed artifact carries an ownership, user, quantity or batch column",
+    "production_writes": "none",
+    "schema_runtime_workflow_changes": "none",
+    "sync": "remains PAUSED"
+  }
+}

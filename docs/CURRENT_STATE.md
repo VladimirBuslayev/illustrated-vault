@@ -1357,6 +1357,25 @@ Historical note — CAT-1 was selected as the slice following CAT-0 because the 
 
 Binding guardrail that governed CAT-1, retained as precedent. The sync path performs full-row card upserts and can rewrite unrelated fields including illustrator, artist_id, pricing, rarity, image_url and set_name. CAT-1 preserved every unrelated catalog field, proven by a whole-row to_jsonb(c) - 'series' - 'release_date' checksum that stayed byte-identical across the restoration. Any future catalog slice must preserve unrelated fields unless broader refresh behavior is separately inspected and approved.
 
+
+CAT-3A — Image Coverage & Recoverability Audit
+
+Status: ✓ CLOSED — SCOPED PARTIAL, 2026-08-19. Read-only throughout. No production write, no schema change, no runtime change, no alias change. Sync remained paused. Full document: /docs/CAT-3A_IMAGE_COVERAGE_AND_RECOVERABILITY_AUDIT.md. Evidence: /docs/cat-3a-evidence/.
+
+Decision-grade findings. T dimension complete: T1 = 0, T2 = 1,495, T3 = 145, T4 = 0 across all 1,640 missing-image rows. T3 splits into 120 rows in the four retired Trainer Gallery namespaces (swsh9.5tg, swsh10.5tg, swsh11.5tg, swsh12.5tg) and 25 rows that are the historical Celebrations Classic Collection population under cel25 — which independently reproduces CAT-2D.3 Gate 0 without using its selector. Two probe runs ~11.5 hours apart produced identical per-row T for all 1,640 rows.
+
+A dimension complete: all 192 CAT-2D.2-approved alias pairs are A2 (alias holds an image, canonical survivor does not), zero unresolved, and all 192 retained TCGdex assets are ASSET_LIVE. 45 of the 117 active-owned missing-image cards fall in that class.
+
+Withheld. G-7, the Pokémon TCG API reliability gate, FAILED on two consecutive unchanged keyless runs (18/20 valid with 2 indeterminate; then 16/20 with 4 indeterminate). Zero false definitives in both — the source failed to answer rather than answering wrongly. Control qualification succeeded comfortably both times (90 and 91 of 120), so this was not a shortage of known-valid controls. P3 never ran. The F and O dimensions were never measured; G-8 and G-9 are not_evaluated; G-10 is withheld at per-set, active-owned and global scope. No third run was performed and the gate was not relaxed.
+
+Read the empties correctly. Every row in image_gaps.csv carries an empty ptcgio_state, outcome and sensitivity_outcome. Empty is not zero and not "nothing recoverable". The probe manifest's o0_rows = 0 is vacuous: no outcome was derived, so no row could be indeterminate.
+
+The CAT-3A Decision Framework DID NOT RUN, because G-10 did not pass. CAT-3A therefore selected no implementation slice, and did not select D-ALIAS.
+
+Scope limit preserved. CAT-0's statement that the 51 fully image-missing sets are structural upstream absences remains formally unresolved — G-9 and G-10 did not pass, so CAT-3A does not close it. CAT-3A measured catalog fields and source availability only; surface rendering and collector-visible exposure were not measured.
+
+Post-CAT-3A recommendation, not a decision. The suggested next slice is the narrow D-ALIAS durability / image-override prerequisite, resting on the independently decision-grade A evidence above. Accepted policy principle: a retained provider-history image may be an admissible source for its canonical survivor ONLY where CAT-2D.2 has already independently established that the pair represents the same physical printing — the 192 admitted pairs and nothing else. No production image write is authorized. Direct writes to cards.image_url remain blocked because durability and provenance under future sync are unresolved: mapCardToRow full-row upserts image_url from upstream (sync-cards.mjs:332), there is no image provenance column (CAT-0 F-9), and card_extras overrides illustrator only. A value written today would be silently reverted the next time that set is not skipped, with nothing recording it was deliberate. The prerequisite is the durable channel, not the image write.
+
 Deferred by CAT-0: Pokémon TCG API fallback Probe B · image remediation · illustrator enrichment · artist FK repair · OL-0D p_artist_id filter semantics (latent; no user-facing Owned Library artist-filter workflow established) · add_artist_to_archive duplicate-identity risk · index hygiene · pricing.
 
 Roadmap after CAT-1 — superseded as sequencing. The evidence-backed illustrator slice and OWN-1 (Artwork vs Printing ownership policy) remain valid work items and their preconditions are unchanged, but they are no longer the stated next sequence. Catalog trust and image completeness are now carried by CAT-2. See ROADMAP.md for the current order.
@@ -1510,7 +1529,7 @@ Isolated non-production G1 proof remains a deferred observation. The structural 
 
 The whole-catalog temporal run processed 218 upstream sets against 214 distinct catalog set_id values. These reconcile exactly: the complete 214-set CAT-0 inventory is a subset of the 218, and zero catalog set IDs were absent from the upstream run. The four upstream set IDs with no rows in public.cards are exactly jumbo, rc, sp, wp — the same four zero-card sets noted above. Their UPDATE matched zero rows: benign, idempotent, complete coverage. Whether those sets should hold rows is a coverage question, not a CAT-1 one.
 
-CAT-0 is complete and found no P0 catalog identity defect. Remaining catalog work is coverage and derivation, not identity. Exact-image coverage is measured (1,640 global / 114 owned) and deferred; broad image remediation is not currently justified.
+CAT-0 is complete and found no P0 catalog identity defect. Remaining catalog work is coverage and derivation, not identity. Exact-image coverage is re-measured by CAT-3A on the current effective catalog: 1,640 missing of 23,588 across 214 sets, 117 in the active-owned population. Broad image remediation remains unjustified, and CAT-3A now establishes WHY rather than inferring it: T1 = 0 of 1,640, so not one missing-image row has an image available at TCGdex today. The stale-ingestion hypothesis is falsified against a complete measurement.
 
 The OL-0C catalog index is loaded client-side in stable pages during signed-in CSV import. The loader is isolated so a future server-side resolver can replace it without changing the matcher.
 
