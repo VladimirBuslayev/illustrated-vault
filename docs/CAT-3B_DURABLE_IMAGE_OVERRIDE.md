@@ -10,15 +10,20 @@
 ## 0. Status
 
 ```
-STATUS:            PREPARED — NOT EXECUTED
-Migration SQL:     authored, NOT RUN
-Validation SQL:    authored, NOT RUN
-Durability test:   authored, NOT RUN (non-production only)
-Override rows:     ZERO — and creating them is out of scope for this slice
+STATUS:            DEPLOYED AND VALIDATED          (2026-08-19)
+
+ACL preflight      P-1 … P-6 executed, baseline recorded
+Migration SQL      executed as ONE atomic script, from head c8bb47d
+Validation SQL     V-1 … V-6 executed — ALL PASS
+Durability test    NOT RUN — non-production only; deferred observation
+Override rows      ZERO — creating them remains out of scope for this slice
 ```
 
-Deploying this slice changes **zero rendered pixels**. Every new column is
-nullable with no default, so `coalesce(NULL, c.image_url)` is a provable no-op.
+The deployment changed **zero rendered pixels**, and V-3 proves it row-for-row:
+23,588 deployed rows against 23,588 expected, zero differing in either
+direction, 1,640 null images on both sides.
+
+Full results in §9.
 
 ---
 
@@ -110,9 +115,15 @@ path** — the same argument CAT-1's G1 made for `series` / `release_date`.
 ### 3.3 The override pattern already exists
 
 `cards_effective` already does `coalesce(ce.illustrator_override, c.illustrator)`.
-`card_extras` already has an FK to `cards(id)`, RLS enabled with SELECT-only for
-anon/authenticated (no write policies → writes implicitly denied), an explicit
-GRANT, and an `updated_at` trigger. New columns inherit all of it.
+`card_extras` already has an FK to `cards(id)`, RLS enabled with a single
+permissive SELECT policy and no write policies, table-level GRANTs, and an
+`updated_at` trigger. New columns inherit all of it.
+
+> **Corrected after the production preflight.** This paragraph originally said
+> the grant was "SELECT-only for anon/authenticated". It was not — anon and
+> authenticated each held seven table-level privileges including INSERT, UPDATE,
+> DELETE and TRUNCATE. They were dormant, because RLS carried no write policy,
+> but they were real. §4.3b and §9.7 record what §6 did about it.
 
 ### 3.4 A hazard that does not apply
 
@@ -474,3 +485,133 @@ sources of any kind · provider-ID translation or correspondence tables ·
 cross-printing or cross-language proxies · reopening CAT-3A · re-attempting the
 CAT-3A reliability gate · CAT-2D.3 identity remap · CAT-2D.4 Trainer Galleries ·
 image provenance for the 1,448 non-alias gaps.
+
+---
+
+## 9. Production execution and validation closeout
+
+**Deployed 2026-08-19** from head `c8bb47d5725e1f7ceab7ffac16b6085e3334be80`.
+`docs/sql/cat-3b-1-durable-image-override.sql` ran as **one atomic script**, §1
+through §6 inside a single `BEGIN; … COMMIT;`. All six validation gates pass.
+
+**Zero override rows were created.** The channel exists and is empty.
+
+### 9.1 V-1 — existing data untouched · PASS
+
+| Field | BEFORE | AFTER |
+|---|---|---|
+| `row_count` | 5 | **5** |
+| `payload_digest` | `5a3348d04081450b251b79c1a492dd3c` | **`5a3348d04081450b251b79c1a492dd3c`** |
+| `illustrator_overrides` | 5 | **5** |
+| `earliest_created_at` | 2026-06-24 01:12:49.298647+00 | **identical** |
+| `latest_updated_at` | 2026-08-17 18:57:27.574545+00 | **identical** |
+
+Exact match. `latest_updated_at` holding is the sharpest signal here: the
+`card_extras_set_updated_at` trigger fires on **any** update, so it would have
+moved had the migration touched a single existing row.
+
+### 9.2 V-2 — the channel is empty · PASS
+
+All five CAT-3B columns present; **zero rows carry any override or provenance
+value**, including the `rows_with_any_override_field` counter that would catch a
+partially populated row.
+
+### 9.3 V-3 — row-for-row output equivalence · PASS
+
+| Measure | Value |
+|---|---|
+| `deployed_rows` / `expected_rows` | 23,588 / 23,588 |
+| `rows_only_in_deployed` | **0** |
+| `rows_only_in_expected` | **0** |
+| `deployed_null_images` / `expected_null_images` | 1,640 / 1,640 |
+
+The symmetric `EXCEPT ALL` diff found no divergence in any column of any row.
+`coalesce(NULL, c.image_url)` behaved as the provable no-op it was argued to be.
+
+### 9.4 V-4 — view contract intact · PASS
+
+14 columns in the exact expected order, `artist_id` at position 14,
+`security_invoker = true` preserved. SELECT grantees: `anon`, `authenticated`,
+`postgres`, `service_role` — `postgres` is the owner and was always present; the
+three runtime grantees are unchanged from CAT-2D.1.
+
+### 9.5 V-5 — admission wall in place · PASS
+
+`function_exists` true · **`is_security_definer` FALSE** · `trigger_exists` true ·
+`reads_resolution_view` true · **`reads_private_alias_table` FALSE** ·
+`image_override_constraints` 5.
+
+The privilege wall CAT-2D.1 built around `card_identity_aliases` is intact: the
+admission trigger validates through the public `card_identity_resolution` view
+and never needed definer rights.
+
+### 9.6 V-6 — the ACL is exactly what §6 intended · PASS
+
+**V-6a — table level.** Raw ACL is now
+`{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres}`.
+
+`anon` and `authenticated` have **disappeared from `relacl` entirely** — their
+table-level grants are gone, and `table_level_grants` reads 0. Their access now
+lives exclusively in `pg_attribute.attacl` as three column grants.
+`has_public_grant` false; RLS enabled, not forced.
+
+`service_role` retains its broad grant, untouched, exactly as designed — it is
+the write identity for enrichment and needs the provenance columns to author an
+override at all.
+
+**V-6b — column level, per role.** For **both** `anon` and `authenticated`
+independently: total 10 · readable 3 · withheld 7 · leaked 0 · missing 0 ·
+`all_match` true. All 20 detail rows passed.
+
+This is the check that would have caught a state where one role held the grants
+and the other did not — the defect the final review round corrected before
+deployment.
+
+**V-6c — policies untouched.** `policy_count` 1 · `write_policies` **0** ·
+`card_extras_public_select` · permissive · `USING (true)` · roles
+`anon,authenticated`.
+
+### 9.7 The privilege narrowing actually happened
+
+The measured pre-state gave `anon` and `authenticated` seven table-level
+privileges each, including INSERT, UPDATE, DELETE and TRUNCATE. Those were
+dormant — RLS carried no write policy — but they were real, and they would have
+become live the moment anyone added a write policy or disabled RLS during an
+incident.
+
+They are now gone. Public read access is three columns through
+`cards_effective`, and nothing else. **The provenance columns
+(`image_override_evidence`, `image_override_approved_by`,
+`image_override_approved_at`, `image_override_source_card_id`) are not readable
+by `anon` or `authenticated`.**
+
+### 9.8 What is still not proven
+
+`docs/sql/cat-3b-3-durability-test.sql` **was not run** — it writes data and is
+non-production only, and no non-production Supabase environment exists. It
+remains a **deferred observation**, the same disposition CAT-1 took for its
+isolated G1 proof.
+
+The durability claim therefore rests on the three static proofs, all asserted in
+CI by `scripts/cat3b-durability.test.mjs`:
+
+1. `mapCardToRow`'s payload cannot express any of the five columns — asserted
+   per-column, so a future edit adding one fails the build;
+2. `sync-cards.mjs` **writes** only `public.cards`; `card_extras` appears nowhere
+   in the file;
+3. `cards_effective` COALESCEs the **stored** override and never joins the source
+   row, so the alias row's current value is not an input to the rendered value.
+
+Do not manufacture the empirical proof in production.
+
+### 9.9 What this does and does not authorize
+
+CAT-3B built the **channel**. It authorizes nothing further.
+
+**No override row may be created** — not for the 192 CAT-3A-measured pairs, not
+for anything else — without its own approval. The channel is restricted to
+approved alias relationships and is not hard-coded to any particular card set; a
+future alias becomes *eligible* automatically, but nothing is ever applied
+automatically.
+
+Sync remains **paused**.

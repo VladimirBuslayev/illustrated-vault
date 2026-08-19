@@ -7,12 +7,19 @@
 -- Full document: docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md
 --
 -- ─────────────────────────────────────────────────────────────────────────
--- ⚠ STATUS: PREPARED — NOT EXECUTED
+-- ✅ STATUS: DEPLOYED AND VALIDATED — 2026-08-19
 -- ─────────────────────────────────────────────────────────────────────────
--- No statement in this file has been run against production. Deployment is a
--- separately approved step. This slice writes NO override rows: after a
--- successful deploy, public.card_extras holds exactly the same 5 rows it holds
--- today and every new column is NULL on every one of them.
+-- Executed against production as ONE atomic script, from head c8bb47d.
+-- V-1 through V-6 all PASS. Results: docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md §9.
+--
+-- As designed, this wrote NO override rows: public.card_extras still holds
+-- exactly the same 5 rows, with identical payload_digest
+-- 5a3348d04081450b251b79c1a492dd3c before and after, and every new column NULL
+-- on every one of them.
+--
+-- ⚠ The EXECUTION CONTRACT below is the historical record of how this file was
+--   run. It is retained verbatim and must not be rewritten — re-running this
+--   file (it is idempotent) requires exactly the same conditions.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- WHAT PROBLEM THIS SOLVES
@@ -35,9 +42,14 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- card_extras is ALREADY the manual-enrichment override channel: it already
 -- overrides `illustrator` through cards_effective, already has an FK to
--- cards(id), RLS enabled with SELECT-only for anon/authenticated (no write
--- policies, so writes are implicitly denied), an explicit GRANT, and an
--- updated_at trigger. New columns inherit all of that.
+-- cards(id), RLS enabled with a single permissive SELECT policy and no write
+-- policies, table-level GRANTs, and an updated_at trigger. New columns inherit
+-- all of that.
+--
+-- ⚠ CORRECTED AFTER THE PRODUCTION PREFLIGHT. This paragraph originally said
+--   the grant was "SELECT-only for anon/authenticated". It was not — each held
+--   seven table-level privileges including INSERT, UPDATE, DELETE and TRUNCATE.
+--   Dormant, because RLS carried no write policy, but real. §6 removes them.
 --
 -- A dedicated table would mean a second LEFT JOIN in the hottest view in the
 -- product, plus its own RLS, policies, grants and trigger — strictly more

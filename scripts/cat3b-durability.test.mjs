@@ -674,7 +674,30 @@ ok(/explicit override write/i.test(flatDoc),
   'doc says an explicit override write remains required');
 ok(/192/.test(doc) && !/hard-coded to the (current )?192/i.test(flatDoc),
   'doc references the 192 as measurement, not as a hard-coded scope');
-ok(/PREPARED — NOT EXECUTED/.test(doc), 'doc states nothing has been deployed');
+// Closeout state. This previously pinned the pre-deployment banner; CAT-3B has
+// since been deployed and validated, so that claim would now be false.
+ok(/DEPLOYED AND VALIDATED/.test(doc), 'doc records the deployed-and-validated status');
+ok(/DEPLOYED AND VALIDATED/.test(migration), 'migration records that it was executed');
+ok(/EXECUTED — 2026-08-19/.test(preflight), 'preflight records that it was executed');
+ok(/V-1 through V-6 ALL PASS/.test(validation), 'validation records the all-pass result');
+// The durability test must NOT be marked run: it needs a non-production
+// environment that does not exist, and it remains a deferred observation.
+ok(/NON-PRODUCTION ONLY/.test(durability) && !/DEPLOYED AND VALIDATED/.test(durability),
+  'the durability test is still marked non-production and unrun');
+ok(/deferred observation/i.test(doc), 'doc records the durability test as deferred');
+
+// The production results must be on record, not merely summarised.
+ok(/5a3348d04081450b251b79c1a492dd3c/.test(doc),
+  'doc records the V-1 payload_digest that matched before and after');
+ok(/23,588/.test(doc) && /1,640/.test(doc),
+  'doc records the V-3 row-for-row equivalence figures');
+ok(/postgres=arwdDxtm\/postgres,service_role=arwdDxtm\/postgres/.test(doc),
+  'doc records the final raw ACL, showing anon/authenticated gone from relacl');
+ok(/readable 3 · withheld 7 · leaked 0 · missing 0/.test(doc),
+  'doc records the per-role V-6b result');
+// The closeout must not overstate what was authorised.
+ok(/authorizes nothing further|No override row may be created/i.test(doc.replace(/\s+/g, ' ')),
+  'closeout states that no override row is authorised');
 ok(/out of scope/i.test(flatDoc), 'doc carries an explicit out-of-scope list');
 ok(/CAT-3A[\s\S]{0,200}(did not|selected no)/i.test(flatDoc),
   'doc preserves that CAT-3A selected no slice');

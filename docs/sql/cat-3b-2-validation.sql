@@ -6,7 +6,11 @@
 -- Full document: docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md
 --
 -- ─────────────────────────────────────────────────────────────────────────
--- ⚠ STATUS: PREPARED — NOT EXECUTED
+-- ✅ STATUS: EXECUTED — 2026-08-19. V-1 through V-6 ALL PASS.
+-- ─────────────────────────────────────────────────────────────────────────
+-- Results recorded in docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md §9. Retained as
+-- the definition and as the means to RE-VALIDATE: re-running this file is how
+-- a future slice confirms these properties still hold rather than assuming it.
 -- ─────────────────────────────────────────────────────────────────────────
 --
 -- ─────────────────────────────────────────────────────────────────────────

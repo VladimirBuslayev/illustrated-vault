@@ -6,7 +6,12 @@
 -- Full document: docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md
 --
 -- ─────────────────────────────────────────────────────────────────────────
--- ⚠ STATUS: PREPARED — NOT EXECUTED
+-- ✅ STATUS: EXECUTED — 2026-08-19, before the migration
+-- ─────────────────────────────────────────────────────────────────────────
+-- P-1 through P-6 all ran against production. The measured baseline they
+-- established is recorded below and superseded this file's original
+-- SELECT-only assumption. Retained as the definition and as the means to
+-- RE-MEASURE, including after any rollback.
 -- ─────────────────────────────────────────────────────────────────────────
 --
 -- ─────────────────────────────────────────────────────────────────────────
