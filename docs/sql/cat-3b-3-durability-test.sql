@@ -26,10 +26,14 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- Three independent facts, each verifiable without running anything:
 --
---   1. sync-cards.mjs addresses exactly two tables: public.cards (upsert at
---      line 345, temporal update at line 396) and public.artists (SELECT only,
---      line 218). public.card_extras appears NOWHERE in the file. The sync
---      path has no code path that can write the override column.
+--   1. sync-cards.mjs WRITES exactly one table: public.cards (upsert at line
+--      345, temporal update at line 396). It also READS public.artists (line
+--      218, alias map) and public.cards_effective (line 476, the CAT-2B1
+--      identity-collision guard) — both SELECT only. public.card_extras appears
+--      NOWHERE in the file, in any form, so the sync path has no code path that
+--      can write the override column. The read/write distinction is asserted
+--      separately in the harness: an edit turning either read into a write
+--      would break durability without changing the table count.
 --
 --   2. mapCardToRow() emits 21 named keys and image_url_override is not among
 --      them. Because upsertRows issues INSERT … ON CONFLICT (id) DO UPDATE SET
@@ -170,6 +174,50 @@ join public.cards_effective e on e.id = f.canonical_card_id;
 -- ⚠ THIS IS THE CENTRAL RESULT OF CAT-3B.
 
 
+-- ── Step 4c — AN UNRELATED EDIT STILL SUCCEEDS, AND CHANGES NOTHING ─────────
+-- ⚠ THE SECOND CENTRAL RESULT.
+--
+-- The source image has now been changed AND nulled, so the admitted override no
+-- longer matches its source. If the trigger re-validated on every write, this
+-- ordinary edit to an unrelated column would now FAIL — a routine change broken
+-- by provider churn it has nothing to do with.
+--
+-- It must succeed, and it must leave both the stored override and the canonical
+-- effective image untouched.
+update public.card_extras
+set source_note = 'cat-3b durability test — unrelated edit after source churn'
+where card_id = (select canonical_card_id from cat3b_fixture);
+
+select
+  'step 4c — unrelated source_note edit'                            as step,
+  ce.source_note                                                    as source_note_now,
+  ce.image_url_override                                             as stored_override,
+  ce.image_url_override = f.source_image_at_admission               as override_unchanged,
+  e.image_url = f.source_image_at_admission                         as effective_unchanged
+from cat3b_fixture f
+join public.card_extras ce on ce.card_id = f.canonical_card_id
+join public.cards_effective e on e.id = f.canonical_card_id;
+-- Expected: the UPDATE did not raise, override_unchanged = true,
+--           effective_unchanged = true.
+
+-- Same again for the other overridable column, which shares this row.
+update public.card_extras
+set illustrator_override = 'CAT-3B Test Illustrator'
+where card_id = (select canonical_card_id from cat3b_fixture);
+
+select
+  'step 4d — unrelated illustrator_override edit'                   as step,
+  ce.illustrator_override                                           as illustrator_now,
+  ce.image_url_override = f.source_image_at_admission               as override_unchanged,
+  e.image_url = f.source_image_at_admission                         as effective_unchanged,
+  e.illustrator = 'CAT-3B Test Illustrator'                         as illustrator_applied
+from cat3b_fixture f
+join public.card_extras ce on ce.card_id = f.canonical_card_id
+join public.cards_effective e on e.id = f.canonical_card_id;
+-- Expected: all three true. The two override channels are independent and
+--           neither re-admits the other.
+
+
 -- ── Step 5 — divergence is the REQUIRED outcome, not a defect ───────────────
 select
   'step 5 — post-admission divergence'                              as step,
@@ -208,7 +256,36 @@ join public.card_extras ce on ce.card_id = f.canonical_card_id;
 --   -- expect: check constraint card_extras_image_override_shape
 
 
--- ── Step 7 — leave nothing behind ───────────────────────────────────────────
+-- ── Step 7 — CLEARING the bundle is permitted, even after source churn ─────
+-- Withdrawing an override is a legitimate act. It must not require the source
+-- to still be admissible — which it no longer is, since step 4b nulled it.
+update public.card_extras
+set image_url_override            = null,
+    image_override_source_card_id = null,
+    image_override_evidence       = null,
+    image_override_approved_by    = null,
+    image_override_approved_at    = null
+where card_id = (select canonical_card_id from cat3b_fixture);
+
+select
+  'step 7 — bundle cleared'                                        as step,
+  ce.image_url_override is null                                     as override_cleared,
+  e.image_url                                                       as effective_image,
+  e.image_url is null                                               as fell_back_to_raw
+from cat3b_fixture f
+join public.card_extras ce on ce.card_id = f.canonical_card_id
+join public.cards_effective e on e.id = f.canonical_card_id;
+-- Expected: override_cleared = true, and the canonical card falls back to its
+--           own raw image_url (null here, since it was the A2 case).
+
+-- ⚠ NOTE ON RE-ADMISSION. Re-applying this bundle now would FAIL, and that is
+--   correct: step 4b nulled the source image, so R3 can no longer admit it.
+--   Withdrawing an override is always allowed; re-admitting is a NEW decision
+--   and must meet the current bar. If a re-admit unexpectedly succeeded,
+--   admission is not being enforced on material change — a STOP.
+
+
+-- ── Step 8 — leave nothing behind ───────────────────────────────────────────
 rollback;
 
 -- Post-rollback sanity, run as its own statement afterwards:

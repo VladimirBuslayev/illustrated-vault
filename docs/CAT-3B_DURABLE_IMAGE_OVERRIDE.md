@@ -179,6 +179,76 @@ CAT-2D.1 §3 granted to anon, authenticated and service_role — and
 privilege wall stays intact, and it is deliberately **not** `SECURITY DEFINER`.
 Nothing here widens anyone's access.
 
+### 4.3a Admission is not revalidation
+
+The trigger must **not** re-check an unchanged override on every unrelated write.
+
+| Write | Behaviour |
+|---|---|
+| INSERT with no image bundle | skip admission |
+| INSERT with a populated bundle | validate R1/R2/R3 |
+| UPDATE where all five image fields are `IS NOT DISTINCT FROM OLD` | **return without re-admission** |
+| clearing a complete bundle to NULL | **permitted** |
+| material change to any image field | re-run admission |
+
+`card_extras` is a shared enrichment row. Editing `source_note`, or setting
+`illustrator_override`, must not drag an already-admitted override back through
+R3 — because R3 compares against the source card's **current** `image_url`,
+which provider churn is expected to change. Revalidating on an unrelated UPDATE
+would make a routine edit fail for a reason that has nothing to do with it, and
+would resurrect exactly the provider coupling this slice removes.
+
+`IS NOT DISTINCT FROM` rather than `=`: plain equality treats two NULL bundles
+as changed and would re-admit on every unrelated edit.
+
+Withdrawing an override is always allowed and does **not** require the source to
+still be admissible. Re-admitting is a **new decision** and must meet the current
+bar.
+
+### 4.3b Provenance ACL — the new columns must not become public
+
+**Run `docs/sql/cat-3b-0-acl-preflight.sql` before the migration and read its
+output.** The grant section is written against an expected state; the preflight
+establishes the actual one.
+
+`card_extras_and_view.sql` granted SELECT at **table level**, and a table-level
+grant covers every column the table will *ever* have. Adding provenance columns
+to it would publish — to every anonymous visitor — who approved each override,
+when, on what evidence, and which retained provider-history row it came from.
+Nobody would have decided that; it would happen as a side effect of an
+`ALTER TABLE`.
+
+The migration therefore **revokes the blanket grant and re-grants an explicit
+column list**:
+
+| Granted to anon/authenticated | Withheld |
+|---|---|
+| `card_id` (join key) | `image_override_evidence` |
+| `illustrator_override` (COALESCE) | `image_override_approved_by` |
+| `image_url_override` (COALESCE) | `image_override_approved_at` |
+| | `image_override_source_card_id` |
+
+Those three are exactly what `cards_effective` touches. Verified on `main` @
+`a37e00a`: nothing in `src/` reads `card_extras` directly, and no RPC does —
+OL-0D explicitly asserts its deployed body must **not** contain
+`public.card_extras`. `cards_effective` is the only runtime reader, so
+`source_note`, `created_at` and `updated_at` leave the public surface as a side
+benefit.
+
+`image_override_source_card_id` is withheld too: it is a pointer into provider
+history the effective catalog deliberately hides, and publishing it would expose
+the alias relationship CAT-2D.1 walled off behind `card_identity_resolution`'s
+narrow two-column surface.
+
+**Not solved by making `cards_effective` definer-rights.** `security_invoker =
+true` stays. Owner rights would let the view read columns the caller cannot —
+the same "dodge the permissions question" move CAT-2D.1 §3 rejected for OL-0D.
+Column grants are the honest mechanism.
+
+`service_role` is deliberately left alone: it is the write identity for
+enrichment and needs the provenance columns to author an override at all. The
+migration does not widen its privileges.
+
 ### 4.4 Admission-time semantics — deliberate, not a gap
 
 > The equality between the override and its source's `image_url` is checked
@@ -225,7 +295,8 @@ differs from the CAT-2D.1 definition.
 | File | Purpose |
 |---|---|
 | `docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md` | this document |
-| `docs/sql/cat-3b-1-durable-image-override.sql` | migration + inline rollback (§6) |
+| `docs/sql/cat-3b-0-acl-preflight.sql` | **read-only ACL preflight — run FIRST** |
+| `docs/sql/cat-3b-1-durable-image-override.sql` | migration + ACL (§6) + inline rollback (§7) |
 | `docs/sql/cat-3b-2-validation.sql` | read-only V-1 … V-5 |
 | `docs/sql/cat-3b-3-durability-test.sql` | **non-production** write test |
 | `scripts/cat3b-durability.test.mjs` | static harness |
@@ -261,6 +332,22 @@ statements also recorded in §6.
 | **V-3** | `cards_effective` is **row-for-row output-equivalent** to pre-CAT-3B, via a symmetric `EXCEPT ALL` diff against the pre-CAT-3B expression reconstructed inline from the same base tables. Not a remembered number. |
 | **V-4** | Structural contract: 14 columns, order, `artist_id` at position 14, `security_invoker`, grants. |
 | **V-5** | The admission wall exists, is **not** `SECURITY DEFINER`, reads `card_identity_resolution`, and does **not** read `card_identity_aliases`. |
+
+### 7.0 ACL preflight — run before anything else
+
+| Check | Establishes |
+|---|---|
+| **P-1 / P-1b** | table-level privileges per grantee, **plus the raw `relacl` including grants to PUBLIC**, which `role_table_grants` omits |
+| **P-2** | existing column-level grants (expected: none) |
+| **P-3** | RLS enabled state and every policy on `card_extras` |
+| **P-4** | `cards_effective` is still `security_invoker = true`, and its grantees |
+| **P-5 / P-5b** | **any routine or view that reads `card_extras` directly** — the check that decides whether a three-column grant is sufficient |
+| **P-6** | live column inventory of `card_extras` |
+
+Any deviation is a **STOP**, not a note. A PUBLIC grant means the revoke list is
+incomplete. A direct reader means the grant list must be widened to whatever it
+selects. `cards_effective` not being invoker-rights would make the whole
+column-grant argument moot and require re-examining the design.
 
 ### 7.1 Durability — proving sync cannot erase an override
 

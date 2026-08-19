@@ -246,6 +246,23 @@ end $$;
 --   public.card_identity_aliases, whose privilege wall stays intact. Nothing
 --   here widens anyone's access.
 
+--
+-- ⚠ ADMISSION IS NOT REVALIDATION. THE TRIGGER MUST NOT RE-CHECK AN UNCHANGED
+--   OVERRIDE ON EVERY UNRELATED WRITE.
+--
+--   card_extras is a shared enrichment row. Editing source_note, or setting
+--   illustrator_override, must not drag an already-admitted image override back
+--   through R2/R3 — because R3 compares against the source card's CURRENT
+--   image_url, which provider churn is expected to change. Revalidating on an
+--   unrelated UPDATE would make a routine edit fail for a reason that has
+--   nothing to do with it, and would resurrect exactly the provider coupling
+--   this slice removes.
+--
+--   Gate order below:
+--     UPDATE, image bundle IS NOT DISTINCT FROM OLD  -> return, no admission
+--     bundle fully NULL                              -> return (clearing is allowed)
+--     otherwise (INSERT with a bundle, or a material change) -> admit R1/R2/R3
+
 create or replace function public.card_extras_admit_image_override()
 returns trigger
 language plpgsql
@@ -253,10 +270,31 @@ as $$
 declare
   v_source_image text;
 begin
-  -- Not an override write. Nothing to admit.
+  -- ── Unchanged bundle on UPDATE: this write is about something else. ────────
+  -- IS NOT DISTINCT FROM so NULL = NULL compares equal; a plain `=` would treat
+  -- two NULL bundles as "changed" and re-admit on every unrelated edit.
+  if tg_op = 'UPDATE'
+     and new.image_url_override            is not distinct from old.image_url_override
+     and new.image_override_source_card_id is not distinct from old.image_override_source_card_id
+     and new.image_override_evidence       is not distinct from old.image_override_evidence
+     and new.image_override_approved_by    is not distinct from old.image_override_approved_by
+     and new.image_override_approved_at    is not distinct from old.image_override_approved_at
+  then
+    return new;
+  end if;
+
+  -- ── No override present. ───────────────────────────────────────────────────
+  -- Covers an INSERT with no image bundle, and CLEARING a complete bundle back
+  -- to NULL — which is explicitly permitted. Withdrawing an override is a
+  -- legitimate act and must not require the source to still be admissible.
+  -- A partial clear cannot reach here: card_extras_image_override_all_or_nothing
+  -- rejects it first.
   if new.image_url_override is null then
     return new;
   end if;
+
+  -- ── Everything below is a REAL admission: an INSERT carrying a bundle, or a
+  --    material change to any image-specific field on UPDATE. ────────────────
 
   -- R1 — provenance completeness.
   -- The all-or-nothing CHECK also enforces this. Repeated here as the second
@@ -315,7 +353,7 @@ end;
 $$;
 
 comment on function public.card_extras_admit_image_override() is
-  'CAT-3B. Write-time admission control for card_extras image overrides. Rejects a source that is not an approved alias of the canonical card, an override that does not equal that source''s image_url AT ADMISSION TIME, and incomplete provenance. Deliberately SECURITY INVOKER and deliberately not re-evaluated after admission.';
+  'CAT-3B. Write-time admission control for card_extras image overrides. Rejects a source that is not an approved alias of the canonical card, an override that does not equal that source''s image_url AT ADMISSION TIME, and incomplete provenance. Returns early when an UPDATE leaves all five image fields IS NOT DISTINCT FROM OLD, so unrelated edits never re-admit. Clearing a complete bundle to NULL is permitted. Deliberately SECURITY INVOKER and deliberately not re-evaluated after admission.';
 
 drop trigger if exists card_extras_admit_image_override on public.card_extras;
 create trigger card_extras_admit_image_override
@@ -384,7 +422,79 @@ comment on view public.cards_effective is
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- §6. ROLLBACK — do not run during deployment
+-- §6. PROVENANCE ACL — the new columns must NOT inherit public readability
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- ⚠ RUN docs/sql/cat-3b-0-acl-preflight.sql FIRST AND READ ITS OUTPUT.
+--   This section is written against the EXPECTED state (a table-level SELECT
+--   grant to anon/authenticated from card_extras_and_view.sql). If the preflight
+--   shows something else — extra grantees, a PUBLIC grant, a direct runtime
+--   reader needing more columns — STOP and adjust the grant list before running
+--   this. Do not run it on assumption.
+--
+-- THE PROBLEM. card_extras_and_view.sql granted SELECT at TABLE level:
+--     GRANT SELECT ON public.card_extras TO anon, authenticated;
+-- A table-level grant covers every column the table will EVER have. Adding
+-- provenance columns to it would silently publish who approved an override,
+-- when, on what evidence, and from which retained provider-history row — to
+-- every anonymous visitor. Nobody would have decided that; it would just
+-- happen.
+--
+-- THE FIX. Replace the blanket grant with an explicit column list.
+--
+-- WHY THESE THREE COLUMNS. public.cards_effective is security_invoker = true,
+-- so its reads execute with the CALLER's privileges against card_extras. The
+-- view touches exactly three of its columns:
+--     ce.card_id              (join key)
+--     ce.illustrator_override (COALESCE)
+--     ce.image_url_override   (COALESCE)
+-- Those three, and nothing else, are what anon/authenticated need.
+--
+-- WHY NOT MORE. Verified on main @ a37e00a: nothing in src/ reads card_extras
+-- directly (zero occurrences outside one comment), and no RPC does either —
+-- OL-0D explicitly asserts its deployed body must NOT contain
+-- "public.card_extras". cards_effective is the only runtime reader, so
+-- source_note, created_at and updated_at are not needed by any caller and are
+-- dropped from the public surface as a side benefit. If the preflight
+-- contradicts this, widen the list rather than proceeding.
+--
+-- WHAT IS DELIBERATELY WITHHELD:
+--     image_override_evidence         — the decision record
+--     image_override_approved_by      — who decided
+--     image_override_approved_at      — when
+--     image_override_source_card_id   — which retained history row was used
+-- The last one is withheld too: it is a pointer into provider history that the
+-- effective catalog deliberately hides, and publishing it would expose the
+-- alias relationship that CAT-2D.1 walled off behind card_identity_resolution's
+-- narrow two-column surface.
+--
+-- ⚠ NOT SOLVED BY MAKING cards_effective DEFINER-RIGHTS. security_invoker =
+--   true stays. Converting the view to owner rights would let it read columns
+--   the caller cannot, which is the same "dodge the permissions question"
+--   move CAT-2D.1 §3 explicitly rejected for OL-0D. Column grants are the
+--   honest mechanism.
+--
+-- REVOKE-then-GRANT, not GRANT alone: GRANT cannot remove a table-level
+-- privilege an earlier deployment already left in place.
+
+revoke all on table public.card_extras from anon, authenticated;
+
+grant select (card_id, illustrator_override, image_url_override)
+  on public.card_extras to anon, authenticated;
+
+-- service_role is deliberately NOT column-restricted here. It is the write
+-- identity for enrichment and needs the provenance columns to author an
+-- override at all. Its privileges are whatever the preflight reports; this
+-- migration does not widen them. If the preflight shows service_role holds no
+-- explicit grant (it commonly bypasses via ownership/BYPASSRLS), leave it
+-- alone — do not add one speculatively.
+
+comment on table public.card_extras is
+  'Manual enrichment overrides for the effective catalog: illustrator_override and CAT-3B image_url_override. Never written by sync-cards.mjs. Column-level SELECT only for anon/authenticated (card_id, illustrator_override, image_url_override) — the image provenance columns are NOT publicly readable.';
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- §7. ROLLBACK — do not run during deployment
 -- ═══════════════════════════════════════════════════════════════════════════
 --
 -- Restoring the view is a single statement and is instant. Because this slice
@@ -406,6 +516,18 @@ comment on view public.cards_effective is
 --       where r.alias_card_id = c.id
 --     );
 --   grant select on public.cards_effective to anon, authenticated, service_role;
+--
+-- ⚠ ROLLING BACK THE ACL. §6 replaced a table-level grant with a column-level
+--   one. If the ACL change is being reverted too, restore whatever the
+--   preflight recorded as the PRE-CAT-3B state — do not guess. Against the
+--   expected baseline that is:
+--
+--     revoke all on table public.card_extras from anon, authenticated;
+--     grant select on table public.card_extras to anon, authenticated;
+--
+--   Reverting the view WITHOUT reverting the ACL is safe and is the preferred
+--   partial rollback: the column grant still covers everything the pre-CAT-3B
+--   view reads (card_id, illustrator_override).
 --
 -- The columns, constraints and trigger may be left in place — they are inert
 -- while every override field is NULL. Drop them only if the channel is being

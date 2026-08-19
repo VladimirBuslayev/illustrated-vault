@@ -47,6 +47,7 @@ const VALIDATION = join(ROOT, 'docs', 'sql', 'cat-3b-2-validation.sql');
 const DURABILITY = join(ROOT, 'docs', 'sql', 'cat-3b-3-durability-test.sql');
 const CAT2D1 = join(ROOT, 'docs', 'sql', 'cat-2d1-1-dark-alias-foundation.sql');
 const SYNC = join(ROOT, 'sync', 'sync-cards.mjs');
+const PREFLIGHT = join(ROOT, 'docs', 'sql', 'cat-3b-0-acl-preflight.sql');
 const DOC = join(ROOT, 'docs', 'CAT-3B_DURABLE_IMAGE_OVERRIDE.md');
 
 let passed = 0;
@@ -61,10 +62,10 @@ console.log('CAT-3B — durability and containment harness\n');
 
 for (const [label, p] of [['migration', MIGRATION], ['validation', VALIDATION],
   ['durability test', DURABILITY], ['CAT-2D.1 baseline', CAT2D1],
-  ['sync-cards.mjs', SYNC], ['spec doc', DOC]]) {
+  ['sync-cards.mjs', SYNC], ['ACL preflight', PREFLIGHT], ['spec doc', DOC]]) {
   ok(existsSync(p), `${label} file exists`);
 }
-if ([MIGRATION, VALIDATION, DURABILITY, CAT2D1, SYNC, DOC].some(p => !existsSync(p))) {
+if ([MIGRATION, VALIDATION, DURABILITY, CAT2D1, SYNC, PREFLIGHT, DOC].some(p => !existsSync(p))) {
   console.error('\nRequired files missing — aborting.');
   process.exit(1);
 }
@@ -74,6 +75,7 @@ const validation = readFileSync(VALIDATION, 'utf8');
 const durability = readFileSync(DURABILITY, 'utf8');
 const cat2d1 = readFileSync(CAT2D1, 'utf8');
 const sync = readFileSync(SYNC, 'utf8');
+const preflight = readFileSync(PREFLIGHT, 'utf8');
 const doc = readFileSync(DOC, 'utf8');
 
 const strip = (s) => s.replace(/--[^\n]*/g, '');
@@ -247,6 +249,116 @@ ok(/MAY diverge, and that divergence is CORRECT/.test(flatMig),
   'migration states post-admission divergence is correct');
 ok(/diverged_as_designed/.test(durability),
   'durability test asserts divergence as a required outcome');
+
+// ── 7b. Admission is not revalidation ────────────────────────────────────────
+console.log('\n7b. admission is not revalidation');
+
+const fnBody = migrationCode.slice(
+  migrationCode.indexOf('create or replace function public.card_extras_admit_image_override'),
+  migrationCode.indexOf('drop trigger if exists card_extras_admit_image_override'),
+);
+ok(fnBody.length > 400, 'admission function body located');
+
+// The unchanged-bundle early return. Without it, editing source_note would drag
+// an already-admitted override back through R3 — which compares against the
+// source's CURRENT image_url, exactly the value provider churn is expected to
+// change. A routine edit would then fail for an unrelated reason.
+ok(/tg_op = 'UPDATE'/.test(fnBody),
+  'the function branches on TG_OP');
+for (const col of NEW_COLUMNS) {
+  ok(new RegExp(`new\\.${col}\\s+is not distinct from old\\.${col}`).test(fnBody),
+    `unchanged-bundle check covers "${col}"`);
+}
+// IS NOT DISTINCT FROM, not `=`: a plain equality treats two NULL bundles as
+// changed and would re-admit on every unrelated edit.
+ok(!/new\.image_url_override\s*=\s*old\.image_url_override/.test(fnBody),
+  'the unchanged-bundle check does not use plain equality on nullable columns');
+const earlyReturnIdx = fnBody.indexOf('is not distinct from');
+const r2Idx = fnBody.indexOf('is not an approved alias');
+ok(earlyReturnIdx !== -1 && r2Idx !== -1 && earlyReturnIdx < r2Idx,
+  'the unchanged-bundle early return precedes R2/R3');
+
+// Clearing a complete bundle must be permitted even when the source is no
+// longer admissible — withdrawing an override is always allowed.
+ok(/if new\.image_url_override is null then\s*return new;/.test(fnBody.replace(/\s+/g, ' ')),
+  'a null override returns early (clearing is permitted)');
+const nullReturnIdx = fnBody.indexOf('if new.image_url_override is null');
+ok(nullReturnIdx !== -1 && nullReturnIdx < r2Idx,
+  'the null-override return precedes R2/R3');
+
+ok(/ADMISSION IS NOT REVALIDATION/.test(migration),
+  'migration states the non-revalidation rule explicitly');
+ok(/step 4c — unrelated source_note edit/.test(durability),
+  'durability test covers an unrelated source_note edit after source churn');
+ok(/step 4d — unrelated illustrator_override edit/.test(durability),
+  'durability test covers an unrelated illustrator_override edit');
+ok(/step 7 — bundle cleared/.test(durability),
+  'durability test covers clearing the bundle');
+
+// ── 7c. Provenance ACL ───────────────────────────────────────────────────────
+console.log('\n7c. provenance ACL');
+
+const PUBLIC_COLUMNS = ['card_id', 'illustrator_override', 'image_url_override'];
+const WITHHELD_COLUMNS = [
+  'image_override_evidence',
+  'image_override_approved_by',
+  'image_override_approved_at',
+  'image_override_source_card_id',
+];
+
+// The blanket table grant must be revoked, not merely supplemented: GRANT alone
+// cannot remove a table-level privilege an earlier deployment left behind, and
+// a table-level grant covers every column the table will ever have.
+ok(/revoke all on table public\.card_extras from anon, authenticated/.test(migrationCode),
+  'migration revokes the blanket table-level grant on card_extras');
+const grantMatch = migrationCode.match(
+  /grant select \(([^)]*)\)\s*\n?\s*on public\.card_extras to ([^;]*);/);
+ok(Boolean(grantMatch), 'migration re-grants column-level SELECT on card_extras');
+if (grantMatch) {
+  const granted = grantMatch[1].split(',').map(s => s.trim()).filter(Boolean);
+  const grantees = grantMatch[2].split(',').map(s => s.trim()).filter(Boolean);
+  ok(granted.length === PUBLIC_COLUMNS.length
+    && PUBLIC_COLUMNS.every(c => granted.includes(c)),
+    `column grant is exactly ${PUBLIC_COLUMNS.join(', ')} (got ${granted.join(', ')})`);
+  for (const col of WITHHELD_COLUMNS) {
+    ok(!granted.includes(col), `provenance column "${col}" is NOT publicly granted`);
+  }
+  ok(grantees.includes('anon') && grantees.includes('authenticated'),
+    'the column grant targets anon and authenticated');
+  ok(!grantees.includes('public') && !grantees.includes('PUBLIC'),
+    'the column grant does not target PUBLIC');
+}
+// The whole design rests on the view staying invoker-rights; switching it to
+// definer would let it read columns the caller cannot and make the ACL moot.
+ok(!/security_definer/i.test(migrationCode)
+  && /with \(security_invoker = true\)/.test(migrationCode),
+  'the ACL is not solved by making cards_effective definer-rights');
+ok(/NOT SOLVED BY MAKING cards_effective DEFINER-RIGHTS/.test(migration),
+  'migration states that definer-rights is explicitly rejected');
+ok(/service_role is deliberately NOT column-restricted/.test(migration),
+  'migration explains why service_role is left alone');
+
+// The preflight must exist and must be read before the grant section runs.
+ok(existsSync(PREFLIGHT), 'ACL preflight file exists');
+const preflightCode = strip(preflight);
+ok(!/^\s*(insert|update|delete|alter|drop|create|grant|revoke)\s/im.test(preflightCode),
+  'preflight is read-only — no DDL, DML or privilege statement');
+for (const id of ['P-1', 'P-1b', 'P-2', 'P-3', 'P-4', 'P-5', 'P-5b', 'P-6']) {
+  ok(preflight.includes(id), `preflight ${id} present`);
+}
+ok(/relacl/.test(preflightCode) && /has_public_grant/.test(preflightCode),
+  'preflight detects grants made to PUBLIC (which role_table_grants omits)');
+ok(/column_privileges/.test(preflightCode), 'preflight introspects column-level grants');
+ok(/pg_policy/.test(preflightCode) && /relrowsecurity/.test(preflightCode),
+  'preflight introspects RLS state and policies');
+ok(/prosrc ilike '%card_extras%'/.test(preflightCode),
+  'preflight finds routines that read card_extras directly');
+ok(/pg_get_viewdef\(c\.oid\) ilike '%card_extras%'/.test(preflightCode),
+  'preflight finds views that read card_extras directly');
+ok(/security_invoker_on/.test(preflightCode),
+  'preflight confirms cards_effective is still invoker-rights');
+ok(/RUN docs\/sql\/cat-3b-0-acl-preflight\.sql FIRST/.test(migration),
+  'migration tells the operator to run the preflight first');
 
 // ── 8. Validation coverage ───────────────────────────────────────────────────
 console.log('\n8. validation coverage');
