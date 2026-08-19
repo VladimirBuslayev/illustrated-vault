@@ -360,6 +360,111 @@ ok(/security_invoker_on/.test(preflightCode),
 ok(/RUN docs\/sql\/cat-3b-0-acl-preflight\.sql FIRST/.test(migration),
   'migration tells the operator to run the preflight first');
 
+// ── 7d. The migration is ATOMIC ──────────────────────────────────────────────
+console.log('\n7d. migration transaction boundary');
+
+// CAT-3B changes columns, constraints, a function, a trigger, a view definition
+// AND privileges. A half-applied state is a product defect: the worst shape is
+// the view rewritten while the ACL revoke has not landed, which would leave the
+// provenance columns live AND publicly readable. PostgreSQL makes DDL and
+// GRANT/REVOKE transactional, so one wrapper is sufficient.
+const beginMatches = [...migrationCode.matchAll(/^\s*begin\s*;/gim)];
+const commitMatches = [...migrationCode.matchAll(/^\s*commit\s*;/gim)];
+ok(beginMatches.length === 1, `exactly one BEGIN; in executable SQL (${beginMatches.length})`);
+ok(commitMatches.length === 1, `exactly one COMMIT; in executable SQL (${commitMatches.length})`);
+ok(!/^\s*rollback\s*;/im.test(migrationCode), 'the migration contains no ROLLBACK');
+
+if (beginMatches.length === 1 && commitMatches.length === 1) {
+  const bIdx = beginMatches[0].index;
+  const cIdx = commitMatches[0].index;
+  ok(bIdx < cIdx, 'BEGIN precedes COMMIT');
+
+  // The transaction must ENCLOSE §1–§6. Anchors are executable statements
+  // unique to each section, so a section drifting outside the wrapper fails.
+  const enclosed = [
+    ['§1 add column', /alter table public\.card_extras\s*\n\s*add column if not exists image_url_override/],
+    ['§1 FK', /card_extras_image_override_source_fk/],
+    ['§2 all-or-nothing', /card_extras_image_override_all_or_nothing/],
+    ['§3 shape', /card_extras_image_override_shape/],
+    ['§4 function', /create or replace function public\.card_extras_admit_image_override/],
+    ['§4 trigger', /create trigger card_extras_admit_image_override/],
+    ['§5 view', /create or replace view public\.cards_effective/],
+    ['§6 revoke', /revoke all on table public\.card_extras/],
+    ['§6 grant', /grant select \(card_id/],
+  ];
+  for (const [label, re] of enclosed) {
+    const m = migrationCode.match(re);
+    ok(Boolean(m) && m.index > bIdx && m.index < cIdx,
+      `${label} is inside the migration transaction`);
+  }
+  // The §7 rollback notes must sit OUTSIDE the committed unit. They are
+  // comments, so they must not appear in executable code at all.
+  const after = migrationCode.slice(cIdx);
+  ok(!/create or replace view/i.test(after),
+    'nothing executable follows COMMIT (the rollback section is commentary)');
+}
+ok(/ATOMIC\. §1 through §6 execute inside ONE explicit transaction/.test(migration),
+  'the execution contract states the migration is atomic');
+ok(/autocommits each one/.test(migration),
+  'the contract warns against statement-by-statement execution in an autocommit console');
+
+// ── 7e. Constraint guards are scoped to card_extras ──────────────────────────
+console.log('\n7e. constraint existence guards');
+
+// conname is unique PER TABLE, not per schema. A guard checking conname alone
+// would silently skip creating a constraint if any other relation happened to
+// carry the same name — leaving CAT-3B's integrity rules absent while the
+// migration reported success.
+const constraintGuards = [...migrationCode.matchAll(
+  /select 1 from pg_constraint[\s\S]{0,220}?then/gi)];
+ok(constraintGuards.length === 5,
+  `all five constraint guards located (${constraintGuards.length})`);
+for (const g of constraintGuards) {
+  const nameMatch = g[0].match(/conname = '([a-z_]+)'/);
+  const label = nameMatch ? nameMatch[1] : '(unnamed)';
+  ok(/conrelid = 'public\.card_extras'::regclass/.test(g[0]),
+    `guard for "${label}" is scoped to public.card_extras`);
+}
+const bareGuards = [...migrationCode.matchAll(/from pg_constraint/gi)].length;
+ok(bareGuards === constraintGuards.length,
+  'every pg_constraint reference is part of a scoped guard');
+
+// ── 7f. V-6 proves the POST-deploy ACL state ─────────────────────────────────
+console.log('\n7f. V-6 post-deploy ACL gate');
+
+ok(/V-6 — POST-DEPLOY ACL STATE/.test(validation), 'V-6 exists');
+for (const id of ['V-6a', 'V-6b', 'V-6b-summary', 'V-6c']) {
+  ok(validation.includes(id), `${id} present`);
+}
+const v6 = validation.slice(validation.indexOf('-- V-6 — POST-DEPLOY'));
+ok(v6.length > 1000, 'the V-6 slice is substantive');
+// PUBLIC must be detected from raw relacl — role_table_grants omits it.
+ok(/unnest\(coalesce\(c\.relacl/.test(v6) && /split_part\(a::text, '=', 1\) = ''/.test(v6),
+  'V-6a detects a PUBLIC grant from raw relacl, not information_schema');
+ok(/has_public_grant/.test(v6), 'V-6a reports has_public_grant');
+ok(/table_level_grants/.test(v6),
+  'V-6a proves anon/authenticated hold NO table-level privilege');
+ok(/relrowsecurity/.test(v6), 'V-6a proves RLS is still enabled');
+// The three readable columns, and the seven withheld, both asserted.
+ok(/'card_id', 'illustrator_override', 'image_url_override'/.test(v6),
+  'V-6b pins the three intended readable columns');
+ok(/column_privileges/.test(v6),
+  'V-6b reads EFFECTIVE column privileges (table-level grants included)');
+ok(/LEAK/.test(v6) && /leaked_columns/.test(v6),
+  'V-6b names any leaked provenance column explicitly');
+ok(/all_match/.test(v6), 'V-6b-summary gives a single pass/fail');
+ok(/write_policies/.test(v6), 'V-6c proves no write policy was introduced');
+ok(/card_extras_public_select/.test(v6), 'V-6c pins the existing SELECT policy');
+ok(/polpermissive/.test(v6), 'V-6c proves the policy is still PERMISSIVE');
+// Pre-state vs post-state division of labour must be stated, not assumed.
+ok(/P-1…P-6\s+establish the PRE-state|proves the PRE-state/.test(
+  validation.replace(/\s+/g, ' ')),
+  'validation states P-1..P-6 are the pre-state gate');
+ok(/V-6 IS THE POST-STATE GATE/.test(validation),
+  'validation states V-6 is the post-state gate');
+ok(/P-1…P-6/.test(doc) || /P-1…P-6/.test(preflight),
+  'the pre-state gate is documented');
+
 // ── 8. Validation coverage ───────────────────────────────────────────────────
 console.log('\n8. validation coverage');
 

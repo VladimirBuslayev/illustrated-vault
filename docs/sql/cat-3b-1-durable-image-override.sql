@@ -69,13 +69,32 @@
 -- EXECUTION CONTRACT
 -- ─────────────────────────────────────────────────────────────────────────
 --   * run as the migration owner, in order, top to bottom;
---   * additive and reversible — see cat-3b-1-rollback below in §6;
+--   * ⚠ ATOMIC. §1 through §6 execute inside ONE explicit transaction. CAT-3B
+--     changes columns, constraints, a function, a trigger, a view definition
+--     AND privileges as a single logical unit — a half-applied state is a
+--     product defect, not merely untidy. The worst shape is the view rewritten
+--     while the ACL revoke has not landed: the provenance columns would be
+--     live AND publicly readable. PostgreSQL makes DDL and GRANT/REVOKE
+--     transactional, so wrapping them is sufficient and a failure anywhere
+--     leaves the COMPLETE pre-CAT-3B state;
+--   * do NOT run the file statement-by-statement in a SQL console that
+--     autocommits each one — that discards the atomicity this contract
+--     depends on. Execute the whole file as one script;
+--   * additive and reversible — see the rollback in §7;
 --   * every new column is nullable with no default, so
 --     coalesce(NULL, c.image_url) is a PROVABLE NO-OP at deploy time;
 --   * NO SECURITY DEFINER anywhere in this file. The trigger runs with the
 --     writer's own privileges and reads only objects the writer can already
 --     address.
 -- ═══════════════════════════════════════════════════════════════════════════
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ⚠ MIGRATION TRANSACTION OPENS HERE — §1 through §6 are one unit.
+--   Everything after COMMIT (the §7 rollback notes) is commentary only.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+begin;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -110,6 +129,7 @@ begin
   if not exists (
     select 1 from pg_constraint
     where conname = 'card_extras_image_override_source_fk'
+      and conrelid = 'public.card_extras'::regclass
   ) then
     alter table public.card_extras
       add constraint card_extras_image_override_source_fk
@@ -141,7 +161,9 @@ comment on column public.card_extras.image_override_approved_at is
 do $$
 begin
   if not exists (
-    select 1 from pg_constraint where conname = 'card_extras_image_override_all_or_nothing'
+    select 1 from pg_constraint
+     where conname = 'card_extras_image_override_all_or_nothing'
+       and conrelid = 'public.card_extras'::regclass
   ) then
     alter table public.card_extras
       add constraint card_extras_image_override_all_or_nothing check (
@@ -161,7 +183,9 @@ begin
 
   -- Provenance that is present must also be meaningful.
   if not exists (
-    select 1 from pg_constraint where conname = 'card_extras_image_override_approved_by_nonempty'
+    select 1 from pg_constraint
+     where conname = 'card_extras_image_override_approved_by_nonempty'
+       and conrelid = 'public.card_extras'::regclass
   ) then
     alter table public.card_extras
       add constraint card_extras_image_override_approved_by_nonempty check (
@@ -173,7 +197,9 @@ begin
   -- A card cannot be its own provenance. Implied by the no-self-alias rule in
   -- CAT-2D.1, restated here so it holds independently of that table.
   if not exists (
-    select 1 from pg_constraint where conname = 'card_extras_image_override_source_not_self'
+    select 1 from pg_constraint
+     where conname = 'card_extras_image_override_source_not_self'
+       and conrelid = 'public.card_extras'::regclass
   ) then
     alter table public.card_extras
       add constraint card_extras_image_override_source_not_self check (
@@ -202,7 +228,9 @@ end $$;
 do $$
 begin
   if not exists (
-    select 1 from pg_constraint where conname = 'card_extras_image_override_shape'
+    select 1 from pg_constraint
+     where conname = 'card_extras_image_override_shape'
+       and conrelid = 'public.card_extras'::regclass
   ) then
     alter table public.card_extras
       add constraint card_extras_image_override_shape check (
@@ -491,6 +519,15 @@ grant select (card_id, illustrator_override, image_url_override)
 
 comment on table public.card_extras is
   'Manual enrichment overrides for the effective catalog: illustrator_override and CAT-3B image_url_override. Never written by sync-cards.mjs. Column-level SELECT only for anon/authenticated (card_id, illustrator_override, image_url_override) — the image provenance columns are NOT publicly readable.';
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ⚠ MIGRATION TRANSACTION CLOSES HERE — §1 through §6 committed as one unit.
+--   If anything above raised, nothing in §1–§6 applied and the database is in
+--   the complete pre-CAT-3B state. Re-run the whole file after fixing.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+commit;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════

@@ -23,6 +23,15 @@
 --   V-4  the view's structural contract is intact — 14 columns, order,
 --        security_invoker, grants.
 --   V-5  the admission wall exists and is SECURITY INVOKER.
+--   V-6  the FINAL live ACL is exactly what §6 intended — no PUBLIC grant, no
+--        table-level grant to anon/authenticated, SELECT on exactly three
+--        columns, RLS and policies untouched.
+--
+-- ⚠ V-6 IS THE POST-STATE GATE. cat-3b-0-acl-preflight.sql (P-1…P-6) proves
+--   the PRE-state before §6 touches anything; V-6 proves the state we ended
+--   with. Neither substitutes for the other: a preflight alone shows only where
+--   we started, and the claim that matters — provenance did not become publicly
+--   readable — is about the final state.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- EXECUTION CONTRACT
@@ -227,3 +236,190 @@ select
      from pg_constraint
     where conrelid = 'public.card_extras'::regclass
       and conname like 'card_extras_image_override%')                  as image_override_constraints;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- V-6 — POST-DEPLOY ACL STATE  (the gate that proves provenance stayed private)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ⚠ RUN AFTER THE MIGRATION.
+--
+-- Division of labour, so neither file is asked to prove the other's claim:
+--   cat-3b-0-acl-preflight.sql  P-1…P-6  establish the PRE-state, before §6
+--                                        touches anything. Run first.
+--   V-6 (here)                           proves the POST-state is exactly the
+--                                        ACL §6 intended. Run last.
+--
+-- A preflight alone shows only what we started from; this shows what we ended
+-- with. The whole point of §6 is that the provenance columns must NOT have
+-- become publicly readable, and that is a claim about the FINAL state.
+--
+-- Expected, across all three statements:
+--   V-6a  has_public_grant false · rls_enabled true ·
+--         anon/authenticated table-level privileges: ZERO
+--   V-6b  exactly 3 granted columns, exactly 7 withheld, 0 leaked, 0 missing
+--   V-6c  one permissive SELECT policy, unchanged; zero write policies
+
+-- ── V-6a — table level: no PUBLIC, no anon/authenticated table grant ────────
+-- ⚠ PUBLIC IS DETECTED FROM RAW relacl, NOT information_schema.
+--   information_schema.role_table_grants OMITS grants made to PUBLIC entirely.
+--   A GRANT TO PUBLIC would therefore be invisible to the obvious query while
+--   making every column world-readable — the exact failure this gate exists to
+--   catch. An aclitem whose grantee half (before the '=') is empty IS the
+--   PUBLIC grant.
+--
+-- table_level_grants must be 0. After §6, anon and authenticated hold
+-- COLUMN-level SELECT only. Any table-level row means the REVOKE did not land
+-- or something re-granted it — and a table-level grant covers every column the
+-- table will ever have, including the provenance ones.
+
+select
+  'V-6a table acl'                                                  as check_id,
+  c.relacl::text                                                    as raw_acl,
+  exists (
+    select 1 from unnest(coalesce(c.relacl, '{}'::aclitem[])) a
+    where split_part(a::text, '=', 1) = ''
+  )                                                                 as has_public_grant,
+  c.relrowsecurity                                                  as rls_enabled,
+  c.relforcerowsecurity                                             as rls_forced,
+  (select count(*)
+     from information_schema.role_table_grants g
+    where g.table_schema = 'public' and g.table_name = 'card_extras'
+      and g.grantee in ('anon', 'authenticated'))                   as table_level_grants,
+  (select coalesce(string_agg(distinct g.grantee || ':' || g.privilege_type, ', '
+                              order by g.grantee || ':' || g.privilege_type), '(none)')
+     from information_schema.role_table_grants g
+    where g.table_schema = 'public' and g.table_name = 'card_extras'
+      and g.grantee in ('anon', 'authenticated'))                   as table_level_detail
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public' and c.relname = 'card_extras';
+
+
+-- ── V-6b — column level: exactly three readable, seven withheld ─────────────
+-- information_schema.column_privileges reports EFFECTIVE column privileges: it
+-- includes privileges implied by a table-level grant as well as explicit column
+-- grants. That is exactly what is wanted here — it answers "can this role read
+-- this column", however the privilege arrived.
+--
+-- Every column is enumerated from the live catalog rather than hard-coded, so a
+-- column added later cannot be silently missing from the audit. `expected`
+-- records §6's intent; `matches_intent` is the per-row verdict.
+--
+-- Expected: every row matches_intent = true.
+
+with intent as (
+  select column_name,
+         column_name in ('card_id', 'illustrator_override', 'image_url_override')
+           as should_be_readable
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'card_extras'
+),
+actual as (
+  select i.column_name,
+         i.should_be_readable,
+         exists (
+           select 1 from information_schema.column_privileges p
+           where p.table_schema = 'public'
+             and p.table_name   = 'card_extras'
+             and p.column_name  = i.column_name
+             and p.grantee in ('anon', 'authenticated')
+             and p.privilege_type = 'SELECT'
+         ) as is_readable
+  from intent i
+)
+select
+  'V-6b column acl'                                                 as check_id,
+  a.column_name,
+  a.should_be_readable                                              as expected,
+  a.is_readable                                                     as actual,
+  (a.should_be_readable = a.is_readable)                            as matches_intent,
+  case
+    when a.is_readable and not a.should_be_readable
+      then 'LEAK — provenance is publicly readable'
+    when a.should_be_readable and not a.is_readable
+      then 'MISSING — cards_effective will break for anon/authenticated'
+    else 'ok'
+  end                                                               as verdict
+from actual a
+order by a.should_be_readable desc, a.column_name;
+
+
+-- ── V-6b-summary — the one-line pass/fail ──────────────────────────────────
+-- Expected: total_columns 10, granted 3, withheld 7, leaked 0, missing 0,
+--           all_match true, leaked_columns '(none)'.
+
+with intent as (
+  select column_name,
+         column_name in ('card_id', 'illustrator_override', 'image_url_override')
+           as should_be_readable
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'card_extras'
+),
+actual as (
+  select i.column_name, i.should_be_readable,
+         exists (
+           select 1 from information_schema.column_privileges p
+           where p.table_schema = 'public' and p.table_name = 'card_extras'
+             and p.column_name = i.column_name
+             and p.grantee in ('anon', 'authenticated')
+             and p.privilege_type = 'SELECT'
+         ) as is_readable
+  from intent i
+)
+select
+  'V-6b summary'                                                    as check_id,
+  count(*)                                                          as total_columns,
+  count(*) filter (where is_readable)                               as granted,
+  count(*) filter (where not is_readable)                           as withheld,
+  count(*) filter (where is_readable and not should_be_readable)    as leaked,
+  count(*) filter (where should_be_readable and not is_readable)    as missing,
+  bool_and(should_be_readable = is_readable)                        as all_match,
+  coalesce(string_agg(column_name, ', ' order by column_name)
+             filter (where is_readable and not should_be_readable), '(none)')
+                                                                    as leaked_columns
+from actual;
+
+
+-- ── V-6c — RLS policies unchanged, and no write policy introduced ───────────
+-- §6 changed GRANTS only. Policies are the other, independent wall and must be
+-- provably untouched: a migration that quietly added an INSERT policy would
+-- make card_extras writable by roles that have never been able to write it.
+--
+-- Expected: policy_count 1 · write_policies 0 ·
+--           select_policy_name 'card_extras_public_select' ·
+--           is_permissive true · using_expr 'true' ·
+--           select_policy_roles 'anon,authenticated'.
+
+select
+  'V-6c policies'                                                   as check_id,
+  (select count(*)
+     from pg_policy pol join pg_class c on c.oid = pol.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'card_extras')       as policy_count,
+  (select count(*)
+     from pg_policy pol join pg_class c on c.oid = pol.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'card_extras'
+      and pol.polcmd <> 'r')                                        as write_policies,
+  (select pol.polname
+     from pg_policy pol join pg_class c on c.oid = pol.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'card_extras'
+      and pol.polcmd = 'r' limit 1)                                 as select_policy_name,
+  (select pol.polpermissive
+     from pg_policy pol join pg_class c on c.oid = pol.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'card_extras'
+      and pol.polcmd = 'r' limit 1)                                 as is_permissive,
+  (select pg_get_expr(pol.polqual, pol.polrelid)
+     from pg_policy pol join pg_class c on c.oid = pol.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'card_extras'
+      and pol.polcmd = 'r' limit 1)                                 as using_expr,
+  (select coalesce(string_agg(r.rolname, ',' order by r.rolname), '(public)')
+     from pg_policy pol
+     join pg_class c on c.oid = pol.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+     join pg_roles r on r.oid = any (pol.polroles)
+    where n.nspname = 'public' and c.relname = 'card_extras'
+      and pol.polcmd = 'r')                                         as select_policy_roles;

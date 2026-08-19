@@ -312,8 +312,26 @@ differs from the CAT-2D.1 definition.
 ## 6. Migration and rollback
 
 **Migration.** Additive and idempotent (`add column if not exists`, guarded
-constraint adds). Order: columns → FK → constraints → trigger → view. Every new
-column is nullable with no default.
+constraint adds). Order: columns → FK → constraints → trigger → view → ACL.
+Every new column is nullable with no default.
+
+**Atomic.** §1 through §6 execute inside **one explicit `BEGIN; … COMMIT;`**.
+CAT-3B changes columns, constraints, a function, a trigger, a view definition
+**and** privileges as a single logical unit; a half-applied state is a product
+defect, not merely untidy. The worst shape is the view rewritten while the ACL
+revoke has not landed — provenance columns live *and* publicly readable.
+PostgreSQL makes DDL and `GRANT`/`REVOKE` transactional, so one wrapper suffices
+and a failure anywhere leaves the **complete pre-CAT-3B state**.
+
+Execute the file as one script. Running it statement-by-statement in a console
+that autocommits each one discards exactly the atomicity this depends on.
+
+**Constraint guards are scoped by relation.** Every `pg_constraint` existence
+check matches on `conname` **and** `conrelid = 'public.card_extras'::regclass`.
+`conname` is unique per table, not per schema: a guard checking the name alone
+would silently skip creating a constraint if any other relation happened to
+carry that name, leaving an integrity rule absent while the migration reported
+success.
 
 **Rollback.** Restoring the view is one `CREATE OR REPLACE VIEW`, instant,
 recorded verbatim in the migration §6. Because this slice writes no override
@@ -332,8 +350,23 @@ statements also recorded in §6.
 | **V-3** | `cards_effective` is **row-for-row output-equivalent** to pre-CAT-3B, via a symmetric `EXCEPT ALL` diff against the pre-CAT-3B expression reconstructed inline from the same base tables. Not a remembered number. |
 | **V-4** | Structural contract: 14 columns, order, `artist_id` at position 14, `security_invoker`, grants. |
 | **V-5** | The admission wall exists, is **not** `SECURITY DEFINER`, reads `card_identity_resolution`, and does **not** read `card_identity_aliases`. |
+| **V-6** | **The final live ACL is exactly what §6 intended** — no PUBLIC grant (detected from raw `relacl`), no table-level grant to anon/authenticated, SELECT on exactly three columns with seven withheld, RLS still enabled, the SELECT policy unchanged and no write policy introduced. |
 
-### 7.0 ACL preflight — run before anything else
+### 7.0 Two ACL gates: P-1…P-6 before, V-6 after
+
+**`P-1…P-6` (`cat-3b-0-acl-preflight.sql`) are the PRE-state gate.** They
+establish what the ACL actually is before §6 touches anything, so the migration
+is not deployed on assumption.
+
+**`V-6` (`cat-3b-2-validation.sql`) is the POST-state gate.** It proves the state
+we ended with.
+
+Neither substitutes for the other. A preflight alone shows only where we
+started, and the claim that matters — *provenance did not become publicly
+readable* — is a claim about the final state. Run P-1…P-6 first, migrate, then
+run V-1…V-6.
+
+#### The pre-state gate
 
 | Check | Establishes |
 |---|---|
