@@ -295,89 +295,145 @@ join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public' and c.relname = 'card_extras';
 
 
--- ── V-6b — column level: exactly three readable, seven withheld ─────────────
+-- ── V-6b — column level, PER ROLE: three readable, seven withheld ───────────
+-- ⚠ EACH ROLE IS PROVEN INDEPENDENTLY. This is not cosmetic.
+--
+--   An earlier draft tested `p.grantee in ('anon','authenticated')` inside a
+--   single EXISTS. That proves only that AT LEAST ONE runtime role can read an
+--   intended column — so a state where `authenticated` holds all three grants
+--   and `anon` holds none would have passed, while anonymous visitors got a
+--   permission error on every card image.
+--
+--   The fix is a CROSS JOIN of the live column list against the two roles, so
+--   every (grantee, column_name) pair carries its own verdict. Because the role
+--   list is a VALUES list rather than something derived from the grants
+--   themselves, a role holding NO privileges still produces its ten rows and
+--   fails loudly, instead of vanishing from the result.
+--
 -- information_schema.column_privileges reports EFFECTIVE column privileges: it
 -- includes privileges implied by a table-level grant as well as explicit column
--- grants. That is exactly what is wanted here — it answers "can this role read
--- this column", however the privilege arrived.
+-- grants. That is what is wanted — it answers "can this role read this column",
+-- however the privilege arrived.
 --
--- Every column is enumerated from the live catalog rather than hard-coded, so a
--- column added later cannot be silently missing from the audit. `expected`
--- records §6's intent; `matches_intent` is the per-row verdict.
+-- Columns are enumerated from the live catalog rather than hard-coded, so a
+-- column added later cannot be silently missing from the audit.
 --
--- Expected: every row matches_intent = true.
+-- Expected: 20 rows (2 roles x 10 columns), every one matches_intent = true.
 
-with intent as (
-  select column_name,
-         column_name in ('card_id', 'illustrator_override', 'image_url_override')
-           as should_be_readable
+with roles (grantee) as (
+  values ('anon'), ('authenticated')
+),
+cols as (
+  select column_name
   from information_schema.columns
   where table_schema = 'public' and table_name = 'card_extras'
 ),
+intent as (
+  select
+    r.grantee,
+    c.column_name,
+    c.column_name in ('card_id', 'illustrator_override', 'image_url_override')
+      as should_be_readable
+  from roles r
+  cross join cols c
+),
 actual as (
-  select i.column_name,
-         i.should_be_readable,
-         exists (
-           select 1 from information_schema.column_privileges p
-           where p.table_schema = 'public'
-             and p.table_name   = 'card_extras'
-             and p.column_name  = i.column_name
-             and p.grantee in ('anon', 'authenticated')
-             and p.privilege_type = 'SELECT'
-         ) as is_readable
+  select
+    i.grantee,
+    i.column_name,
+    i.should_be_readable,
+    exists (
+      select 1
+      from information_schema.column_privileges p
+      where p.table_schema   = 'public'
+        and p.table_name     = 'card_extras'
+        and p.column_name    = i.column_name
+        and p.grantee        = i.grantee
+        and p.privilege_type = 'SELECT'
+    ) as is_readable
   from intent i
 )
 select
   'V-6b column acl'                                                 as check_id,
+  a.grantee,
   a.column_name,
   a.should_be_readable                                              as expected,
   a.is_readable                                                     as actual,
   (a.should_be_readable = a.is_readable)                            as matches_intent,
   case
     when a.is_readable and not a.should_be_readable
-      then 'LEAK — provenance is publicly readable'
+      then 'LEAK — ' || a.grantee || ' can read provenance'
     when a.should_be_readable and not a.is_readable
-      then 'MISSING — cards_effective will break for anon/authenticated'
+      then 'MISSING — cards_effective will break for ' || a.grantee
     else 'ok'
   end                                                               as verdict
 from actual a
-order by a.should_be_readable desc, a.column_name;
+order by a.grantee, a.should_be_readable desc, a.column_name;
 
 
--- ── V-6b-summary — the one-line pass/fail ──────────────────────────────────
--- Expected: total_columns 10, granted 3, withheld 7, leaked 0, missing 0,
---           all_match true, leaked_columns '(none)'.
+-- ── V-6b-summary — one pass/fail row PER ROLE ──────────────────────────────
+-- Two rows, one per role. Both must read identically.
+--
+-- Expected, for EACH of anon and authenticated:
+--   total_columns 10 · readable 3 · withheld 7 · leaked 0 · missing 0 ·
+--   all_match true · leaked_columns '(none)' · missing_columns '(none)'
+--
+-- ⚠ A role that holds no privileges at all still appears here with
+--   readable = 0 and missing = 3. It cannot disappear from the output, which is
+--   precisely the failure mode the single-EXISTS version allowed.
 
-with intent as (
-  select column_name,
-         column_name in ('card_id', 'illustrator_override', 'image_url_override')
-           as should_be_readable
-  from information_schema.columns
-  where table_schema = 'public' and table_name = 'card_extras'
+with roles (grantee) as (
+  values ('anon'), ('authenticated')
+),
+intent as (
+  select
+    r.grantee,
+    c.column_name,
+    c.column_name in ('card_id', 'illustrator_override', 'image_url_override')
+      as should_be_readable
+  from roles r
+  cross join (
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public' and table_name = 'card_extras'
+  ) c
 ),
 actual as (
-  select i.column_name, i.should_be_readable,
-         exists (
-           select 1 from information_schema.column_privileges p
-           where p.table_schema = 'public' and p.table_name = 'card_extras'
-             and p.column_name = i.column_name
-             and p.grantee in ('anon', 'authenticated')
-             and p.privilege_type = 'SELECT'
-         ) as is_readable
+  select
+    i.grantee,
+    i.column_name,
+    i.should_be_readable,
+    exists (
+      select 1
+      from information_schema.column_privileges p
+      where p.table_schema   = 'public'
+        and p.table_name     = 'card_extras'
+        and p.column_name    = i.column_name
+        and p.grantee        = i.grantee
+        and p.privilege_type = 'SELECT'
+    ) as is_readable
   from intent i
 )
 select
   'V-6b summary'                                                    as check_id,
+  a.grantee,
   count(*)                                                          as total_columns,
-  count(*) filter (where is_readable)                               as granted,
-  count(*) filter (where not is_readable)                           as withheld,
-  count(*) filter (where is_readable and not should_be_readable)    as leaked,
-  count(*) filter (where should_be_readable and not is_readable)    as missing,
-  bool_and(should_be_readable = is_readable)                        as all_match,
-  coalesce(string_agg(column_name, ', ' order by column_name)
-             filter (where is_readable and not should_be_readable), '(none)')
-                                                                    as leaked_columns
-from actual;
+  count(*) filter (where a.is_readable)                             as readable,
+  count(*) filter (where not a.is_readable)                         as withheld,
+  count(*) filter (where a.is_readable and not a.should_be_readable)
+                                                                    as leaked,
+  count(*) filter (where a.should_be_readable and not a.is_readable)
+                                                                    as missing,
+  bool_and(a.should_be_readable = a.is_readable)                    as all_match,
+  coalesce(string_agg(a.column_name, ', ' order by a.column_name)
+             filter (where a.is_readable and not a.should_be_readable), '(none)')
+                                                                    as leaked_columns,
+  coalesce(string_agg(a.column_name, ', ' order by a.column_name)
+             filter (where a.should_be_readable and not a.is_readable), '(none)')
+                                                                    as missing_columns
+from actual a
+group by a.grantee
+order by a.grantee;
 
 
 -- ── V-6c — RLS policies unchanged, and no write policy introduced ───────────

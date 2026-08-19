@@ -350,7 +350,24 @@ statements also recorded in §6.
 | **V-3** | `cards_effective` is **row-for-row output-equivalent** to pre-CAT-3B, via a symmetric `EXCEPT ALL` diff against the pre-CAT-3B expression reconstructed inline from the same base tables. Not a remembered number. |
 | **V-4** | Structural contract: 14 columns, order, `artist_id` at position 14, `security_invoker`, grants. |
 | **V-5** | The admission wall exists, is **not** `SECURITY DEFINER`, reads `card_identity_resolution`, and does **not** read `card_identity_aliases`. |
-| **V-6** | **The final live ACL is exactly what §6 intended** — no PUBLIC grant (detected from raw `relacl`), no table-level grant to anon/authenticated, SELECT on exactly three columns with seven withheld, RLS still enabled, the SELECT policy unchanged and no write policy introduced. |
+| **V-6** | **The final live ACL is exactly what §6 intended** — no PUBLIC grant (detected from raw `relacl`), no table-level grant to anon/authenticated, SELECT on exactly three columns with seven withheld **proven independently for each role**, RLS still enabled, the SELECT policy unchanged and no write policy introduced. |
+
+#### V-6b proves each role separately
+
+`anon` and `authenticated` are checked **independently**, via a CROSS JOIN of the
+live column list against an explicit `VALUES ('anon'), ('authenticated')` role
+list. Every `(grantee, column_name)` pair carries its own `expected` / `actual` /
+`matches_intent` / verdict, and the summary emits one pass/fail row per role.
+
+Testing `grantee in ('anon','authenticated')` inside a single `EXISTS` would
+prove only that **at least one** runtime role can read an intended column — so a
+state where `authenticated` held all three grants and `anon` held none would have
+passed, while every anonymous visitor got a permission error on every card image.
+
+Because the role list is a `VALUES` list rather than something derived from the
+grants themselves, a role holding **no** privileges still produces its ten rows
+and fails loudly (`readable 0`, `missing 3`) instead of vanishing from the
+result.
 
 ### 7.0 Two ACL gates: P-1…P-6 before, V-6 after
 
@@ -374,7 +391,7 @@ run V-1…V-6.
 | **P-2** | existing column-level grants (expected: none) |
 | **P-3** | RLS enabled state and every policy on `card_extras` |
 | **P-4** | `cards_effective` is still `security_invoker = true`, and its grantees |
-| **P-5 / P-5b** | **any routine or view that reads `card_extras` directly** — the check that decides whether a three-column grant is sufficient |
+| **P-5 / P-5b** | **any routine or view that reads `card_extras` directly** — the check that decides whether a three-column grant is sufficient. P-5 inspects **`pg_get_functiondef`** as well as `prosrc`: `prosrc` holds only the body and is empty for SQL-standard `BEGIN ATOMIC` functions (PG14+), so a reader outside the body would be missed. Both results are reported separately |
 | **P-6** | live column inventory of `card_extras` |
 
 Any deviation is a **STOP**, not a note. A PUBLIC grant means the revoke list is

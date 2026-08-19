@@ -198,16 +198,42 @@ select
 --
 -- Expected: zero rows.
 
+-- ⚠ INSPECTS pg_get_functiondef, NOT ONLY prosrc.
+--
+--   p.prosrc holds only the function BODY. It misses anything outside it — most
+--   importantly a SQL-standard function whose body lives in prosqlbody rather
+--   than prosrc (PostgreSQL 14+ `BEGIN ATOMIC`), where prosrc can be empty.
+--   pg_get_functiondef reconstructs the COMPLETE definition — signature,
+--   SET clauses, SECURITY attribute and body — so a reader hiding in any of
+--   those is still found.
+--
+--   Both are checked and reported separately, so a hit found by one and not the
+--   other is visible rather than averaged away.
+--
+--   pg_get_functiondef raises on aggregate and window functions, so prokind is
+--   restricted to ordinary functions ('f') and procedures ('p'). Aggregates
+--   cannot contain a table reference of the kind being hunted here.
+--
+--   Read-only: pg_get_functiondef is a catalog-formatting function and mutates
+--   nothing.
+
 select
   'P-5 routines reading card_extras'                                as check_id,
   n.nspname                                                         as schema_name,
   p.proname                                                         as routine_name,
+  p.prokind                                                         as kind,
   p.prosecdef                                                       as is_security_definer,
-  pg_get_function_identity_arguments(p.oid)                         as args
+  pg_get_function_identity_arguments(p.oid)                         as args,
+  (p.prosrc ilike '%card_extras%')                                  as found_in_prosrc,
+  (pg_get_functiondef(p.oid) ilike '%card_extras%')                 as found_in_functiondef
 from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname not in ('pg_catalog', 'information_schema')
-  and p.prosrc ilike '%card_extras%'
+  and p.prokind in ('f', 'p')
+  and (
+        p.prosrc ilike '%card_extras%'
+     or pg_get_functiondef(p.oid) ilike '%card_extras%'
+      )
   -- The CAT-3B admission trigger itself will match after deployment; before
   -- deployment it does not exist, so any hit here is a pre-existing reader.
   and p.proname <> 'card_extras_admit_image_override'

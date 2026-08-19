@@ -353,6 +353,18 @@ ok(/pg_policy/.test(preflightCode) && /relrowsecurity/.test(preflightCode),
   'preflight introspects RLS state and policies');
 ok(/prosrc ilike '%card_extras%'/.test(preflightCode),
   'preflight finds routines that read card_extras directly');
+// prosrc alone holds only the function BODY, and is empty for SQL-standard
+// `BEGIN ATOMIC` functions (PG14+). pg_get_functiondef reconstructs the whole
+// definition, so a reader hiding outside the body is still found.
+ok(/pg_get_functiondef\(p\.oid\) ilike '%card_extras%'/.test(preflightCode),
+  'preflight also inspects pg_get_functiondef, not only prosrc');
+ok(/found_in_prosrc/.test(preflightCode) && /found_in_functiondef/.test(preflightCode),
+  'preflight reports the two detection methods separately');
+// pg_get_functiondef raises on aggregates and window functions.
+ok(/p\.prokind in \('f', 'p'\)/.test(preflightCode),
+  'preflight restricts prokind so pg_get_functiondef cannot raise');
+ok(/prosqlbody|BEGIN ATOMIC/.test(preflight),
+  'preflight records why prosrc alone is insufficient');
 ok(/pg_get_viewdef\(c\.oid\) ilike '%card_extras%'/.test(preflightCode),
   'preflight finds views that read card_extras directly');
 ok(/security_invoker_on/.test(preflightCode),
@@ -452,7 +464,53 @@ ok(/column_privileges/.test(v6),
   'V-6b reads EFFECTIVE column privileges (table-level grants included)');
 ok(/LEAK/.test(v6) && /leaked_columns/.test(v6),
   'V-6b names any leaked provenance column explicitly');
-ok(/all_match/.test(v6), 'V-6b-summary gives a single pass/fail');
+ok(/all_match/.test(v6), 'V-6b-summary gives a pass/fail');
+
+// ── PER-ROLE PROPERTY ──────────────────────────────────────────────────────
+// The defect this pins: `p.grantee in ('anon','authenticated')` inside a single
+// EXISTS proves only that AT LEAST ONE runtime role can read an intended
+// column. A state where `authenticated` held all three grants and `anon` held
+// none would have passed, while every anonymous visitor got a permission error
+// on every card image.
+// Comments are stripped first: V-6b's header QUOTES the rejected pattern while
+// explaining why it was wrong, so the phrase legitimately appears in prose.
+// What must be absent is the executable form.
+const v6Code = strip(v6);
+ok(!/p\.grantee in \('anon', ?'authenticated'\)/.test(v6Code),
+  'V-6b does NOT collapse the two roles into one EXISTS');
+ok(/p\.grantee\s+= i\.grantee/.test(v6Code),
+  'V-6b matches privileges against the specific role being tested');
+// V-6a legitimately aggregates both roles: its claim is "table-level grants
+// must be ZERO", and any non-zero count fails regardless of which role caused
+// it. The per-role requirement applies to V-6b's column grants.
+ok(/table_level_grants/.test(v6Code) && /table_level_detail/.test(v6Code),
+  'V-6a reports both the table-level count and which grantee holds it');
+
+// The role list must be a VALUES list crossed with the columns — not derived
+// from the grants themselves. Otherwise a role holding NO privileges would
+// simply vanish from the result instead of failing.
+const roleValues = /with roles \(grantee\) as \(\s*values \('anon'\), \('authenticated'\)\s*\)/;
+const v6bBlocks = v6.split('V-6b').length - 1;
+ok(v6bBlocks >= 2, 'V-6b has both the per-row detail and the summary');
+ok((v6.match(roleValues) || []).length >= 1
+  || (v6.match(/values \('anon'\), \('authenticated'\)/g) || []).length >= 2,
+  'the role list is an explicit VALUES list, so a privilege-less role cannot vanish');
+ok((v6.match(/cross join/gi) || []).length >= 2,
+  'both V-6b statements CROSS JOIN roles against the live column list');
+ok(/a\.grantee,\s*\n\s*a\.column_name/.test(v6),
+  'the per-row output is keyed by (grantee, column_name)');
+ok(/group by a\.grantee/.test(v6),
+  'the summary aggregates PER ROLE, giving one pass/fail row each');
+ok(/missing_columns/.test(v6),
+  'the summary names which required grants a role is missing');
+// Verdicts must identify WHICH role, not just that something is wrong.
+ok(/\|\| a\.grantee \|\|/.test(v6),
+  'LEAK / MISSING verdicts name the affected role');
+ok(/2 roles x 10 columns|20 rows/.test(v6),
+  'V-6b documents the expected 20-row shape');
+ok(/still produces its ten rows and\s*--\s*fails loudly|cannot disappear from the output/
+  .test(v6.replace(/\s+/g, ' ')) || /fails loudly/.test(v6),
+  'V-6b records why a privilege-less role must still appear');
 ok(/write_policies/.test(v6), 'V-6c proves no write policy was introduced');
 ok(/card_extras_public_select/.test(v6), 'V-6c pins the existing SELECT policy');
 ok(/polpermissive/.test(v6), 'V-6c proves the policy is still PERMISSIVE');
