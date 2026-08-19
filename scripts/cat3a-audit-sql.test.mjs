@@ -380,8 +380,45 @@ ok(/SHA-256 of the reviewed and executed/.test(doc.replace(/\s+/g, ' ')),
 // ── 10. Specification guardrails ─────────────────────────────────────────────
 console.log('\n10. specification guardrails');
 
-ok(/PREPARED — NOT EXECUTED/.test(doc), 'spec states the package is not executed');
-ok(/PREPARED — NOT EXECUTED/.test(sqlRaw), 'SQL states it has not been executed');
+// Closeout state. These assertions previously pinned Commit 1's
+// "PREPARED — NOT EXECUTED" banner. The SQL has since been executed against
+// production and CAT-3A is closed, so leaving that claim in place would make
+// both files state something untrue. They now pin the CLOSED state and, more
+// importantly, the things a reader must not misquote from a partial audit.
+ok(/CLOSED — SCOPED PARTIAL/.test(doc), 'spec states the closed scoped-partial status');
+ok(/EXECUTED AND CLOSED/.test(sqlRaw), 'SQL records that it was executed');
+ok(/2026-08-18 23:41:01/.test(sqlRaw), 'SQL records the Q-A0 capture timestamp');
+
+// The Decision Framework must never be reported as having chosen a slice.
+ok(/DID NOT RUN/.test(doc.replace(/\s+/g, ' ')),
+  'spec states the Decision Framework did not run');
+ok(/CAT-3A therefore selected no implementation slice/.test(doc.replace(/\s+/g, ' ')),
+  'spec states no slice was selected');
+ok(/"chose D-ALIAS" would be false/.test(doc.replace(/\s+/g, ' ')),
+  'spec forbids reporting D-ALIAS as a CAT-3A selection');
+
+// F/O absence must be explicit and must never read as zero or as recoverable.
+ok(/F and O were never measured/.test(doc.replace(/\s+/g, ' ')),
+  'spec states F and O were never measured');
+ok(/Empty is \*\*not\*\* zero/.test(doc.replace(/\s+/g, ' ')),
+  'spec states empty is not zero');
+ok(/vacuous/.test(doc), 'spec flags the o0_rows = 0 figure as vacuous');
+
+// The CAT-0 scope limit survives the closeout.
+ok(/remains \*\*formally\s*unresolved\*\*|remains \*\*formally unresolved\*\*/.test(doc.replace(/\s+/g, ' ')),
+  'spec preserves CAT-0 51-set question as formally unresolved');
+
+// Both reliability attempts are on record, with the correct interpretation.
+ok(/18 \/ 20/.test(doc) && /16 \/ 20/.test(doc),
+  'spec records both P3-0 attempts');
+ok(/failure of the keyless fallback source/.test(doc.replace(/\s+/g, ' ')),
+  'spec interprets G-7 as source unreliability, not F/O coverage');
+ok(/not\*\* evidence about F or O coverage|is \*\*not\*\* evidence about F or O/.test(doc.replace(/\s+/g, ' ')),
+  'spec forbids inferring F/O coverage from the gate failure');
+
+// No production write is authorized by the closeout.
+ok(/No production image write is authorized/.test(doc.replace(/\s+/g, ' ')),
+  'spec states no production image write is authorized');
 
 ok(/CURRENT_RUNTIME_FALLBACK_ELIGIBLE/.test(doc),
   'O2 uses the evidence-safe label');

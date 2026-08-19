@@ -11,15 +11,43 @@
 ## 0. Status
 
 ```
-STATUS:            PREPARED — NOT EXECUTED
-Production SQL:    authored, NOT RUN
-External probes:   authored, NOT RUN
-Evidence:          none materialized
+STATUS:            CLOSED — SCOPED PARTIAL          (2026-08-19)
+
+T dimension        complete and DECISION-GRADE
+A dimension / P4   complete and DECISION-GRADE
+G-7                FAILED — two consecutive unchanged keyless P3-0 runs
+F dimension        WITHHELD
+O dimension        WITHHELD
+G-8 / G-9          not_evaluated
+G-10, all scopes   withheld / not_evaluated
+Third run          not performed, by decision
+
+Production SQL     executed 2026-08-18, Q-A0 through Q-A8b, read-only
+External probe     executed 2026-08-19, two runs
+Evidence           docs/cat-3a-evidence/
 ```
 
-Commit 1 carries the audit package only. No production statement in this slice
-has been executed, and no evidence artifact exists yet. Execution is a
-separately approved step.
+### 0.1 What this closure does and does not say
+
+**The Decision Framework (§8) DID NOT RUN**, because G-10 did not pass.
+**CAT-3A therefore selected no implementation slice.** Any statement that
+CAT-3A "chose D-ALIAS" would be false. The D-ALIAS direction is recorded in
+§12 as a *post-CAT-3A roadmap recommendation* resting on independently
+decision-grade A evidence — not as an audit decision.
+
+**F and O were never measured.** Every row in `image_gaps.csv` carries an empty
+`ptcgio_state`, `outcome` and `sensitivity_outcome`. Empty is **not** zero and
+**not** "nothing recoverable". No claim about recoverability through the Pokémon
+TCG API fallback is supported by this package.
+
+The probe manifest reports `o0_rows: 0`. That figure is **vacuous** — no outcome
+was derived, so no row could be indeterminate. It must never be read as "no
+indeterminate population".
+
+**CAT-0's open question stays open.** Its statement that the 51 fully
+image-missing sets are structural upstream absences remains **formally
+unresolved**, because G-9 and G-10 did not pass. §1.2 refused to pre-state that
+CAT-3A would close it, and it does not.
 
 ---
 
@@ -824,3 +852,126 @@ findings, and no roadmap / current-state closeout.**
 make §6.3's "the raw owned id list must never be committed" structural rather
 than procedural. It ignores a path that does not yet exist and changes no
 existing repository behavior.
+
+---
+
+## 12. Closeout — results of record
+
+**Status: CLOSED — SCOPED PARTIAL.** Read §0.1 before quoting anything below.
+
+### 12.1 T dimension — decision-grade
+
+| T | Count |
+|---|---|
+| **T1** `TCGDEX_IMAGE_AVAILABLE` | **0** |
+| **T2** `TCGDEX_ENTITY_PRESENT_IMAGE_ABSENT` | **1,495** |
+| **T3** `TCGDEX_ENTITY_ABSENT` | **145** |
+| **T4** `TCGDEX_INDETERMINATE` | **0** |
+
+T3 splits into **120 `set_namespace_absent`** — the four retired Trainer Gallery
+namespaces `swsh9.5tg` / `swsh10.5tg` / `swsh11.5tg` / `swsh12.5tg`, 30 rows each,
+confirming failure mode **FM-4** — and **25 `card_absent`**, which are exactly the
+historical Celebrations Classic Collection rows under `set_id = 'cel25'`. TCGdex
+404s on those because provider identity moved to `cel25cc-CC###`. That
+**independently reproduces CAT-2D.3 Gate 0 without using its selector.**
+
+**Run 1 and run 2 produced identical per-row T for all 1,640 rows**, ~11.5 hours
+apart against a live third-party source.
+
+> **`T1 = 0 / 1,640`. Not one missing-image row has an image available at TCGdex
+> today. The "DB stale / missed ingestion" hypothesis is falsified against a
+> complete measurement, so broad TCGdex ingestion repair is NOT justified.**
+
+This conclusion does not depend on the failed gate: `O1` is empty whatever P3
+would have found.
+
+### 12.2 A dimension and P4 — decision-grade
+
+All **192** CAT-2D.2-approved pairs are **A2** (`ALIAS_IMAGE_CANONICAL_MISSING`);
+A1, A3, A4 and `A_UNRESOLVED` are all zero. Canonical split: 122 `swsh4.5sv`,
+70 `swsh12.5gg`. P4 returned **192/192 `ASSET_LIVE`**, zero dead, zero
+indeterminate. **45 of the 117 active-owned missing-image cards are in A2.**
+
+### 12.3 P3-0 reliability — failed twice
+
+| Run | Qualified | Valid | Indeterminate | False definitive | Result |
+|---|---|---|---|---|---|
+| 1 | 90 / 120 | 18 / 20 | 2 | **0** | **FAIL** |
+| 2 | 91 / 120 | 16 / 20 | 4 | **0** | **FAIL** |
+
+Criteria were unchanged across both runs (≥19/20 valid, ≤1 indeterminate, 0 false
+definitive; keyless, matching the production runtime contract). Qualification
+succeeded comfortably in both, so the failure is not a shortage of known-valid
+controls.
+
+**Zero false definitives in both runs.** pokemontcg.io never misidentified a
+known-good card — it failed to answer rather than answering wrongly.
+
+> Interpret this **only** as failure of the keyless fallback source to meet the
+> audit's reliability threshold. It is **not** evidence about F or O coverage.
+
+The gate was not relaxed, modified or opportunistically retried. No third run was
+performed.
+
+### 12.4 Gates
+
+| Gate | Result |
+|---|---|
+| G-0 preflight · G-1 invariants · G-2 baseline | PASS |
+| G-3 alias population | PASS — 192 seen / 192 expected / 0 unresolved |
+| G-4 export completeness | PASS — 1,640 = 1,640 |
+| G-5 sets resolved | PASS — 67/67, 0 indeterminate |
+| G-6 every row has T | PASS — 1,640/1,640 |
+| **G-7 pTCG reliability** | **FAIL ×2** |
+| G-8 · G-8 F2 validation · G-9 | `not_evaluated` |
+| G-10 per-set · active-owned · global | withheld |
+
+Active-owned reconciled cleanly (117 supplied = 117 expected = 117 matched), but
+its O0 gate and O1/O3 weighting are withheld: reconciliation success is not a
+decision when no outcome exists.
+
+### 12.5 Q-A4a wording correction
+
+The Q-A2 header previously stated that both `series` and `release_date` are
+unprojected by `cards_effective`. **That was wrong.** `release_date` **is** in the
+view, between `rarity` and `pricing`
+(`cat-2d1-1-dark-alias-foundation.sql` §4); **only `series` is absent**, which is
+all CAT-0 §1.3.6 ever claimed.
+
+**The correction is comment-only.** The executable SQL is byte-identical to the
+text executed against production on 2026-08-18, verified by a comments-stripped
+diff against the pre-correction commit. The query was always correct; only the
+prose describing it was not.
+
+---
+
+## 13. Post-CAT-3A roadmap recommendation
+
+**This is a recommendation, not a CAT-3A decision.** The Decision Framework did
+not run (§0.1).
+
+**Suggested next slice: the narrow D-ALIAS durability / image-override
+prerequisite.**
+
+Its basis is the independently decision-grade A evidence in §12.2: 192/192
+approved pairs are A2, 192/192 retained TCGdex assets are live, and 45 of 117
+active-owned gaps sit in that class.
+
+**Accepted policy principle, scoped narrowly:** a retained provider-history image
+may be an admissible source for its canonical survivor **only** where CAT-2D.2
+has already independently established that the pair represents the same physical
+printing. That is the 192 admitted pairs and nothing else.
+
+**No production image write is authorized.** Direct writes to `cards.image_url`
+remain blocked because **durability and provenance under future sync are
+unresolved**:
+
+- `mapCardToRow` performs a full-row upsert that rewrites `image_url` from
+  whatever TCGdex returns (`sync-cards.mjs:332`);
+- there is no image provenance column (CAT-0 F-9);
+- `card_extras` overrides illustrator only — there is no durable image override
+  channel.
+
+A value written today would be silently reverted the next time that set is not
+skipped by the incremental predicate, with nothing recording that it was ever
+deliberate. **The prerequisite is the durable channel, not the image write.**

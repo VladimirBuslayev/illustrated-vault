@@ -90,6 +90,10 @@ The agreed order is:
 
 1. CAT-2 — Catalog Trust & Visual Completeness
 
+CAT-3A (Image Coverage & Recoverability Audit) closed 2026-08-19 as a SCOPED PARTIAL. T and A dimensions are decision-grade; F and O were never measured because the Pokémon TCG API reliability gate (G-7) failed twice. Headline: T1 = 0 of 1,640 — no missing-image row has an image available at TCGdex today, so broad ingestion repair is not justified. The CAT-3A Decision Framework did not run, so CAT-3A selected no slice.
+
+Recommended next within CAT-2 (recommendation, not a CAT-3A decision): the narrow D-ALIAS durability / image-override prerequisite. Basis: 192/192 CAT-2D.2-approved pairs are A2 with 192/192 retained assets live, covering 45 of 117 active-owned gaps. No production image write is authorized — cards.image_url has no durable channel under the current full-row sync upsert and no provenance column, so the prerequisite is the channel, not the write. See /docs/CAT-3A_IMAGE_COVERAGE_AND_RECOVERABILITY_AUDIT.md §12-13.
+
 2. NAV-1 — Product Architecture & Durable Navigation
 
 3. SEC-0 — User Data & Application Security Audit

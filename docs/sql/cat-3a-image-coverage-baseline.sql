@@ -8,12 +8,30 @@
 -- Full specification: docs/CAT-3A_IMAGE_COVERAGE_AND_RECOVERABILITY_AUDIT.md
 --
 -- ─────────────────────────────────────────────────────────────────────────
--- ⚠ STATUS: PREPARED — NOT EXECUTED
+-- ✅ STATUS: EXECUTED AND CLOSED — 2026-08-18 / 2026-08-19
 -- ─────────────────────────────────────────────────────────────────────────
--- No statement in this file has been run against production. Execution is a
--- separately approved step. When it runs, record the outputs in the
--- specification document and materialize the evidence artifacts under
--- docs/cat-3a-evidence/ as Commit 2.
+-- Q-A0 through Q-A8b all ran against production, read-only, as the migration
+-- owner. Q-A0 captured at 2026-08-18 23:41:01.499034+00. Q-A2 and Q-A3 were
+-- re-run 2026-08-19 to materialize the per-set evidence artifact.
+--
+-- CAT-3A closed as CLOSED — SCOPED PARTIAL. Results, gates and the scope of
+-- what was NOT established are recorded in
+-- docs/CAT-3A_IMAGE_COVERAGE_AND_RECOVERABILITY_AUDIT.md §0.1 and §12.
+-- Evidence: docs/cat-3a-evidence/.
+--
+-- ⚠ Read §0.1 before quoting any figure from a run of this file. The external
+--   probe's F and O dimensions were never measured — the Pokémon TCG API
+--   reliability gate failed twice — so no recoverability conclusion follows
+--   from this SQL either.
+--
+-- This file is retained as the audit definition and as the means to
+-- RE-MEASURE. Re-running it is how a future slice confirms these figures still
+-- hold rather than assuming they do.
+--
+-- ⚠ THE EXECUTABLE SQL IS FROZEN. One comment in the Q-A2 header was corrected
+--   after execution (see §12.5 — `release_date` IS exposed by cards_effective;
+--   only `series` is not). No executable text changed, verified by a
+--   comments-stripped diff, so this file still corresponds exactly to what ran.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- WHAT THIS FILE DOES NOT DO
@@ -223,10 +241,22 @@ order by base_table;
 -- Complete enumeration of the effective catalog. No filter, no LIMIT — a
 -- truncated per-set table would silently misreport the partitions in Q-A3.
 --
--- `series` and `release_date` live on public.cards and are NOT projected by
--- cards_effective (the view exposes 14 columns and series is not among them —
--- CAT-0 §1.3.6). They are joined back by id, which is safe: the join is PK to
--- PK and cannot fan out or lose rows.
+-- ⚠ CORRECTED WORDING (this comment was wrong; the query was not).
+--
+--   `series` is the ONLY one of the two absent from cards_effective. The view
+--   projects 14 columns and `release_date` IS among them — it sits between
+--   `rarity` and `pricing` (cat-2d1-1-dark-alias-foundation.sql §4). The
+--   earlier text here claimed both were unprojected, which misdescribed the
+--   view. CAT-0 §1.3.6 says only that the view does not expose `series`.
+--
+--   Both are joined back from public.cards by id regardless. That is safe —
+--   the join is PK to PK and cannot fan out or lose rows — and for
+--   `release_date` it is merely redundant, not incorrect: the value is the
+--   same column either way.
+--
+--   The EXECUTABLE SQL BELOW IS UNCHANGED. It is byte-identical to the text
+--   executed against production on 2026-08-18, so the committed file still
+--   corresponds exactly to what ran. Only this comment was corrected.
 --
 -- CAT-1 populated both columns, so the series dimension is real here. Q-A4
 -- proves that from the live schema rather than from this comment.
