@@ -61,6 +61,23 @@
 -- nothing about whether existing data moved. Projecting the pre-existing
 -- columns explicitly is what makes the before/after comparison meaningful.
 --
+-- ✅ BEFORE-CAPTURE ON RECORD — production, 2026-08-19 (PR #17 preflight):
+--
+--     row_count              5
+--     payload_digest         5a3348d04081450b251b79c1a492dd3c
+--     illustrator_overrides  5
+--     earliest_created_at    2026-06-24 01:12:49.298647+00
+--     latest_updated_at      2026-08-17 18:57:27.574545+00
+--
+--   The AFTER run must reproduce this EXACTLY. payload_digest is the one that
+--   matters most: row_count alone would not notice a changed value, and the
+--   timestamps alone would not notice a changed illustrator_override.
+--
+--   ⚠ latest_updated_at is load-bearing in a way that is easy to miss. The
+--     card_extras_set_updated_at trigger fires on ANY update, so if the
+--     migration somehow touched an existing row, this timestamp would move even
+--     when every other projected value stayed identical.
+--
 -- Expected: row_count 5 (CAT-0 baseline, unchanged since), and a payload_digest
 -- identical across the two runs.
 

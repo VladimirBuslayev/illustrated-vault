@@ -12,9 +12,10 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- WHY THIS EXISTS
 -- ─────────────────────────────────────────────────────────────────────────
--- CAT-3B adds provenance columns to public.card_extras. That table currently
--- carries a TABLE-LEVEL SELECT grant, and a table-level grant covers every
--- column the table will EVER have.
+-- CAT-3B adds provenance columns to public.card_extras. That table carries
+-- TABLE-LEVEL grants, and a table-level grant covers every column the table
+-- will EVER have — including ones added years later by a migration nobody
+-- re-reviewed the ACL for.
 --
 -- So adding the columns would publish, to every anonymous visitor: who approved
 -- each image override, when, on what evidence, and which retained
@@ -29,21 +30,49 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- WHAT A PASS LOOKS LIKE (the expected baseline)
 -- ─────────────────────────────────────────────────────────────────────────
---   P-1  card_extras: SELECT held at TABLE level by anon and authenticated;
---        no PUBLIC grant; no INSERT/UPDATE/DELETE for anon or authenticated.
---   P-2  no column-level grants yet (they are what CAT-3B introduces).
---   P-3  RLS enabled, exactly one permissive SELECT policy, USING (true),
---        for anon + authenticated. No write policies.
---   P-4  cards_effective: security_invoker = true; SELECT granted to anon,
---        authenticated, service_role.
---   P-5  NO routine (function/RPC) body references public.card_extras.
---   P-6  the three columns cards_effective needs all exist.
+-- ⚠ THE BASELINE IS BROADER THAN THIS FILE ORIGINALLY ASSUMED. It was drafted
+--   expecting a SELECT-only grant, because that is what card_extras_and_view.sql
+--   creates. Production disagreed, and the MEASURED state below supersedes that
+--   assumption. This is exactly why the preflight exists.
 --
--- ANY DEVIATION IS A STOP, not a note. In particular:
---   * a PUBLIC grant on card_extras means the "anon/authenticated" framing is
---     wrong and the revoke list in §6 is incomplete;
---   * a routine that reads card_extras directly means the three-column grant
---     may break it, and the grant list must be widened to whatever it selects;
+-- MEASURED PRODUCTION BASELINE — captured 2026-08-19, PR #17 preflight:
+--
+--   P-1   anon, authenticated AND service_role each hold explicit TABLE-level
+--         DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE.
+--         postgres holds the same WITH GRANT OPTION.
+--         ⚠ Far broader than SELECT. See the note under P-1 on why this is
+--           nonetheless dormant rather than exploitable.
+--   P-1b  no PUBLIC grant · RLS enabled · not forced.
+--   P-2   RETURNS ROWS, AND THAT IS EXPECTED. See P-2's own note: this view
+--         reports EFFECTIVE privileges, which the broad table grant implies for
+--         every column. It says nothing about explicit column ACLs.
+--   P-2b  zero rows — no explicit column ACL exists. THIS is the check that
+--         proves nobody has already column-restricted the table.
+--   P-3   RLS enabled · exactly one permissive SELECT policy
+--         card_extras_public_select for anon+authenticated · NO write policies.
+--   P-4   cards_effective security_invoker = true.
+--   P-5   zero routine readers.
+--   P-5b  only public.cards_effective.
+--   P-6   5 columns · 5 rows · zero CAT-3B columns.
+--
+-- WHY THE BROAD GRANT IS DORMANT, NOT A LIVE HOLE.
+--   RLS is ENABLED on card_extras and carries exactly ONE policy: a permissive
+--   SELECT. With RLS on and no INSERT/UPDATE/DELETE policy, those commands are
+--   denied for anon and authenticated no matter what the table grant says —
+--   a grant permits addressing the table, a policy permits touching the rows,
+--   and both are required. So the only PUBLIC behavior that actually works
+--   today is SELECT, and that is the behavior §6 preserves.
+--
+--   That does mean §6 is a DELIBERATE PRIVILEGE NARROWING, not the no-op ACL
+--   conversion it was originally described as. See §6 of the migration.
+--
+-- ANY FURTHER DEVIATION IS A STOP. In particular:
+--   * a PUBLIC grant on card_extras would mean the "anon/authenticated" framing
+--     is wrong and the revoke list in §6 is incomplete;
+--   * a routine that reads card_extras directly would mean the three-column
+--     grant may break it, and the grant list must widen to whatever it selects;
+--   * an explicit column ACL in P-2b would mean someone has already restricted
+--     this table and the blanket REVOKE would change more than intended;
 --   * cards_effective NOT being security_invoker would mean the whole
 --     column-grant argument is moot and the design must be re-examined.
 --
@@ -65,7 +94,12 @@
 -- is queried separately from pg_class.relacl below. Missing that is exactly how
 -- a "we only granted anon" belief survives an actual GRANT TO PUBLIC.
 --
--- Expected: anon SELECT, authenticated SELECT, nothing else for those two.
+-- ⚠ MEASURED BASELINE, NOT THE ORIGINAL ASSUMPTION: anon, authenticated and
+--   service_role each hold DELETE, INSERT, REFERENCES, SELECT, TRIGGER,
+--   TRUNCATE and UPDATE at table level; postgres holds the same WITH GRANT
+--   OPTION. The write privileges are DORMANT — RLS is enabled with only a
+--   SELECT policy, so INSERT/UPDATE/DELETE are denied for anon and
+--   authenticated regardless of the grant. §6 removes them deliberately.
 
 select
   'P-1 table grants'                                                as check_id,
@@ -103,12 +137,24 @@ where n.nspname = 'public' and c.relname = 'card_extras';
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- P-2 — COLUMN-level privileges on card_extras
+-- P-2 — EFFECTIVE column privileges on card_extras
 -- ═══════════════════════════════════════════════════════════════════════════
--- Expected BEFORE the migration: zero rows. Column grants are what CAT-3B
--- introduces. Pre-existing column grants would mean someone has already
--- restricted this table and the migration's blanket REVOKE would change more
--- than intended.
+-- ⚠ THIS RETURNS ROWS ON THE LIVE BASELINE, AND THAT IS CORRECT.
+--
+--   information_schema.column_privileges reports EFFECTIVE privileges — it
+--   includes everything IMPLIED by a table-level grant as well as explicit
+--   column grants. Production holds a broad table grant for anon,
+--   authenticated and service_role, so this view reports the full cross product
+--   of roles x columns x privileges. Rows here are the expected consequence of
+--   P-1, not evidence of column-level restriction.
+--
+--   An earlier draft of this file said "expected: zero rows". That was wrong:
+--   it conflated effective privileges with explicit ones. P-2b is the check
+--   that actually answers "has anyone column-restricted this table".
+--
+-- P-2 is retained because the EFFECTIVE view is what matters for behavior —
+-- it is the same lens V-6b uses after the migration, so before and after are
+-- directly comparable.
 
 select
   'P-2 column grants'                                               as check_id,
@@ -120,6 +166,37 @@ where table_schema = 'public'
   and table_name   = 'card_extras'
   and grantee not in ('postgres')
 order by grantee, column_name, privilege_type;
+
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- P-2b — EXPLICIT column ACLs on card_extras
+-- ════════════════════════════════════════════════════════════════════════════
+-- ⚠ THIS is the check P-2 was mistakenly asked to perform.
+--
+-- pg_attribute.attacl holds ONLY explicit per-column grants. It is NULL when a
+-- column has never been individually granted, regardless of how broad the
+-- table-level grant is. So this distinguishes "the table grant implies access
+-- to every column" (attacl NULL — the live baseline) from "somebody has already
+-- column-restricted this table" (attacl populated).
+--
+-- That distinction decides whether §6's blanket
+--   revoke all on table public.card_extras from anon, authenticated
+-- changes only what CAT-3B intends. If explicit column ACLs already existed,
+-- the revoke would leave them in place and the resulting privilege state would
+-- be a mixture nobody designed.
+--
+-- Expected on the measured production baseline: ZERO ROWS.
+
+select
+  'P-2b explicit column ACLs' as check_id,
+  a.attname                   as column_name,
+  a.attacl::text              as explicit_column_acl
+from pg_attribute a
+where a.attrelid = 'public.card_extras'::regclass
+  and a.attnum > 0
+  and not a.attisdropped
+  and a.attacl is not null
+order by a.attnum;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════

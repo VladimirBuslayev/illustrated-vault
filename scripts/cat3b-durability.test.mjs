@@ -372,6 +372,92 @@ ok(/security_invoker_on/.test(preflightCode),
 ok(/RUN docs\/sql\/cat-3b-0-acl-preflight\.sql FIRST/.test(migration),
   'migration tells the operator to run the preflight first');
 
+// ── 7c-2. The MEASURED baseline, not the assumed one ─────────────────────────
+console.log('\n7c-2. measured production baseline');
+
+// The preflight found anon/authenticated/service_role each holding seven
+// table-level privileges, not the SELECT-only grant this package was drafted
+// against. Both files must carry the measured state, or a reviewer would check
+// the migration against a baseline that never existed.
+const SEVEN = /DELETE, INSERT, REFERENCES, SELECT, TRIGGER,\s*(--\s*)?\s*TRUNCATE, UPDATE/;
+ok(SEVEN.test(preflight.replace(/\s+/g, ' ')) || /TRUNCATE, UPDATE/.test(preflight),
+  'preflight records the seven measured table-level privileges');
+ok(/MEASURED PRODUCTION BASELINE/.test(preflight),
+  'preflight labels the baseline as measured, not assumed');
+ok(/MEASURED BASELINE/.test(migration),
+  'migration §6 records the measured baseline');
+ok(/WITH GRANT OPTION/i.test(migration) && /WITH GRANT\s*(--\s*)?\s*OPTION/i.test(migration.replace(/\s+/g, ' ')),
+  'migration records that postgres holds the grants WITH GRANT OPTION');
+
+// P-2 must no longer claim zero rows; P-2b is the explicit-ACL check.
+ok(/RETURNS ROWS ON THE LIVE BASELINE, AND THAT IS CORRECT/.test(preflight),
+  'P-2 states that returning rows is expected');
+ok(/conflated effective privileges with explicit ones/.test(preflight.replace(/\s+/g, ' ')),
+  'P-2 records why the earlier zero-rows expectation was wrong');
+ok(/P-2b — EXPLICIT column ACLs/.test(preflight), 'P-2b exists');
+ok(/pg_attribute a/.test(preflightCode) && /a\.attacl is not null/.test(preflightCode),
+  'P-2b reads pg_attribute.attacl');
+ok(/a\.attrelid = 'public\.card_extras'::regclass/.test(preflightCode),
+  'P-2b is scoped to card_extras by regclass');
+ok(/not a\.attisdropped/.test(preflightCode),
+  'P-2b excludes dropped columns');
+ok(/ZERO ROWS/.test(preflight), 'P-2b states the expected zero-row result');
+
+// §6 must be classified as deliberate narrowing, with the dormancy argument.
+ok(/DELIBERATE PRIVILEGE NARROWING, NOT A NO-OP ACL CONVERSION/.test(migration),
+  'migration classifies §6 as deliberate privilege narrowing');
+ok(/DORMANT RATHER THAN A LIVE HOLE/.test(migration),
+  'migration explains why the broad write grants are dormant');
+ok(/A GRANT permits addressing the table; an RLS POLICY permits touching the/.test(
+  migration.replace(/--\s*/g, '').replace(/\s+/g, ' ')),
+  'migration states the grant-versus-policy distinction');
+ok(/genuine security tightening/.test(migration),
+  'migration states the change is a security tightening');
+ok(/service_role and postgres were never altered by §6/.test(
+  migration.replace(/--\s*/g, '').replace(/\s+/g, ' ')),
+  'migration confirms service_role is untouched');
+
+// ── 7c-3. Two-level rollback with the measured pre-state ─────────────────────
+console.log('\n7c-3. rollback levels');
+
+ok(/TWO ROLLBACK LEVELS AND THEY ARE NOT INTERCHANGEABLE/.test(migration),
+  'migration documents two distinct rollback levels');
+ok(/LEVEL 1 — PREFERRED FUNCTIONAL ROLLBACK/.test(migration),
+  'Level 1 functional rollback is documented');
+ok(/LEVEL 2 — TRUE FULL PRE-CAT-3B ROLLBACK/.test(migration),
+  'Level 2 full rollback is documented');
+ok(/KEEP the restrictive CAT-3B column ACL/.test(migration),
+  'Level 1 keeps the restrictive ACL, so no provenance is exposed');
+ok(/ORDER IS LOAD-BEARING/.test(migration),
+  'Level 2 flags that the step order matters');
+ok(/Remove the CAT-3B columns FIRST, and only then/.test(
+  migration.replace(/--\s*/g, '').replace(/\s+/g, ' ')),
+  'Level 2 removes the columns before restoring the broad grants');
+ok(/would expose[\s\S]{0,120}provenance columns|re-exposes the\s*(--\s*)?\s*provenance columns/
+  .test(migration.replace(/\s+/g, ' ')),
+  'migration states the hazard of restoring GRANT ALL while the columns exist');
+// The restore must be the measured seven privileges, not SELECT-only.
+ok(/grant delete, insert, references, select, trigger, truncate, update/i.test(migration),
+  'Level 2 restores the MEASURED seven privileges');
+ok(!/grant select on table public\.card_extras to anon, authenticated;/.test(migration),
+  'the incorrect SELECT-only rollback text is gone');
+ok(/stop after\s*(--\s*)?\s*step 3/.test(migration.replace(/\s+/g, ' ')),
+  'migration offers keeping the tightening as a legitimate end state');
+
+// ── 7c-4. V-1 before-capture on record ───────────────────────────────────────
+console.log('\n7c-4. V-1 before-capture');
+
+ok(/BEFORE-CAPTURE ON RECORD/.test(validation),
+  'V-1 records the production before-capture');
+ok(/5a3348d04081450b251b79c1a492dd3c/.test(validation),
+  'the measured payload_digest is committed for comparison');
+ok(/2026-06-24 01:12:49\.298647\+00/.test(validation)
+  && /2026-08-17 18:57:27\.574545\+00/.test(validation),
+  'the measured timestamps are committed');
+ok(/card_extras_set_updated_at trigger fires on ANY update/.test(
+  validation.replace(/--\s*/g, '').replace(/\s+/g, ' ')),
+  'V-1 explains why latest_updated_at is load-bearing');
+
 // ── 7d. The migration is ATOMIC ──────────────────────────────────────────────
 console.log('\n7d. migration transaction boundary');
 

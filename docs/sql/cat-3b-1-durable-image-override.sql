@@ -453,20 +453,57 @@ comment on view public.cards_effective is
 -- §6. PROVENANCE ACL — the new columns must NOT inherit public readability
 -- ═══════════════════════════════════════════════════════════════════════════
 --
--- ⚠ RUN docs/sql/cat-3b-0-acl-preflight.sql FIRST AND READ ITS OUTPUT.
---   This section is written against the EXPECTED state (a table-level SELECT
---   grant to anon/authenticated from card_extras_and_view.sql). If the preflight
---   shows something else — extra grantees, a PUBLIC grant, a direct runtime
---   reader needing more columns — STOP and adjust the grant list before running
---   this. Do not run it on assumption.
+-- ⚠ THIS IS A DELIBERATE PRIVILEGE NARROWING, NOT A NO-OP ACL CONVERSION.
 --
--- THE PROBLEM. card_extras_and_view.sql granted SELECT at TABLE level:
---     GRANT SELECT ON public.card_extras TO anon, authenticated;
--- A table-level grant covers every column the table will EVER have. Adding
--- provenance columns to it would silently publish who approved an override,
--- when, on what evidence, and from which retained provider-history row — to
--- every anonymous visitor. Nobody would have decided that; it would just
--- happen.
+--   This section was originally drafted expecting a SELECT-only table grant,
+--   because that is what card_extras_and_view.sql creates. The PR #17
+--   production preflight measured something broader:
+--
+--     MEASURED BASELINE — 2026-08-19
+--       anon           DELETE, INSERT, REFERENCES, SELECT, TRIGGER,
+--                      TRUNCATE, UPDATE          (table level)
+--       authenticated  the same seven
+--       service_role   the same seven
+--       postgres       the same seven WITH GRANT OPTION
+--       PUBLIC         no grant
+--       explicit column ACLs (pg_attribute.attacl)    none
+--       RLS            enabled, not forced
+--       policies       exactly one permissive SELECT
+--                      (card_extras_public_select, anon+authenticated);
+--                      NO write policies
+--
+--   So anon and authenticated currently hold WRITE privileges on this table.
+--
+-- WHY THAT IS DORMANT RATHER THAN A LIVE HOLE.
+--   A GRANT permits addressing the table; an RLS POLICY permits touching the
+--   rows. Both are required. RLS is enabled with only a SELECT policy, so
+--   INSERT/UPDATE/DELETE are denied for anon and authenticated today no matter
+--   what the grant says. The only public behavior that actually works is SELECT.
+--
+-- WHAT §6 THEREFORE DOES.
+--   It removes those dormant write grants and narrows read access to three
+--   columns, PRESERVING the only working public behavior: SELECT through
+--   cards_effective.
+--
+--   That is a genuine security tightening. It removes privileges that would
+--   become live the moment someone added a write policy, or disabled RLS during
+--   an incident, without ever intending to hand anonymous users write access to
+--   the enrichment table.
+--
+--   It is NOT merely "convert a table grant into a column grant". Describing it
+--   that way would understate the change, and a reviewer would have no reason to
+--   confirm the write privileges are genuinely unused before they disappear.
+--
+-- ⚠ STILL RUN docs/sql/cat-3b-0-acl-preflight.sql FIRST AND READ ITS OUTPUT.
+--   If it shows anything other than the measured baseline above — a PUBLIC
+--   grant, an explicit column ACL (P-2b), a direct runtime reader (P-5/P-5b)
+--   needing more columns — STOP and adjust before running this.
+--
+-- THE PROVENANCE PROBLEM THIS ALSO SOLVES. A table-level grant covers every
+-- column the table will EVER have. Adding provenance columns under it would
+-- silently publish who approved an override, when, on what evidence, and from
+-- which retained provider-history row — to every anonymous visitor. Nobody
+-- would have decided that; it would just happen.
 --
 -- THE FIX. Replace the blanket grant with an explicit column list.
 --
@@ -554,17 +591,86 @@ commit;
 --     );
 --   grant select on public.cards_effective to anon, authenticated, service_role;
 --
--- ⚠ ROLLING BACK THE ACL. §6 replaced a table-level grant with a column-level
---   one. If the ACL change is being reverted too, restore whatever the
---   preflight recorded as the PRE-CAT-3B state — do not guess. Against the
---   expected baseline that is:
+-- ⚠ THERE ARE TWO ROLLBACK LEVELS AND THEY ARE NOT INTERCHANGEABLE.
 --
---     revoke all on table public.card_extras from anon, authenticated;
---     grant select on table public.card_extras to anon, authenticated;
+--   An earlier draft here said the ACL revert was "grant select on table ... to
+--   anon, authenticated". That was WRONG: it described a SELECT-only baseline
+--   that production never had. The measured pre-state is the seven-privilege
+--   grant recorded in §6.
 --
---   Reverting the view WITHOUT reverting the ACL is safe and is the preferred
---   partial rollback: the column grant still covers everything the pre-CAT-3B
---   view reads (card_id, illustrator_override).
+--   It also matters enormously WHEN the broad grant is restored. Restoring
+--   GRANT ALL while the five CAT-3B provenance columns still exist would expose
+--   evidence, approved_by, approved_at and source_card_id to anon and
+--   authenticated — creating the exact leak §6 exists to prevent, during what
+--   was supposed to be a safety operation.
+--
+-- ── LEVEL 1 — PREFERRED FUNCTIONAL ROLLBACK ────────────────────────────────
+--   Restore the pre-CAT-3B view. KEEP the restrictive CAT-3B column ACL.
+--
+--   This fully restores runtime behavior: the pre-CAT-3B view reads only
+--   ce.card_id and ce.illustrator_override, both of which the three-column
+--   grant still covers. Nothing renders differently, and no provenance is
+--   exposed. Use this unless the columns themselves are being removed.
+--
+--     create or replace view public.cards_effective
+--       with (security_invoker = true)
+--     as
+--       select
+--         c.id, c.name, c.set_id, c.set_name, c.local_id,
+--         coalesce(ce.illustrator_override, c.illustrator) as illustrator,
+--         c.image_url,
+--         c.rarity, c.release_date, c.pricing, c.pricing_updated_at,
+--         c.pricing_source, c.last_synced_at, c.artist_id
+--       from public.cards c
+--       left join public.card_extras ce on c.id = ce.card_id
+--       where not exists (
+--         select 1 from public.card_identity_resolution r
+--         where r.alias_card_id = c.id
+--       );
+--     grant select on public.cards_effective to anon, authenticated, service_role;
+--
+--   The columns, constraints and trigger may stay — they are inert while every
+--   override field is NULL.
+--
+-- ── LEVEL 2 — TRUE FULL PRE-CAT-3B ROLLBACK ────────────────────────────────
+--   ⚠ ORDER IS LOAD-BEARING. Remove the CAT-3B columns FIRST, and only then
+--     restore the broad grants. Reversing these two steps re-exposes the
+--     provenance columns for the window between them.
+--
+--   Step 1  Level 1 above (restore the view).
+--   Step 2  Confirm there is nothing to lose:
+--             select count(*) from public.card_extras
+--              where image_url_override is not null;     -- must be 0
+--   Step 3  Remove the CAT-3B surface, returning card_extras to its original
+--           five-column shape:
+--             drop trigger if exists card_extras_admit_image_override
+--               on public.card_extras;
+--             drop function if exists public.card_extras_admit_image_override();
+--             alter table public.card_extras
+--               drop constraint if exists card_extras_image_override_shape,
+--               drop constraint if exists card_extras_image_override_source_not_self,
+--               drop constraint if exists card_extras_image_override_approved_by_nonempty,
+--               drop constraint if exists card_extras_image_override_all_or_nothing,
+--               drop constraint if exists card_extras_image_override_source_fk,
+--               drop column if exists image_override_approved_at,
+--               drop column if exists image_override_approved_by,
+--               drop column if exists image_override_evidence,
+--               drop column if exists image_override_source_card_id,
+--               drop column if exists image_url_override;
+--   Step 4  ONLY NOW restore the MEASURED broad pre-state. This is the exact
+--           privilege set the 2026-08-19 preflight recorded — not a SELECT-only
+--           approximation:
+--             revoke all on table public.card_extras from anon, authenticated;
+--             grant delete, insert, references, select, trigger, truncate, update
+--               on table public.card_extras to anon, authenticated;
+--           service_role and postgres were never altered by §6 and need no
+--           restoration.
+--   Step 5  Re-run cat-3b-0-acl-preflight.sql. P-1 must again show the seven
+--           privileges for anon/authenticated and P-2b must be empty.
+--
+--   ⚠ Step 4 deliberately re-grants privileges that are DORMANT but real. If
+--     the intent is to abandon CAT-3B while KEEPING the tightening, stop after
+--     step 3 — that is a legitimate and safer end state.
 --
 -- The columns, constraints and trigger may be left in place — they are inert
 -- while every override field is NULL. Drop them only if the channel is being

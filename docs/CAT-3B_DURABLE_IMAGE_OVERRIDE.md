@@ -211,8 +211,34 @@ bar.
 output.** The grant section is written against an expected state; the preflight
 establishes the actual one.
 
-`card_extras_and_view.sql` granted SELECT at **table level**, and a table-level
-grant covers every column the table will *ever* have. Adding provenance columns
+**This is a deliberate privilege narrowing, not a no-op ACL conversion.**
+
+The PR #17 production preflight measured a broader baseline than
+`card_extras_and_view.sql` suggested:
+
+| Role | Table-level privileges (measured 2026-08-19) |
+|---|---|
+| `anon` | DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE |
+| `authenticated` | the same seven |
+| `service_role` | the same seven |
+| `postgres` | the same seven **WITH GRANT OPTION** |
+| PUBLIC | no grant |
+
+Explicit column ACLs (`pg_attribute.attacl`): **none**. RLS: enabled, not
+forced, with exactly one permissive SELECT policy and **no write policies**.
+
+**Why those write grants are dormant rather than a live hole:** a GRANT permits
+addressing the table, an RLS policy permits touching the rows, and both are
+required. With RLS on and only a SELECT policy, INSERT/UPDATE/DELETE are denied
+for anon and authenticated today regardless of the grant. The only public
+behavior that actually works is SELECT.
+
+So §6 removes dormant write grants **and** narrows read access, preserving the
+one working behavior. That is a genuine tightening: it removes privileges that
+would become live the moment someone added a write policy or disabled RLS during
+an incident, without ever intending to give anonymous users write access.
+
+A table-level grant also covers every column the table will *ever* have. Adding provenance columns
 to it would publish — to every anonymous visitor — who approved each override,
 when, on what evidence, and which retained provider-history row it came from.
 Nobody would have decided that; it would happen as a side effect of an
@@ -333,11 +359,28 @@ would silently skip creating a constraint if any other relation happened to
 carry that name, leaving an integrity rule absent while the migration reported
 success.
 
-**Rollback.** Restoring the view is one `CREATE OR REPLACE VIEW`, instant,
-recorded verbatim in the migration §6. Because this slice writes no override
-rows, rollback loses no data. Columns, constraints and trigger may be left in
-place — they are inert while every override field is NULL — or dropped with the
-statements also recorded in §6.
+**Rollback — two levels, not interchangeable.**
+
+| Level | What it does | When |
+|---|---|---|
+| **1 — preferred functional** | Restore the pre-CAT-3B view; **keep** the restrictive column ACL | Default. Fully restores runtime behavior — the old view reads only `card_id` and `illustrator_override`, both still granted — and exposes no provenance |
+| **2 — true full pre-CAT-3B** | Level 1, then **drop the CAT-3B columns**, and only **then** restore the measured broad grants | Only when abandoning the channel entirely |
+
+⚠ **Order is load-bearing in Level 2.** Restoring `GRANT ALL` while the five
+provenance columns still exist would expose `evidence`, `approved_by`,
+`approved_at` and `source_card_id` to anon and authenticated — creating the
+exact leak §6 prevents, during what was meant to be a safety operation.
+
+The Level 2 restore uses the **measured** privileges
+(`delete, insert, references, select, trigger, truncate, update`), not a
+SELECT-only approximation. `service_role` and `postgres` were never altered by
+§6 and need no restoration.
+
+Stopping after the column drop — keeping the tightening while abandoning
+CAT-3B — is a legitimate and safer end state.
+
+Because this slice writes no override rows, rollback loses no data at either
+level. Full statements are recorded verbatim in the migration §7.
 
 ---
 
@@ -388,7 +431,8 @@ run V-1…V-6.
 | Check | Establishes |
 |---|---|
 | **P-1 / P-1b** | table-level privileges per grantee, **plus the raw `relacl` including grants to PUBLIC**, which `role_table_grants` omits |
-| **P-2** | existing column-level grants (expected: none) |
+| **P-2** | **effective** column privileges — returns rows on the live baseline, because the broad table grant implies access to every column. This is expected, not a failure |
+| **P-2b** | **explicit** column ACLs from `pg_attribute.attacl` (expected: **none**) — the check that actually answers "has anyone already column-restricted this table" |
 | **P-3** | RLS enabled state and every policy on `card_extras` |
 | **P-4** | `cards_effective` is still `security_invoker = true`, and its grantees |
 | **P-5 / P-5b** | **any routine or view that reads `card_extras` directly** — the check that decides whether a three-column grant is sufficient. P-5 inspects **`pg_get_functiondef`** as well as `prosrc`: `prosrc` holds only the body and is empty for SQL-standard `BEGIN ATOMIC` functions (PG14+), so a reader outside the body would be missed. Both results are reported separately |
