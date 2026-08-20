@@ -7,3 +7,11 @@
 # checkout and the working-tree bytes stop matching the approved artifact.
 # Pinning it to LF keeps the committed evidence byte-stable on every platform.
 docs/cat-2d2-evidence/*.csv text eol=lf
+
+# ATTR-0: same reasoning. docs/attr-0-evidence/manifest.json carries a SHA-256
+# per CSV, and scripts/attr0-variant-attribution-probe.mjs --check re-derives
+# those hashes to prove the committed artifacts still match upstream. The probe
+# normalises newlines before hashing, so --check survives CRLF either way — but
+# pinning LF keeps the working-tree bytes identical to the committed bytes, so a
+# reviewer hashing the file by hand gets the manifest value.
+docs/attr-0-evidence/*.csv text eol=lf
