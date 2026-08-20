@@ -1,6 +1,6 @@
 Illustrated Vault — Roadmap
 
-Last updated: 2026-08-13
+Last updated: 2026-08-19
 
 Completed
 
@@ -92,7 +92,11 @@ The agreed order is:
 
 CAT-3A (Image Coverage & Recoverability Audit) closed 2026-08-19 as a SCOPED PARTIAL. T and A dimensions are decision-grade; F and O were never measured because the Pokémon TCG API reliability gate (G-7) failed twice. Headline: T1 = 0 of 1,640 — no missing-image row has an image available at TCGdex today, so broad ingestion repair is not justified. The CAT-3A Decision Framework did not run, so CAT-3A selected no slice.
 
-Recommended next within CAT-2 (recommendation, not a CAT-3A decision): the narrow D-ALIAS durability / image-override prerequisite. Basis: 192/192 CAT-2D.2-approved pairs are A2 with 192/192 retained assets live, covering 45 of 117 active-owned gaps. No production image write is authorized — cards.image_url has no durable channel under the current full-row sync upsert and no provenance column, so the prerequisite is the channel, not the write. See /docs/CAT-3A_IMAGE_COVERAGE_AND_RECOVERABILITY_AUDIT.md §12-13.
+CAT-3A itself selected no repair slice. It did identify 192 approved same-printing retained-history alias relationships as a potentially repairable class — 192/192 CAT-2D.2-approved pairs are A2 with 192/192 retained assets live, covering 45 of 117 active-owned gaps — but CAT-3A authorized no image writes. See /docs/CAT-3A_IMAGE_COVERAGE_AND_RECOVERABILITY_AUDIT.md §12-13.
+
+CAT-3B (Durable Approved Image Override Channel) is ✓ CLOSED / DEPLOYED / VALIDATED / MERGED 2026-08-19 — PR #17, merge commit 5d741372cf4f1ac89ce5386c069835f947b11f07. The durability / image-override prerequisite that CAT-3A recommended now exists and is no longer a future prerequisite. public.cards remains raw provider history; cards_effective is the rendering chokepoint via an image_url_override COALESCE; admission is restricted to approved alias relationships with the source image matched at admission; provenance is withheld from anon and authenticated. The channel is EMPTY — zero override rows, zero rendered pixels changed. Creating any override, including the 192 CAT-3A-measured pairs, requires its own separately approved slice. Sync remains PAUSED. See /docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md.
+
+The next slice after CAT-3B is UNDECIDED, pending strategy/review. CAT-3C is deliberately not named here, and populating the 192 pairs is deliberately not authorized as next. The near-term order after catalog work is unchanged.
 
 2. NAV-1 — Product Architecture & Durable Navigation
 
@@ -161,6 +165,8 @@ F-6 skip-predicate redesign. CAT-1 attached two confirmed instances: exu stores 
 exu-%3F TCGdex 404 — catalog-source / card-ID anomaly recorded during CAT-1, deliberately unrepaired.
 
 Isolated non-production G1 proof — deferred observation, not a blocker. Requires a local or staging Supabase environment; must never be run against production.
+
+CAT-3B durability write test (docs/sql/cat-3b-3-durability-test.sql) — deferred observation, not a blocker. Non-production only, and no non-production Supabase environment exists; must never be manufactured in production. The durability claim rests meanwhile on the three static proofs asserted in CI by scripts/cat3b-durability.test.mjs.
 
 Workflow concurrency guard on sync-cards.yml, which would make sync quiescence structural rather than procedural.
 

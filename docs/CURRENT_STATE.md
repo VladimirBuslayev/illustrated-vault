@@ -1,6 +1,6 @@
 Illustrated Vault — Current State
 
-Last updated: 2026-08-17
+Last updated: 2026-08-19
 
 Production
 
@@ -129,6 +129,18 @@ CAT-2D.2
 Family A stable-number provider identity reconciliation — 192 aliases
 
 ✓ Complete 2026-08-17, production-validated and closed (PR #13)
+
+CAT-3A
+
+Image coverage & recoverability audit (read-only; selected no repair slice)
+
+✓ Closed 2026-08-19 — SCOPED PARTIAL (PR #16)
+
+CAT-3B
+
+Durable provenance-aware approved image override channel (shipped empty)
+
+✓ Complete 2026-08-19, production-validated and closed (PR #17)
 
 Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or deferred cleanup remains.
 
@@ -1374,7 +1386,27 @@ The CAT-3A Decision Framework DID NOT RUN, because G-10 did not pass. CAT-3A the
 
 Scope limit preserved. CAT-0's statement that the 51 fully image-missing sets are structural upstream absences remains formally unresolved — G-9 and G-10 did not pass, so CAT-3A does not close it. CAT-3A measured catalog fields and source availability only; surface rendering and collector-visible exposure were not measured.
 
-Post-CAT-3A recommendation, not a decision. The suggested next slice is the narrow D-ALIAS durability / image-override prerequisite, resting on the independently decision-grade A evidence above. Accepted policy principle: a retained provider-history image may be an admissible source for its canonical survivor ONLY where CAT-2D.2 has already independently established that the pair represents the same physical printing — the 192 admitted pairs and nothing else. No production image write is authorized. Direct writes to cards.image_url remain blocked because durability and provenance under future sync are unresolved: mapCardToRow full-row upserts image_url from upstream (sync-cards.mjs:332), there is no image provenance column (CAT-0 F-9), and card_extras overrides illustrator only. A value written today would be silently reverted the next time that set is not skipped, with nothing recording it was deliberate. The prerequisite is the durable channel, not the image write.
+Post-CAT-3A recommendation, not a decision — now discharged by CAT-3B. The suggested next slice was the narrow D-ALIAS durability / image-override prerequisite, resting on the independently decision-grade A evidence above. Accepted policy principle: a retained provider-history image may be an admissible source for its canonical survivor ONLY where CAT-2D.2 has already independently established that the pair represents the same physical printing — the 192 admitted pairs and nothing else. No production image write is authorized. Direct writes to cards.image_url remain blocked, and CAT-3B did not unblock them — it routed around public.cards entirely rather than making it writable. The blocking conditions as measured then: mapCardToRow full-row upserts image_url from upstream (sync-cards.mjs:332), there is no image provenance column (CAT-0 F-9), and card_extras overrides illustrator only. A value written today would be silently reverted the next time that set is not skipped, with nothing recording it was deliberate. The prerequisite is the durable channel, not the image write. That prerequisite was built and closed as CAT-3B below; the recommendation is therefore discharged, and it is retained here as the record of why CAT-3B exists. It still authorizes no image write.
+
+CAT-3B — Durable Approved Image Override Channel
+
+Status: ✓ CLOSED / DEPLOYED / VALIDATED / MERGED, 2026-08-19. PR #17, merge commit 5d741372cf4f1ac89ce5386c069835f947b11f07. Full document: /docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md.
+
+What exists now. A durable, provenance-aware approved image override channel. card_extras gained five all-or-nothing columns — image_url_override, image_override_source_card_id (FK → cards(id), ON DELETE RESTRICT), image_override_evidence, image_override_approved_by, image_override_approved_at. No new table was created.
+
+public.cards remains raw provider history. Nothing in this slice writes it, and sync-cards.mjs still writes exactly one table. The override lives beside the raw row, never inside it.
+
+cards_effective is the rendering chokepoint. Every rendered image already originates from cards_effective.image_url, and exactly one line of the view definition changed: c.image_url became coalesce(ce.image_url_override, c.image_url). All 14 columns, their order, security_invoker = true, the card_extras LEFT JOIN and the CAT-2D.1 alias exclusion are preserved. Zero src/** files changed.
+
+Admission is restricted, not open. A BEFORE INSERT OR UPDATE trigger (SECURITY INVOKER) admits an override only where the source is an approved alias relationship of the target card and the proposed value equals that source card's image_url at admission time, with complete provenance and a TCGdex asset base path. It reads card_identity_resolution and cards; the card_identity_aliases privilege wall is untouched. Admission is not revalidation: an unchanged bundle is not re-admitted on unrelated edits, and withdrawal is always permitted.
+
+Provenance stays withheld, but the override value itself is readable. anon and authenticated can each read exactly three columns on card_extras — card_id, illustrator_override, image_url_override — and no others. image_url_override is deliberately readable: cards_effective selects from card_extras under security_invoker = true, so the view's own read grants only resolve if the override column is itself readable to the querying role. The four provenance/source columns — image_override_source_card_id, image_override_evidence, image_override_approved_by, image_override_approved_at — remain withheld from anon and authenticated. The production preflight measured a broader pre-existing baseline than the documented one — anon and authenticated each held seven table-level privileges on card_extras, dormant only because RLS carried no write policy — and the migration narrowed it deliberately. V-6 re-proved the resulting ACL after deploy.
+
+The channel is EMPTY. Zero override rows were created, and V-3 proved the deployment row-for-row: 23,588 deployed against 23,588 expected, zero differing in either direction, 1,640 null images on both sides. Zero rendered pixels changed.
+
+What CAT-3B does not authorize. Creating any override row requires its own separately approved slice — including the 192 CAT-3A-measured pairs, which are eligible for admission but are not approved for it. A future approved alias becomes eligible automatically; nothing is ever applied automatically. The scheduled sync remains PAUSED.
+
+Next slice after CAT-3B is UNDECIDED, pending strategy/review. CAT-3B is not a commitment to CAT-3C and does not name a successor. The standing near-term order after catalog work is unchanged: NAV-1 → SEC-0 → AUTH-1 → BETA-0.
 
 Deferred by CAT-0: Pokémon TCG API fallback Probe B · image remediation · illustrator enrichment · artist FK repair · OL-0D p_artist_id filter semantics (latent; no user-facing Owned Library artist-filter workflow established) · add_artist_to_archive duplicate-identity risk · index hygiene · pricing.
 
@@ -1526,6 +1558,8 @@ exu is permanently non-skipped — stored count below upstream count. It stores 
 jumbo, rc, sp and wp are permanently non-skipped — upstream zero-card sets. The skip predicate requires briefCards.length > 0, which a zero-card set can never satisfy, so these four are processed on every incremental run. The production incremental log showed this directly: Syncing wp — 0 cards, Syncing jumbo — 0 cards, Syncing sp — 0 cards, Syncing rc — 0 cards. They hold no rows in public.cards, so their upserts and temporal updates alike match zero rows. Deferred F-6 skip-predicate issue, second confirmed case — a distinct mechanism from exu's.
 
 Isolated non-production G1 proof remains a deferred observation. The structural invariant passed and the production write boundary passed by checksum, but the isolated one-card upsert proof was never run for lack of a non-production Supabase environment. Do not manufacture it in production: mapCardToRow still rewrites illustrator, artist_id, pricing, rarity, image_url, set_name and last_synced_at. The routine path cannot isolate G1, because updateSetTemporal repairs any such regression within the same run. Under the currently observed upstream state — where every processed set supplied both temporal fields — an R8 failure would be repaired immediately by G2; a future upstream field retraction remains the explicit unresolved case.
+
+CAT-3B durability write test remains a deferred observation. docs/sql/cat-3b-3-durability-test.sql was not run: it writes data, is non-production only, and no non-production Supabase environment exists — the same disposition CAT-1 took for its isolated G1 proof. Never manufacture it in production. The durability claim meanwhile rests on three static proofs asserted in CI by scripts/cat3b-durability.test.mjs: mapCardToRow's payload cannot express any of the five columns, sync-cards.mjs writes only public.cards, and cards_effective COALESCEs the stored override without joining the source row.
 
 The whole-catalog temporal run processed 218 upstream sets against 214 distinct catalog set_id values. These reconcile exactly: the complete 214-set CAT-0 inventory is a subset of the 218, and zero catalog set IDs were absent from the upstream run. The four upstream set IDs with no rows in public.cards are exactly jumbo, rc, sp, wp — the same four zero-card sets noted above. Their UPDATE matched zero rows: benign, idempotent, complete coverage. Whether those sets should hold rows is a coverage question, not a CAT-1 one.
 
