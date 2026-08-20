@@ -1,0 +1,50 @@
+name: Claude Code
+
+# Interactive @claude bridge only.
+#
+# This repository is PUBLIC. The job below is write-capable, so the trigger
+# surface is deliberately narrow: a human comment that mentions @claude, from
+# one authorized actor, and nothing else. There is no automatic code review
+# workflow, and no automatic invocation on issue open, issue assignment, or
+# pull request review submission.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  claude:
+    # Fails closed on both axes. github.actor is the comment author for both
+    # trigger events, so an external commenter can never start this job, and a
+    # comment without the mention is ignored. An event carrying no comment
+    # object evaluates to false rather than running.
+    if: |
+      github.actor == 'VladimirBuslayev' &&
+      contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit and push corrections to an existing PR branch
+      pull-requests: write # comment on and update pull requests
+      issues: write # respond on issues
+      id-token: write # OIDC for the Claude action
+      actions: read # read CI results on PRs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@5ee796a55f92566ecd7e39d70dd613abcbea0d7c # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # Allows Claude to read CI results on PRs.
+          additional_permissions: |
+            actions: read
+
+          # No Supabase MCP server, database credential, project ref, or
+          # environment secret is configured here, deliberately. Local Claude
+          # Code remains the only Claude environment with Supabase access.
