@@ -1,6 +1,7 @@
 # ATTR-0 Gate 2 — Print-Level Artist Attribution Verification
 
-**Verdict: PASS — FULLY VERIFIED.**
+**Gate verdict: STOP — EVIDENCE CLASS EXPANDED.**
+**20-row R1 verification result: FULLY VERIFIED (9 CONFIRMED_CORRECT · 11 CONFIRMED_WRONG · 0 UNRESOLVED).**
 
 | | |
 |---|---|
@@ -14,15 +15,24 @@
 | Catalog sync | **remains paused** — not resumed, not triggered |
 | Evidence | `docs/attr-0-evidence/gate2-print-verification.csv` · `docs/attr-0-evidence/gate2-manifest.json` |
 | Population | 20 R1 printings (ATTR-0 SUSPECT, less the already-confirmed `xyp-XY67a`) |
-| Result | **9 CONFIRMED_CORRECT · 11 CONFIRMED_WRONG · 0 UNRESOLVED** |
+| Row-level result | **9 CONFIRMED_CORRECT · 11 CONFIRMED_WRONG · 0 UNRESOLVED** |
+| Gate verdict | **STOP — EVIDENCE CLASS EXPANDED** (F-16; see §9) |
+| Next evidence gate | **ATTR-0b** over the 14 lone suffix variants (6 `xya` + 8 `ecard2`) |
 | Checked at | 2026-08-20 |
 
 ---
 
 ## 1. Executive verdict
 
-**PASS — FULLY VERIFIED.** All 20 remaining R1 printings were investigated at the
-exact-printing level and every one resolved. Zero rows remain unresolved.
+**Gate verdict: STOP — EVIDENCE CLASS EXPANDED.** The 20-row R1 population
+itself is **FULLY VERIFIED**: all 20 printings were investigated at the
+exact-printing level, every one resolved, and zero rows remain unresolved. But
+this gate's own findings — specifically **F-16** (§9.3) — establish that the
+ATTR-0 same-set family model cannot see cross-set duplicate printing identity,
+and that the audit population is therefore incomplete ahead of repair. That is
+the STOP condition as defined for this gate: evidence showing the population or
+model is materially incomplete and requires another audit before ATTR-1. The
+20-row result is not in question; the gate does not close on it.
 
 Four findings, in order of how much they should change the plan.
 
@@ -49,9 +59,10 @@ population. On the two rows where the set-scoped record is wrong, the `xya`
 record is independently **right** (`xya-28a` = Ryo Ueda, `xya-107a` = Naoki
 Saito) — matching Bulbapedia and PkmnCards exactly. On the four rows where the
 set-scoped record is right, the `xya` record agrees. Six for six. This is
-upstream-internal corroboration of Gate 2's method, and it is also a **new
-structural finding** (§9, F-16): the same physical printing exists twice in the
-catalog under two card IDs, sometimes with contradictory illustrators.
+upstream-internal corroboration of Gate 2's method, and it is also **F-16**
+(§9.3), the structural finding that stops this gate: the same physical printing
+exists twice in the catalog under two card IDs, sometimes with contradictory
+illustrators, and the ATTR-0 same-set family model cannot see the duplication.
 
 **4. Independent verification cannot be delegated to another bulk card feed.**
 `limitlesstcg.com` reproduces the *same* base-illustrator defect (verified on
@@ -325,28 +336,48 @@ printing twice under two artists. **ATTR-1 must decide explicitly** whether
 an accepted upstream artefact — and that decision belongs in the ATTR-1 design,
 not in a migration written after the fact.
 
-This is raised as a **finding**, not a blocker. It is fully characterised here
-(six rows, two contradictions, all enumerated), so it requires ATTR-1 scope to
-account for it, not a fresh audit ahead of it. A reviewer who reads F-16 as
-materially breaking the ATTR-0 model should escalate this gate to
-**STOP — EVIDENCE CLASS EXPANDED**; the evidence to make that call is above, and
-the author's judgement is that PASS is correct because every Gate 2 row resolved
-and the ATTR-0 R1 population was exactly right for its stated scope.
+**This is the reason the gate stops.** F-16 is fully characterised here (six
+rows, two contradictions, all enumerated), and it is not a cosmetic footnote:
+it demonstrates that the ATTR-0 same-set family model cannot see cross-set
+duplicate printing identity, which is exactly the "population/model materially
+incomplete" condition this gate is defined to stop on. The 20-row verification
+result stands unchanged — every Gate 2 row resolved and the ATTR-0 R1 population
+was exactly right for its stated scope — but a correct row-level result inside
+an incomplete population does not make the gate PASS. **Verdict: STOP — EVIDENCE
+CLASS EXPANDED.** The next evidence gate is ATTR-0b (§9.4), scoped narrowly to
+the 14 lone suffix variants already enumerated by ATTR-0, not a fresh audit.
 
-**4. The lone-variant population is now higher-risk than ATTR-0 rated it.**
-Gate 2 establishes that the base-illustrator defect is systematic on Yellow A
-Alternate prints, and 6 of the 14 lone suffix variants are Yellow A Alternate
-cards. The remaining 8 are `ecard2` Porygon/Golduck/Drowzee/Mr. Mime `a`/`b`
-rows, a different phenomenon entirely and unassessed. A short **ATTR-0b** over
-the 14 lone variants is recommended before ATTR-1 finalises its repair set.
+**4. ATTR-0b is the required next evidence gate, over the 14 lone suffix
+variants already enumerated by ATTR-0 — no new discovery needed.** It splits
+into two distinct sub-populations that must be assessed separately, not folded
+together:
 
-**5. Catalog completeness is a separate, larger question.** Bulbapedia
-enumerates roughly 79 Yellow A Alternate cards released May 2017 – November 2020;
-production holds 37 suffix variants in total. The catalog is therefore missing
-many printings of this class outright. That is a **sync/coverage** matter for the
-paused catalog sync, not an attribution-correctness matter, and it is recorded
-here only so it is not rediscovered as a surprise. **It is explicitly not in
-ATTR-1's scope.**
+- **6 `xya` rows** — the F-16 duplicate-print identities
+  (`xya-24a`, `xya-28a`, `xya-54a`, `xya-55a`, `xya-92a`, `xya-107a`). These are
+  Yellow A Alternate prints, the same class Gate 2 shows carries a systematic
+  base-illustrator defect. ATTR-0b must determine, for each, the correct
+  exact-print illustrator and the identity relationship to its set-scoped twin
+  (`g1-28a`, `xy9-107a`, etc.) — repaired together, deduplicated, or accepted as
+  a distinct upstream record — before any ATTR-1 repair population is
+  finalised.
+- **8 `ecard2` rows** — Porygon/Golduck/Drowzee/Mr. Mime `a`/`b` printings, a
+  different phenomenon entirely, unassessed by Gate 2 and not shown to share
+  the Yellow A Alternate mechanism. These need their own exact-print
+  verification, not an assumption that Gate 2's findings transfer.
+
+ATTR-0b does **not** broaden to the wider ~79-card Yellow A Alternate universe
+(§9.5) — that is out of scope here and tracked separately.
+
+**5. Catalog completeness is a separate, larger question — recorded, not
+folded into ATTR-0b.** Bulbapedia enumerates roughly 79 Yellow A Alternate
+cards released May 2017 – November 2020; production holds 37 suffix variants in
+total. The catalog is therefore missing many printings of this class outright.
+That is a **sync/coverage** matter for the paused catalog sync and belongs with
+a later **Catalog Trust** phase, not an attribution-correctness matter, and it
+is recorded here only so it is not rediscovered as a surprise. It is explicitly
+**not** in ATTR-0b's or ATTR-1's scope unless a future gate produces evidence
+that the discrepancy is itself an attribution defect rather than a coverage
+gap.
 
 **6. Validation strategy for ATTR-1.** Do not validate a repair against another
 bulk card feed. Limitless is demonstrably infected with the same defect (§8).
@@ -382,26 +413,43 @@ partially done.
 
 ## Verdict
 
-**PASS — FULLY VERIFIED.**
+**Gate verdict: STOP — EVIDENCE CLASS EXPANDED.**
+**20-row R1 verification result: FULLY VERIFIED (unchanged, preserved below).**
 
 All 20 remaining R1 printings investigated at the exact-printing level. **9
 CONFIRMED_CORRECT, 11 CONFIRMED_WRONG, 0 UNRESOLVED**, each on two agreeing
-exact-print sources, with one source conflict resolved and recorded (§8).
+exact-print sources, with one source conflict resolved and recorded (§8). This
+row-level result is not being revised or rejected — every finding, source, and
+count in §4–§8 stands as originally verified.
 
-The ATTR-0 R1 population was exactly right: 21 families, one already confirmed,
-twenty verified here. The suspicion that motivated ATTR-0 is vindicated — more
-than half the suspect population was genuinely wrong.
+The ATTR-0 R1 population was exactly right for its own stated scope: 21
+families, one already confirmed, twenty verified here. The suspicion that
+motivated ATTR-0 is vindicated — more than half the suspect population was
+genuinely wrong.
 
 Total confirmed per-row attribution defects across ATTR-0 and Gate 2: **12**.
-None is repaired, and none can be until **F-15** closes. One new structural
-finding, **F-16** (duplicate printing identity across card IDs, §9), must be
-scoped into ATTR-1 before a per-row repair is written.
+None is repaired, and none can be until **F-15** closes. But the gate does not
+close PASS, because this gate's own evidence — **F-16**, duplicate printing
+identity across card IDs (§9.3) — shows the ATTR-0 same-set family model cannot
+see cross-set duplicates, and that the audit population is materially
+incomplete ahead of any repair. That is the defined STOP condition, and it is
+met by this gate's own findings, not by an external objection.
 
-Recommended order is unchanged from ATTR-0 §10, with one insertion:
+**Revised order** (supersedes the order originally proposed in this document):
 
-1. Close **F-15** — architectural, provable, no per-row data change.
-2. Run **ATTR-0b** over the 14 lone suffix variants, and resolve **F-16**'s
-   duplicate-identity question.
-3. **Then** ATTR-1, repairing all 12 confirmed rows.
+1. **ATTR-0b first** — exact-print attribution and identity verification over
+   the 14 already-enumerated lone suffix variants (6 `xya` duplicate-print
+   identities + 8 `ecard2` rows, assessed separately; §9.4). This resolves
+   F-16 and completes the evidence population before any repair set is
+   finalised.
+2. **Then** design the F-15 durable-correction mechanism and the ATTR-1 repair
+   plan against the complete, post-ATTR-0b population. Design only — do not
+   implement F-15 or open ATTR-1 on this branch.
+3. **Then** ATTR-1, repairing the full confirmed set (12 rows here, plus
+   whatever ATTR-0b confirms).
 
-**Do not open ATTR-1 in this PR.**
+The 79-vs-37 Yellow A catalog-completeness discrepancy (§9.5) is recorded as a
+separate Catalog Trust / sync-coverage follow-up and is explicitly not folded
+into ATTR-0b or ATTR-1.
+
+**Do not open ATTR-1 in this PR. Do not begin F-15 implementation in this PR.**

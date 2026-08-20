@@ -23,6 +23,18 @@
     "confirmed_wrong": 11,
     "unresolved": 0
   },
+  "row_level_result": "FULLY VERIFIED — unchanged, preserved as originally committed",
+  "gate_verdict": "STOP — EVIDENCE CLASS EXPANDED",
+  "gate_verdict_reason": "F-16 (duplicate printing identity across card IDs, xya vs set-scoped rows) shows the ATTR-0 same-set family model cannot see cross-set duplicates; the audit population is materially incomplete ahead of repair",
+  "next_evidence_gate": {
+    "name": "ATTR-0b",
+    "population": "the 14 lone suffix variants already enumerated by ATTR-0",
+    "split": {
+      "xya_duplicate_identities": 6,
+      "ecard2_rows": 8
+    }
+  },
+  "catalog_completeness_follow_up": "79 (Bulbapedia Yellow A Alternate) vs 37 (production suffix variants) discrepancy is a separate Catalog Trust / sync-coverage item, not folded into ATTR-0b or ATTR-1",
   "newly_confirmed_wrong": [
     "g1-28a",
     "g1-73a",
