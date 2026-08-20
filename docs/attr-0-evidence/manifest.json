@@ -1,0 +1,18 @@
+{
+  "slice": "ATTR-0",
+  "generated_by": "scripts/attr0-variant-attribution-probe.mjs",
+  "source": "TCGdex v2 (en) — read-only",
+  "observed_at": "2026-08-20T19:07:17.268Z",
+  "scope": "suffix-variant printings only (local_id = <digits><lowercase letter>)",
+  "production_reads": "none — this probe never contacts Supabase",
+  "sets_enumerated": 218,
+  "variant_families_with_base": 23,
+  "lone_suffix_variants": 14,
+  "suspect_families": 21,
+  "distinct_attribution_families": 2,
+  "interpretation_limit": "DIFFERENT_BYTES proves the image FILES differ. It does NOT prove the ARTWORK differs — a stamped or re-encoded reprint also differs. No row here is a confirmed wrong attribution.",
+  "artifacts": {
+    "variant-family-attribution.csv": "b30ca1647ab5af817ea5f7b9e008b2c81089d0d8fe0c1a14b4dd41d9a11e52ef",
+    "lone-suffix-variants.csv": "848c4557e3482d909dd0cc6f56ff33bc26ae70f8c5e6c265651c8f42a3598f95"
+  }
+}
