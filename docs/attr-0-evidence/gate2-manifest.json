@@ -1,0 +1,44 @@
+{
+  "slice": "ATTR-0 Gate 2",
+  "gate": "print-level artist attribution verification",
+  "type": "external verification — evidence only",
+  "base_main_sha": "b78892d49de9bc42d8480a7b3464edd0f456331c",
+  "canonical_population_source": "docs/attr-0-evidence/variant-family-attribution.csv",
+  "population_rule": "risk_class = SUSPECT (R1), excluding xyp-XY67a (already CONFIRMED WRONG in ATTR-0 §3)",
+  "population_size": 20,
+  "checked_at": "2026-08-20",
+  "production_reads": "none — no Supabase contact",
+  "production_writes": "none",
+  "catalog_sync": "remains paused",
+  "evidence_classes_used": [
+    "Bulbapedia per-card Release information sections that explicitly distinguish the suffixed printing from the base printing",
+    "PkmnCards per-print card pages carrying an exact-print illustrator credit and scan"
+  ],
+  "sources_rejected_as_non_independent": [
+    "limitlesstcg.com — reproduces the same base-illustrator defect as TCGdex on at least GEN/28a, AOR/75a and FCO/111a; treated as a derived feed, not corroboration"
+  ],
+  "results": {
+    "rows_investigated": 20,
+    "confirmed_correct": 9,
+    "confirmed_wrong": 11,
+    "unresolved": 0
+  },
+  "newly_confirmed_wrong": [
+    "g1-28a",
+    "g1-73a",
+    "xy10-111a",
+    "xy10-43a",
+    "xy4-65a",
+    "xy6-77a",
+    "xy7-75a",
+    "xy9-107a",
+    "xy9-98b",
+    "xyp-XY150a",
+    "xyp-XY177a"
+  ],
+  "artifacts": {
+    "gate2-print-verification.csv": "b5e6e2dec95f75a2dcd069bec94e2ca8beaf38de6d74aba7659b684489c6c0f3"
+  },
+  "artifact_hash_note": "SHA-256 over the LF-normalised UTF-8 bytes of the committed CSV. docs/attr-0-evidence/*.csv is pinned to eol=lf in .gitattributes, so the working-tree bytes match on every platform.",
+  "interpretation_limit": "This gate verifies the ILLUSTRATOR CREDIT on each exact printing. It does not verify artist_id, aliases, or any Illustrated Vault resolution behaviour, and it performs no repair. CAT-0 F-15 remains open and still blocks per-row repair."
+}
