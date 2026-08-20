@@ -1,36 +1,46 @@
 # CAT-3B.1 — Approved Alias Image Activation — Activation Slice
 
-**Status: AUTHORED, NOT EXECUTED. Awaiting approval for production execution.**
+**Status: ✅ EXECUTED / VALIDATED / PASS — production activation complete 2026-08-20.**
 
-> **No production write has been performed.** This slice authors the activation
-> SQL, validates it read-only against live production, and stops. `§B` of
-> `docs/sql/cat-3b1-1-alias-image-activation.sql` has never been run.
+> **The production write has been performed, once.** `§B` of
+> `docs/sql/cat-3b1-1-alias-image-activation.sql` executed successfully against
+> production on 2026-08-20 from PR #21 @ `304c69dd05bd0d2809008a76e607c5e729ba1e87`.
+> `§C` post-write validation passed in full. Rollback (`§D`) was **not** used and
+> is not warranted. 192 approved alias image overrides are live.
 
 | | |
 |---|---|
 | Slice | CAT-3B.1 — Approved Alias Image Activation (implementation) |
-| Type | Production write, **authored only** |
+| Type | Production write — **executed** |
 | Branch | `feature/cat-3b1-alias-image-activation` |
 | Base | `main` @ `e33acb9bcf95159e0ed60caca1a6bac88d9355e6` |
+| Executed head | `304c69dd05bd0d2809008a76e607c5e729ba1e87` (PR #21) |
+| Execution date | **2026-08-20** |
 | Authorizing evidence | `docs/CAT-3B.1_ALIAS_IMAGE_ACTIVATION.md` — Gate 0, `PASS — recommend activation` |
 | Migration | `docs/sql/cat-3b1-1-alias-image-activation.sql` |
 | Deployed wall | `docs/sql/cat-3b-1-durable-image-override.sql` (CAT-3B) |
-| Validation | 2026-08-20 (pre-correction pass, read-only Supabase MCP as `supabase_read_only_user`) — **not yet re-run against the corrected SQL below; see §5.5** |
-| Production mutations | **none** |
+| Validation | §A PASS · §B success (190 inserts + 2 updates) · §C PASS — see §5 |
+| Production mutations | **192 `card_extras` image-override bundles** (190 inserted, 2 updated) |
+| Rollback | **not executed** |
 | Catalog sync | **remains paused** |
 
 > **Corrections applied 2026-08-20** in response to review of PR #21, before
-> ChatGPT approval for production execution: (1) the candidate selector is now
+> ChatGPT approval for production execution: (1) the candidate selector is
 > pinned to the exact CAT-2D.2 approved-alias evidence class, not merely
-> whatever `card_identity_resolution` resolves today; (2) §B is now
+> whatever `card_identity_resolution` resolves today; (2) §B is
 > self-contained on first-writer channel cleanliness and derives its 190/2
 > insert/update split from pre-write state instead of `RETURNING (xmax = 0)`;
-> (3) §D rollback now deletes the 190 inserted rows (behind a fail-closed
-> enrichment guard) instead of leaving them as empty rows, and §C now proves
+> (3) §D rollback deletes the 190 inserted rows (behind a fail-closed
+> enrichment guard) instead of leaving them as empty rows, and §C proves
 > the active-owned missing-image count is 77 instead of leaving it to manual
-> QA. See §3.0, §3.4, §4, §9 and §10 below. **The read-only preflight/dry-run
-> evidence in §5 has not been re-executed against production for this
-> revision — see §5.5.**
+> QA. See §3.0, §3.4, §4, §9 and §10 below. **These corrections are the SQL that
+> was executed** — §A was re-run live against the corrected file and passed
+> before §B was authorized. See §5.
+>
+> **The executed SQL is now historical execution evidence and must remain
+> stable.** Do not edit `docs/sql/cat-3b1-1-alias-image-activation.sql` except to
+> correct a factual documentation typo. §B must not be run again — it is
+> designed to refuse a second application (§4).
 
 ---
 
@@ -38,17 +48,19 @@
 
 Gate 0 established that all 192 approved CAT-2D.2 alias relationships qualify to
 donate an image to their surviving canonical printing, and that the CAT-3B
-override channel is empty and ready to receive them. This slice writes the SQL
-that would do it.
+override channel is empty and ready to receive them. This slice wrote the SQL
+that does it, and — on separate explicit approval — executed it.
 
-The write populates `public.card_extras`'s five image-override fields for 192
+The write populated `public.card_extras`'s five image-override fields for 192
 canonical cards, taking each override value from the retired alias row's own
-`cards.image_url`. Every change is `NULL → value` in the `COALESCE` layer.
-`public.cards` is not touched.
+`cards.image_url`. Every change was `NULL → value` in the `COALESCE` layer.
+`public.cards` was not touched.
 
-**Authoring is not execution.** The two are separated deliberately, per
+**Authoring is not execution.** The two were separated deliberately, per
 `AGENTS.md`: *"Do not execute production SQL merely because a migration file was
-written."*
+written."* Authoring landed first and stopped at the execution gate; execution
+followed only after independent review of PR #21 and an explicit production
+authorization naming the exact head.
 
 ---
 
@@ -57,12 +69,12 @@ written."*
 `docs/sql/cat-3b1-1-alias-image-activation.sql` has four sections. Only §B
 writes.
 
-| § | Contents | Safe to run now |
+| § | Contents | Status |
 |---|---|---|
-| **§A** | Preflight — wall deployed, channel clean, ten admission keys re-derived, predicted split, baseline counts | ✅ read-only |
-| **§B** | **The write.** Single `DO` block, fail-closed | ❌ **needs approval** |
-| **§C** | Post-write validation — blast radius, bundle integrity, CAT-1 survival, evidence self-check | ✅ read-only |
-| **§D** | Rollback, commented out | ❌ only if §C fails |
+| **§A** | Preflight — wall deployed, channel clean, ten admission keys re-derived, predicted split, baseline counts | ✅ read-only — **executed, PASS** |
+| **§B** | **The write.** Single `DO` block, fail-closed | ✅ **executed once, succeeded** — must not be re-run |
+| **§C** | Post-write validation — blast radius, bundle integrity, CAT-1 survival, evidence self-check | ✅ read-only — **executed, PASS** |
+| **§D** | Rollback, commented out | **not executed; not warranted** |
 
 ---
 
@@ -177,17 +189,50 @@ than quietly rewriting 192 overrides with fresh timestamps.
 
 ## 5. Validation performed
 
-All validation was **read-only**, through the Supabase MCP as
+### 5.0 Production execution record — 2026-08-20
+
+Executed from PR #21 @ `304c69dd05bd0d2809008a76e607c5e729ba1e87`, against the
+corrected SQL, in the order §A → §B → §C.
+
+**§A — PASS.** Re-run live against the corrected file, superseding the
+pre-correction pass recorded in §5.1–§5.3. Every value matched the required
+contract:
+
+| Group | Required | Live |
+|---|---|---|
+| Wall constraints present | 5 | **5** ✅ |
+| Admit trigger enabled | true | **true** ✅ |
+| Admit fn SECURITY INVOKER | true | **true** ✅ |
+| `card_extras` rows | 5 | **5** ✅ |
+| All five image-bundle fields populated | 0 each | **0 each** ✅ |
+| Provenance-pinned class count | 192 | **192** ✅ |
+| Pairs total | 192 | **192** ✅ |
+| Admission keys k01–k10 | 192 each | **192 each** ✅ |
+| Eligible on all ten | 192 | **192** ✅ |
+| Distinct source URLs | 192 | **192** ✅ |
+| Predicted inserts / updates | 190 / 2 | **190 / 2** ✅ |
+| Pre-existing target ids | GG19, GG69 exactly | **GG19, GG69** ✅ |
+| Both: illustrator_override / source_note / empty bundle | true / true / true | **true / true / true** ✅ |
+| Baseline raw / effective missing, `card_extras` | 1640 / 1640 / 5 | **1640 / 1640 / 5** ✅ |
+
+This closed §5.5. The provenance-pinned `class_count` of 192 confirmed live
+that the pinned CAT-2D.2 evidence class and the unfiltered resolution view are
+in fact identical today — the equivalence §5.5 required be re-confirmed rather
+than assumed.
+
+**§B — executed once, succeeded.** 190 inserts + 2 updates = 192 total affected
+rows. Every in-transaction assertion passed; nothing was rolled back.
+
+**§C — PASS.** Full results in §5.6.
+
+**§D — not executed.** No rollback was performed and none is warranted.
+
+### 5.1 §A preflight, pre-correction pass (historical)
+
+Recorded for chronology. This pass ran read-only through the Supabase MCP as
 `supabase_read_only_user` on a connection with `transaction_read_only = on` and
-no INSERT/UPDATE privilege on `card_extras` or `cards`. No statement in this
-slice could have mutated production.
-
-**§5.1–§5.3 below record the pre-correction pass (2026-08-20, prior migration
-revision).** The provenance-pinned queries (§A-3/§A-4/§B's `cat2d2_alias_pair`
-CTE) and the new §C-7 owned-gap proof have not yet been executed against
-production — see §5.5.
-
-### 5.1 §A preflight, executed live
+no INSERT/UPDATE privilege on `card_extras` or `cards`. It predates the
+corrections and is **superseded by §5.0**.
 
 | Check | Required | Live |
 |---|---|---|
@@ -200,7 +245,7 @@ production — see §5.5.
 | Distinct source URLs | 192 | **192** ✅ |
 | Predicted inserts / updates | 190 / 2 | **190 / 2** ✅ |
 
-### 5.2 Write payload, dry-run
+### 5.2 Write payload, dry-run (historical, pre-correction)
 
 §B's exact `SELECT` payload was executed as a plain read-only `SELECT` — the
 same joins, the same predicate, the same `jsonb_build_object` — without the
@@ -216,7 +261,7 @@ same joins, the same predicate, the same `jsonb_build_object` — without the
 | Shape-rule conformance | **192 / 192** |
 | `target_raw_image_url_at_admission` is JSON `null` | **192 / 192** |
 
-### 5.3 Evidence payload matches the Gate 0 contract
+### 5.3 Evidence payload matches the Gate 0 contract (historical, pre-correction)
 
 Rendered live for `swsh12.5-GG01 → swsh12.5gg-GG01`:
 
@@ -249,24 +294,102 @@ includes exactly that self-check as a query returning 0 on success.
 file under `src/`, no sync code, no config. `AGENTS.md` requires the build for
 frontend/runtime changes; this is a SQL and documentation slice.
 
-### 5.5 Not yet re-run — required before ChatGPT approval
+### 5.5 Closed — §A was re-run live before execution
 
-This correction pass was authored without a live Supabase MCP connection
-available in the executing session, so none of the following has been
-re-executed against production:
+This section previously recorded that the corrected SQL had not been re-verified
+against production. **That is closed.** §A was re-executed live against the
+corrected file and passed in full; the figures are in §5.0. §C-7's active-owned
+proof is no longer a prediction — it was measured at 77 post-write (§5.6).
 
-* §A-3 / §A-4 with the `cat2d2_alias_pair` provenance pin (expect `class_count`
-  = 192, and every other §A-3/§A-4 figure unchanged from §5.1 since the
-  provenance-pinned class and the unfiltered resolution view are currently
-  identical — that equivalence itself needs to be re-confirmed live, not
-  assumed);
-* §B's write-payload dry-run against the corrected query text;
-* §C-7's active-owned missing-image proof (predicted 77, not yet proven).
+### 5.6 §C post-write validation — PASS
 
-**Before returning to ChatGPT for execution approval, §A must be re-run live
-and its output recorded here**, replacing this note with fresh figures (or
-confirming §5.1–§5.3 are unchanged) and confirming §C-7 in dry-run form
-predicts 77.
+Executed immediately after §B.
+
+**Blast radius**
+
+| Measure | Before | Required after | Live after |
+|---|---|---|---|
+| `card_extras` rows | 5 | 195 | **195** ✅ |
+| Populated image overrides | 0 | 192 | **192** ✅ |
+| `cards` raw missing image | 1,640 | 1,640 | **1,640** ✅ |
+| `cards_effective` missing image | 1,640 | 1,448 | **1,448** ✅ |
+
+**Bundle integrity**
+
+| Check | Required | Live |
+|---|---|---|
+| Overrides | 192 | **192** ✅ |
+| Complete bundles | 192 | **192** ✅ |
+| Self-sourced (`source = target`) | 0 | **0** ✅ |
+| Distinct override URLs | 192 | **192** ✅ |
+| Overrides without an approved alias relationship | 0 | **0** ✅ |
+| Overrides not matching the source's `image_url` | 0 | **0** ✅ |
+| Evidence rows failing self-check | 0 | **0** ✅ |
+
+**CAT-1 preservation** — the containment requirement Gate 0 called the most
+important. Both pre-existing rows retained their CAT-1 enrichment *and* gained
+an image override:
+
+| Card | `illustrator_override` | `source_note` | `image_url_override` |
+|---|---|---|---|
+| `swsh12.5gg-GG19` | **true** ✅ | **true** ✅ | **true** ✅ |
+| `swsh12.5gg-GG69` | **true** ✅ | **true** ✅ | **true** ✅ |
+
+**Catalog containment**
+
+| Check | Required | Live |
+|---|---|---|
+| Targets with an effective image | 192 | **192** ✅ |
+| Alias sources visible in the effective catalog | 0 | **0** ✅ |
+
+**Evidence integrity** — all 192 of 192 passed every provenance component:
+`slice`, `basis`, source card linkage, source image linkage, target-raw-image-
+was-null, and Gate 0 provenance. Zero self-check failures.
+
+**Ownership authority (§C-7)**
+
+| Measure | Required | Live |
+|---|---|---|
+| `target_user_resolved` | 1 | **1** ✅ |
+| `target_batch_resolved` | 1 | **1** ✅ |
+| `active_owned_missing_image` | 77 | **77** ✅ |
+
+Active-owned image gaps fell **122 → 77**: 45 gaps closed, exactly the
+CAT-3A A-dimension population.
+
+### 5.7 Execution-tool deviation — recorded, not material
+
+The connector's safety layer blocked two §C queries *as literally written*: the
+C-3 CAT-1 preservation query and the C-6 five-row evidence display. Neither was
+skipped; both were replaced with equivalent or stronger read-only verification:
+
+* **C-3** was confirmed by querying each of the two rows individually. Both
+  returned `illustrator_override` / `source_note` / `image_url_override` all
+  true — the same three facts the blocked query would have returned, for the
+  same two rows.
+* **C-6** was replaced with an **all-192 aggregate** provenance validation
+  rather than a five-row sample: 192/192 correct slice, 192/192 correct basis,
+  192/192 correct source linkage, 192/192 correct URL linkage, 192/192
+  target-was-empty evidence, 192/192 correct gate, 0 self-check failures. This
+  is strictly stronger than the sample it replaced.
+
+The deviation is in the *tooling used to observe*, not in the migration, the
+data written, or the acceptance criteria. Recorded here so the validation
+record is not overstated as a verbatim run of the committed §C text.
+
+### 5.8 Not performed — UI QA
+
+**No browser or UI spot-check was performed.** §10 items 2, 3 and 5 call for
+visual confirmation in production; the executing sessions had SQL access only.
+All CAT-3B.1 acceptance evidence is therefore **SQL-proven, not
+visually confirmed**.
+
+This is recorded as an honest gap rather than treated as satisfied. It is not
+blocking: §C-7 proves the owned-gap movement in SQL, §C proves every override
+resolves through `cards_effective`, and every override value is asserted equal
+to its source card's live `image_url`. The residual unproven claim is narrow —
+that the rendered pixel in a browser is the correct printing — and it is
+recoverable at any time by opening the app. See §10.
 
 ---
 
@@ -277,44 +400,59 @@ predicts 77.
 narrowed table-level grants to an explicit column list for those roles and
 deliberately left `service_role` alone as the write identity.
 
-§B must therefore run as the table owner (the Supabase SQL editor's `postgres`)
-or as `service_role`. Run as `anon` or `authenticated` it fails on privileges —
-loudly, not silently.
+§B therefore had to run as the table owner (the Supabase SQL editor's
+`postgres`) or as `service_role`. Run as `anon` or `authenticated` it fails on
+privileges — loudly, not silently. It was executed with sufficient privilege on
+2026-08-20.
 
 ---
 
-## 7. Predicted blast radius
+## 7. Blast radius — predicted, then measured
 
-Unchanged from Gate 0 §10, re-derived live during validation.
+Gate 0 §10 predicted this. §C measured it. **Every figure matched.**
 
-| Measure | Before | After |
-|---|---|---|
-| `card_extras` rows | 5 | **195** |
-| Populated image overrides | 0 | **192** |
-| `cards` raw missing image | 1,640 | **1,640** (unchanged) |
-| `cards_effective` missing image | 1,640 | **1,448** |
-| Active-owned missing image | 122 | **77** |
+| Measure | Before | Predicted | Measured after |
+|---|---|---|---|
+| `card_extras` rows | 5 | 195 | **195** ✅ |
+| Populated image overrides | 0 | 192 | **192** ✅ |
+| `cards` raw missing image | 1,640 | 1,640 (unchanged) | **1,640** ✅ |
+| `cards_effective` missing image | 1,640 | 1,448 | **1,448** ✅ |
+| Active-owned missing image | 122 | 77 | **77** ✅ |
 
-All 192 changes are `NULL → value`. No existing image can be displaced, because
-every target's effective image is currently `NULL`.
+All 192 changes were `NULL → value`. No existing image could be displaced,
+because every target's effective image was `NULL` at admission — asserted per
+row in the stored evidence (`target_raw_image_url_at_admission`) and re-proved
+192/192 by §C.
 
-The "Active-owned missing image" row is no longer a prediction left to manual
-QA alone: §C-7 proves the post-write figure of 77 read-only, using the same
-single-user/single-batch ownership authority as Gate 0 §G0-6 (snapshot ∪
-force-owned − force-missing, no `owned_keys`). See §10 item 4.
+The "Active-owned missing image" row was not left to manual QA: §C-7 proved the
+post-write figure of 77 read-only, using the same single-user/single-batch
+ownership authority as Gate 0 §G0-6 (snapshot ∪ force-owned − force-missing, no
+`owned_keys`).
+
+> **Baseline note, unresolved and non-blocking.** CAT-3A recorded the
+> active-owned missing-image population as **117**; CAT-3B.1's §A and §C
+> measured the pre-write baseline as **122**. The 45-card improvement is
+> consistent across both records (CAT-3A's A-dimension found 45 such cards, and
+> 122 − 45 = 77), so the *delta* is not in question — only the baseline is. The
+> two figures were measured on different dates by different selectors and the
+> discrepancy was not investigated here. It is recorded rather than silently
+> reconciled, and it does not affect any CAT-3B.1 acceptance criterion.
 
 ---
 
 ## 8. Containment
 
-**Not done, deliberately:**
+**What the production write did and did not touch:**
 
-* **no production write executed** — §B has never been run;
+* the write is confined to `public.card_extras`'s five image-override columns on
+  192 rows — 190 inserted, 2 updated;
 * no schema, constraint, trigger, view, RLS or ACL change;
-* `public.cards` unmodified;
+* `public.cards` unmodified — raw missing-image count still 1,640, asserted
+  in-transaction by §B and re-proved by §C;
 * frontend and sync code unmodified;
 * catalog sync **remains paused**;
-* the 1,448 non-alias image gaps untouched;
+* the 1,448 remaining non-alias image gaps untouched, and **not authorized for
+  any further repair phase**;
 * no alias relationship created, modified or removed;
 * no existing override overwritten — `k08` excludes any target that already
   holds one;
@@ -334,14 +472,16 @@ met by explicit constructs, documented in §3 above.
 
 Risks worth stating:
 
-1. **Gate 0's evidence is a 2026-08-20 snapshot.** §A and §B both re-derive
-   admission live, so drift causes an abort rather than a bad write — but if
-   drift has occurred, execution will fail rather than proceed, and the slice
-   must be re-gated. This is intended.
+1. **Gate 0's evidence was a 2026-08-20 snapshot.** §A and §B both re-derive
+   admission live, so drift would have caused an abort rather than a bad write.
+   No drift occurred: §A re-derived all ten admission keys at 192 each on the
+   day of execution, and §B's in-transaction re-derivation agreed. Resolved.
 2. **`now()` is the approval timestamp.** `image_override_approved_at` records
    when the write executed, not when Gate 0 passed. This is the honest reading
    of "approved at" for an admission-time channel.
-3. **Rollback restores the pre-slice operational baseline, not a byte-identical
+3. **Rollback was not executed and is not warranted** — §C passed in full. The
+   §D contract is recorded here for completeness only. **Rollback restores the
+   pre-slice operational baseline, not a byte-identical
    table.** §D clears the five image fields **in place** on the two
    pre-existing CAT-1 rows (`swsh12.5gg-GG19`, `swsh12.5gg-GG69`) — never
    deletes them — and **deletes** the 190 rows this slice inserted, behind a
@@ -354,32 +494,44 @@ Risks worth stating:
 
 ---
 
-## 10. Manual QA required after execution
+## 10. Post-execution QA — status
 
-None of this can be checked before the write runs.
+| # | Check | Status |
+|---|---|---|
+| 1 | Run §C in full; every "must be 0" returns 0, every count matches §7 | ✅ **DONE** — PASS (§5.6), with the C-3/C-6 tooling deviation recorded in §5.7 |
+| 2 | `swsh12.5gg-GG19` / `swsh12.5gg-GG69` still show CAT-1 illustrator values **in the UI**, and now also show images | ⚠️ **SQL-proven only** — both rows hold all three values (§5.6); not visually confirmed |
+| 3 | Spot-check activated cards in production; image renders from `assets.tcgdex.net` and is the correct printing | ❌ **NOT PERFORMED** — no UI QA (§5.8) |
+| 4 | §C-7 shows `active_owned_missing_image` = 77, `target_user_resolved` = 1, `target_batch_resolved` = 1 | ✅ **DONE** — all three confirmed (§5.6). UI half of this item not performed |
+| 5 | No non-alias card gained or lost an image | ✅ **DONE** — `cards` raw null count unchanged at 1,640; effective moved by exactly 192; alias sources visible in effective = 0 |
 
-1. Run §C in full. Every "must be 0" query must return 0; every count must match
-   §7.
-2. Confirm `swsh12.5gg-GG19` and `swsh12.5gg-GG69` still show their CAT-1
-   illustrator values in the UI, and now also show images.
-3. Spot-check a handful of activated cards in production and confirm the image
-   renders from `assets.tcgdex.net` and is the correct printing.
-4. Run §C-7 and confirm `active_owned_missing_image` = 77 with
-   `target_user_resolved` = 1 and `target_batch_resolved` = 1 (the SQL proof);
-   then spot-check the owned view in the UI shows the same drop from 122 to
-   77.
-5. Confirm no non-alias card gained or lost an image.
+Items 2, 3 and the UI half of 4 remain open. They are **not blocking** — see
+§5.8 for why the residual unproven claim is narrow — but they must not be
+described as complete. Anyone opening the app can close them in minutes.
 
 ---
 
-## 11. Next checkpoint
+## 11. Status and next checkpoint
 
-**This slice is complete as authored work and stops at the execution gate.**
+**This slice is COMPLETE: authored, reviewed, executed and validated.**
 
-Production execution requires separate explicit approval. On approval the order
-is: §A → read output → §B → §C → manual QA → documentation closeout of
-`CURRENT_STATE.md`, `CHANGELOG.md` and `DECISION_LOG.md`.
+Executed 2026-08-20 from PR #21 @ `304c69dd05bd0d2809008a76e607c5e729ba1e87`.
+192 overrides live, §C PASS, rollback unused, sync still paused.
 
-Roadmap intent, unchanged:
+**Broad catalog image remediation is now CLOSED.** CAT-3B.1 activated the only
+population that was ever authorized — the 192 CAT-2D.2 approved same-printing
+alias pairs. The remaining **1,448** effective image gaps are explicitly **not
+authorized for another repair phase**: CAT-3A established that not one of them
+has an image available at TCGdex today (T1 = 0 of 1,640), so there is no known
+admissible source for any of them. Reopening image work would require new
+evidence, not a new slice.
 
-**CAT-3B.1 activation → close catalog image work → NAV-1 → SEC-0 → AUTH-1 → BETA-0**
+Remaining closeout: independent review of PR #21, then merge. **Merging does not
+re-execute any SQL** — the production write is already done, and §B refuses a
+second application by construction (§4).
+
+Roadmap, unchanged:
+
+**CAT-3B.1 ✅ → catalog image work CLOSED → NAV-1 → SEC-0 → AUTH-1 → BETA-0**
+
+Next slice is **NAV-1**. It is not started, and is not authorized by this
+document.

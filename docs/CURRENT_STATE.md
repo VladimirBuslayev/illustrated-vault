@@ -1,6 +1,6 @@
 Illustrated Vault — Current State
 
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 Production
 
@@ -141,6 +141,12 @@ CAT-3B
 Durable provenance-aware approved image override channel (shipped empty)
 
 ✓ Complete 2026-08-19, production-validated and closed (PR #17)
+
+CAT-3B.1
+
+Approved alias image activation — 192 overrides written into the CAT-3B channel
+
+✓ EXECUTED / VALIDATED 2026-08-20 (PR #21, head 304c69d). Closes broad catalog image remediation.
 
 Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or deferred cleanup remains.
 
@@ -1402,13 +1408,33 @@ Admission is restricted, not open. A BEFORE INSERT OR UPDATE trigger (SECURITY I
 
 Provenance stays withheld, but the override value itself is readable. anon and authenticated can each read exactly three columns on card_extras — card_id, illustrator_override, image_url_override — and no others. image_url_override is deliberately readable: cards_effective selects from card_extras under security_invoker = true, so the view's own read grants only resolve if the override column is itself readable to the querying role. The four provenance/source columns — image_override_source_card_id, image_override_evidence, image_override_approved_by, image_override_approved_at — remain withheld from anon and authenticated. The production preflight measured a broader pre-existing baseline than the documented one — anon and authenticated each held seven table-level privileges on card_extras, dormant only because RLS carried no write policy — and the migration narrowed it deliberately. V-6 re-proved the resulting ACL after deploy.
 
-The channel is EMPTY. Zero override rows were created, and V-3 proved the deployment row-for-row: 23,588 deployed against 23,588 expected, zero differing in either direction, 1,640 null images on both sides. Zero rendered pixels changed.
+The channel shipped EMPTY. Zero override rows were created by CAT-3B, and V-3 proved the deployment row-for-row: 23,588 deployed against 23,588 expected, zero differing in either direction, 1,640 null images on both sides. Zero rendered pixels changed. The channel was subsequently populated by CAT-3B.1 below — 192 rows, under separate approval.
 
-What CAT-3B does not authorize. Creating any override row requires its own separately approved slice — including the 192 CAT-3A-measured pairs, which are eligible for admission but are not approved for it. A future approved alias becomes eligible automatically; nothing is ever applied automatically. The scheduled sync remains PAUSED.
+What CAT-3B did not authorize. Creating any override row required its own separately approved slice — including the 192 CAT-3A-measured pairs, which were eligible for admission but not approved for it. That approval was given separately and executed as CAT-3B.1. A future approved alias becomes eligible automatically; nothing is ever applied automatically. The scheduled sync remains PAUSED.
 
-Next slice after CAT-3B is UNDECIDED, pending strategy/review. CAT-3B is not a commitment to CAT-3C and does not name a successor. The standing near-term order after catalog work is unchanged: NAV-1 → SEC-0 → AUTH-1 → BETA-0.
+CAT-3B.1 — Approved Alias Image Activation
 
-Deferred by CAT-0: Pokémon TCG API fallback Probe B · image remediation · illustrator enrichment · artist FK repair · OL-0D p_artist_id filter semantics (latent; no user-facing Owned Library artist-filter workflow established) · add_artist_to_archive duplicate-identity risk · index hygiene · pricing.
+Status: ✓ EXECUTED / VALIDATED / PASS, 2026-08-20. PR #21 @ 304c69dd05bd0d2809008a76e607c5e729ba1e87 — executed from the branch, NOT merged at time of execution. Full document: /docs/CAT-3B.1_ACTIVATION_SLICE.md.
+
+What exists now. 192 approved alias image overrides are live in the CAT-3B channel — 190 inserted, 2 updated. Each override takes its value from the retired CAT-2D.2 alias row's own cards.image_url, selected inside the INSERT ... SELECT; no URL is hard-coded anywhere in the migration. card_extras grew 5 → 195 rows.
+
+The population is a provenance-pinned class, not a count. The candidate selector is the exact CAT-2D.2 approved-alias evidence class — card_identity_aliases rows where slice = 'CAT-2D.2', family = 'set_rename' and approved_by is the CAT-2D.2 allowlist manifest — additionally required to still resolve through card_identity_resolution. A remove-one/add-one against the alias table would hold the count at 192 while substituting a different pair; pinning on the class makes that visible as a class-count drift instead. Both §A and §B assert the class is exactly 192 before any admission check runs.
+
+Measured effect. cards_effective missing images 1,640 → 1,448. Active-owned missing images 122 → 77, closing 45 gaps — exactly the CAT-3A A-dimension population. public.cards raw missing images UNCHANGED at 1,640: this slice writes only the COALESCE layer, asserted in-transaction by §B and re-proved by §C.
+
+CAT-1 enrichment preserved. swsh12.5gg-GG19 and swsh12.5gg-GG69 were the two pre-existing card_extras rows. The upsert's ON CONFLICT DO UPDATE SET lists only the five image fields, so illustrator_override and source_note were untouched. Both rows still carry both values and now also carry an image override. Gate 0 called this the single most important containment requirement; §B asserts it after writing and aborts if lost.
+
+Validation. §A PASS (all ten admission keys 192, predicted split 190/2, the two pre-existing target ids exactly GG19/GG69). §B succeeded once. §C PASS: 192 complete bundles, 0 self-sourced, 192 distinct URLs, 0 overrides without an approved alias relationship, 0 not matching the source image, 0 evidence self-check failures, 192 targets with an effective image, 0 alias sources visible in the effective catalog. Rollback (§D) NOT executed and not warranted.
+
+Not visually confirmed. All CAT-3B.1 acceptance evidence is SQL-proven. No browser/UI spot-check was performed — the executing sessions had SQL access only. The residual unproven claim is narrow (that a rendered browser pixel is the correct printing) and is recorded as an open QA item in the slice document rather than treated as satisfied.
+
+Baseline discrepancy, recorded not reconciled. CAT-3A recorded the active-owned missing-image population as 117; CAT-3B.1 measured the pre-write baseline as 122. The 45-card improvement is consistent across both records, so the delta is not in question — only the baseline. Measured on different dates by different selectors; not investigated, and it affects no acceptance criterion.
+
+Broad catalog image remediation is CLOSED. CAT-3B.1 activated the only population ever authorized — the 192 approved same-printing alias pairs. The remaining 1,448 effective image gaps are explicitly NOT authorized for another repair phase: CAT-3A established T1 = 0 of 1,640, so not one has an image available at TCGdex today and there is no known admissible source. Reopening image work requires new evidence, not a new slice.
+
+Next slice is NAV-1, not started. The near-term order is NAV-1 → SEC-0 → AUTH-1 → BETA-0. The scheduled catalog sync remains PAUSED.
+
+Deferred by CAT-0: Pokémon TCG API fallback Probe B · image remediation (now CLOSED — the only authorized population was activated by CAT-3B.1; the remaining 1,448 gaps are not authorized for another repair phase) · illustrator enrichment · artist FK repair · OL-0D p_artist_id filter semantics (latent; no user-facing Owned Library artist-filter workflow established) · add_artist_to_archive duplicate-identity risk · index hygiene · pricing.
 
 Roadmap after CAT-1 — superseded as sequencing. The evidence-backed illustrator slice and OWN-1 (Artwork vs Printing ownership policy) remain valid work items and their preconditions are unchanged, but they are no longer the stated next sequence. Catalog trust and image completeness are now carried by CAT-2. See ROADMAP.md for the current order.
 
@@ -1563,7 +1589,7 @@ CAT-3B durability write test remains a deferred observation. docs/sql/cat-3b-3-d
 
 The whole-catalog temporal run processed 218 upstream sets against 214 distinct catalog set_id values. These reconcile exactly: the complete 214-set CAT-0 inventory is a subset of the 218, and zero catalog set IDs were absent from the upstream run. The four upstream set IDs with no rows in public.cards are exactly jumbo, rc, sp, wp — the same four zero-card sets noted above. Their UPDATE matched zero rows: benign, idempotent, complete coverage. Whether those sets should hold rows is a coverage question, not a CAT-1 one.
 
-CAT-0 is complete and found no P0 catalog identity defect. Remaining catalog work is coverage and derivation, not identity. Exact-image coverage is re-measured by CAT-3A on the current effective catalog: 1,640 missing of 23,588 across 214 sets, 117 in the active-owned population. Broad image remediation remains unjustified, and CAT-3A now establishes WHY rather than inferring it: T1 = 0 of 1,640, so not one missing-image row has an image available at TCGdex today. The stale-ingestion hypothesis is falsified against a complete measurement.
+CAT-0 is complete and found no P0 catalog identity defect. Remaining catalog work is coverage and derivation, not identity. Exact-image coverage was re-measured by CAT-3A on the effective catalog as it then stood: 1,640 missing of 23,588 across 214 sets, 117 in the active-owned population. Broad image remediation was unjustified, and CAT-3A established WHY rather than inferring it: T1 = 0 of 1,640, so not one missing-image row has an image available at TCGdex today. The stale-ingestion hypothesis is falsified against a complete measurement. Superseded in part by CAT-3B.1 (2026-08-20): the one class that DID have an admissible source — the 192 approved same-printing alias pairs, whose retained provider-history rows hold live TCGdex assets — was activated, taking effective gaps to 1,448 and active-owned gaps to 77. Broad image remediation is now CLOSED, on the same reasoning: the remaining 1,448 gaps still have no known admissible source.
 
 The OL-0C catalog index is loaded client-side in stable pages during signed-in CSV import. The loader is isolated so a future server-side resolver can replace it without changing the matcher.
 

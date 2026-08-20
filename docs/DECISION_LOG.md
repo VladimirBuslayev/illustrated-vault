@@ -1,5 +1,95 @@
 Illustrated Vault — Decision Log
 
+2026-08-20 — CAT-3B.1: approved alias image activation — EXECUTED, and catalog image remediation closed
+
+Decision:
+
+The 192 approved same-printing alias pairs are activated, and that population is
+the whole of authorized image remediation. Executed 2026-08-20 from PR #21 @
+304c69dd05bd0d2809008a76e607c5e729ba1e87: 190 inserts + 2 updates = 192
+card_extras image-override bundles. §A PASS, §B succeeded once, §C PASS, §D
+rollback not executed. Status: Accepted / closed.
+
+Eligibility is not authorization, and the gap between them is deliberate. CAT-3B
+built the channel and shipped it EMPTY, explicitly refusing to populate it with
+the same 192 pairs that were already eligible for admission. CAT-3B.1 is that
+separate approval, and it was itself split into authoring and execution: the SQL
+landed in a reviewed PR that wrote nothing, and the production write happened
+only after independent review named the exact head. Three gates — build the
+channel, author the write, execute the write — for one 192-row change. That is
+the intended cost of writing curated pixels into a product whose spine is a
+visual archive.
+
+The candidate population is pinned to a provenance CLASS, not a count. The
+selector is card_identity_aliases rows where slice = 'CAT-2D.2', family =
+'set_rename' and approved_by is the CAT-2D.2 allowlist manifest, additionally
+required to still resolve through card_identity_resolution. A bare count check
+would have been satisfied by a remove-one/add-one against the alias table that
+silently substituted a different pair while holding the total at 192. Pinning on
+the class makes that substitution surface as a class-count drift and abort.
+Cardinality is not identity; this is the correction that made the difference.
+
+No image URL is transcribed. The override value is src.image_url selected inside
+the INSERT ... SELECT itself, so the value written is by construction the value
+the admission trigger's R3 rule compares against at admission time. A list
+captured when the file was authored could have gone stale before execution, and
+R3 would have rejected it — correctly. Deriving rather than transcribing is what
+makes the write and the wall agree.
+
+Correctness rests on pre-write state, not on an MVCC system column. An earlier
+revision derived the 190/2 insert/update split from RETURNING (xmax = 0). That
+was replaced: §B now counts which eligible targets already hold a card_extras
+row before writing, asserts the split is exactly 190/2, asserts the two
+pre-existing ids are exactly swsh12.5gg-GG19 and swsh12.5gg-GG69 with CAT-1
+enrichment intact, and checks post-write row growth against the pre-derived
+insert count. xmax is not part of the correctness contract. The split was
+knowable from ordinary table state, and ordinary table state is auditable.
+
+Preservation is proved by omission, then asserted. ON CONFLICT (card_id) DO
+UPDATE SET lists only the five image fields. illustrator_override and
+source_note are absent from that list, and that absence IS the CAT-1
+preservation guarantee. A wholesale row upsert, or DELETE + INSERT, would have
+nulled both. §B additionally asserts after writing that both rows still hold
+both values and aborts if not. Gate 0 called this the single most important
+containment requirement; it is enforced twice, once structurally and once
+explicitly.
+
+public.cards stays raw provider history, and the arithmetic proves it. Effective
+image gaps moved 1,640 → 1,448 while raw gaps stayed at 1,640 — the entire
+192-row improvement lives in the COALESCE layer. §B asserts the raw null count
+is unmoved before committing. The rendering chokepoint absorbed a 192-card
+visual change with zero rows written to the catalog table and zero files changed
+under src/.
+
+Broad catalog image remediation is CLOSED, on evidence rather than fatigue. The
+192 pairs were the only gaps with a known admissible source: retained
+provider-history rows holding live TCGdex assets for a printing CAT-2D.2 had
+already independently established as physically the same. CAT-3A measured the
+rest and found T1 = 0 of 1,640 — not one remaining gap has an image available
+upstream today. The remaining 1,448 are therefore NOT authorized for another
+repair phase. Reopening image work requires new evidence, not a new slice.
+
+Acceptance is SQL-proven and not visually confirmed, and the record says so. No
+browser/UI spot-check was performed; the executing sessions had SQL access only.
+§C-7 proves the active-owned gap movement (122 → 77) read-only, every override
+is asserted equal to its source card's live image_url, and every target resolves
+through cards_effective — so the residual unproven claim is narrow: that a
+rendered browser pixel is the correct printing. It is logged as an open QA item
+rather than quietly counted as done. A validation record that overstates what
+was observed is worse than one with a gap in it.
+
+Two further honesty notes are carried rather than smoothed over. The connector's
+safety layer blocked the literal C-3 and C-6 queries; both were replaced with
+equivalent or stronger read-only checks (C-6 became an all-192 aggregate instead
+of a five-row sample), and the substitution is recorded so the validation is not
+described as a verbatim run of the committed §C text. And CAT-3A recorded the
+active-owned missing-image baseline as 117 where CAT-3B.1 measured 122 — the
+45-card delta is consistent across both records, only the baseline differs, it
+was not investigated, and it is recorded rather than silently reconciled.
+
+The scheduled catalog sync remains PAUSED. Next slice is NAV-1, not started.
+Near-term order unchanged: NAV-1 → SEC-0 → AUTH-1 → BETA-0.
+
 2026-08-19 — CAT-3B: durable provenance-aware approved image override channel
 
 Decision:
