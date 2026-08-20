@@ -332,21 +332,28 @@ from chk;
 --
 --   ⚠ USER SCOPE. The deployed RPC (docs/sql/own-0a-1-active-snapshot-owned-
 --   card-ids.sql) filters user_import_batches by `user_id = auth.uid()` and
---   fails closed if that user's active-batch count is not exactly 1. Every
---   CTE below carries that same single-user boundary — filtering
+--   fails closed if that user's active-batch count is not exactly 1 (its
+--   `v_active_count > 1` branch, distinct from the zero-active-users case).
+--   Every CTE below carries that same two-level boundary — filtering
 --   `status = 'active'` alone would pool every user's active batch, which is
 --   not what the RPC computes for any one user. `target_user` resolves to the
 --   one user_id holding an active batch, and to ZERO ROWS (fail closed, not
---   an unfiltered fallback) if zero or more than one such user exists. Every
---   downstream join is against `target_user`, so an ambiguous population
---   yields empty results rather than a silently pooled cross-user one.
---   card_overrides (force-owned / force-missing) is scoped the same way.
+--   an unfiltered fallback) if zero or more than one such user exists.
+--   `target_batch` then resolves to that user's single active batch, and to
+--   ZERO ROWS if that user has zero or more than one — preserving the RPC's
+--   own per-user fail-closed contract rather than relying on the
+--   `uib_one_active_per_user` unique index alone to make that impossible.
+--   Every downstream join is against `target_batch` (rows) / `target_user`
+--   (card_overrides), so an ambiguous population yields empty results rather
+--   than a silently pooled cross-user or cross-batch one.
 --
 --   NO owned_keys fallback. NO inference of ownership across printings or
 --   languages: alias resolution collapses an id onto its canonical survivor
 --   only where CAT-2D.2 already admitted the two as the SAME physical card.
 
--- G0-6 guard: proves exactly one user holds an active batch, and that every
+-- G0-6 guard: proves exactly one user holds an active batch, that this user
+-- holds exactly one active batch (the RPC's own two-level fail-closed
+-- condition, not just the "one user" half of it), and that every
 -- card_overrides row consumed below (force-owned / force-missing) belongs to
 -- that same user. Counts and booleans only — no user_id is ever selected.
 with active_users as (
@@ -354,6 +361,13 @@ with active_users as (
 ),
 override_users as (
   select distinct user_id from public.card_overrides
+),
+active_batch_count_for_resolved_user as (
+  select count(*) as n
+  from public.user_import_batches b
+  where b.status = 'active'
+    and (select count(*) from active_users) = 1
+    and b.user_id = (select user_id from active_users limit 1)
 )
 select
   (select count(*) from active_users)    as distinct_active_batch_users,
@@ -363,8 +377,11 @@ select
                                           as override_users_outside_active_set,
   ((select count(*) from active_users) = 1)
                                           as single_active_user_confirmed,
+  (coalesce((select n from active_batch_count_for_resolved_user), 0) = 1)
+                                          as single_active_batch_confirmed,
   (
     (select count(*) from active_users) = 1
+    and coalesce((select n from active_batch_count_for_resolved_user), 0) = 1
     and not exists (
       select 1 from override_users ou
       where not exists (select 1 from active_users au where au.user_id = ou.user_id)
@@ -378,11 +395,20 @@ with target_user as (   -- fails closed to zero rows unless exactly one user is 
   group by b.user_id
   having (select count(distinct user_id) from public.user_import_batches where status = 'active') = 1
 ),
-active as (
+target_batch as (   -- fails closed to zero rows unless that user has exactly one active batch,
+                     -- mirroring get_active_snapshot_owned_card_ids()'s v_active_count > 1 branch
   select b.id as batch_id
   from public.user_import_batches b
   join target_user tu on tu.user_id = b.user_id
   where b.status = 'active'
+    and (
+      select count(*) from public.user_import_batches b2
+      join target_user tu2 on tu2.user_id = b2.user_id
+      where b2.status = 'active'
+    ) = 1
+),
+active as (
+  select batch_id from target_batch
 ),
 snap as (   -- active snapshot, canonicalised, single-user scoped
   select distinct coalesce(res.canonical_card_id, r.card_id) as card_id
@@ -410,7 +436,8 @@ owned_eff as (
 ),
 cand as (select r.canonical_card_id as tgt from public.card_identity_resolution r)
 select
-  (select count(*) from target_user) as target_user_resolved,   -- must be 1; 0 means the guard above failed closed
+  (select count(*) from target_user)  as target_user_resolved,   -- must be 1; 0 means the guard above failed closed
+  (select count(*) from target_batch) as target_batch_resolved,  -- must be 1; 0 means 0 or >1 active batches for that user
   (select count(*) from snap)      as snapshot_resolved_ids,
   (select count(*) from owned)     as owned_ids_total,
   (select count(*) from owned_eff) as owned_in_effective,
@@ -432,11 +459,19 @@ with target_user as (
   group by b.user_id
   having (select count(distinct user_id) from public.user_import_batches where status = 'active') = 1
 ),
-active as (
+target_batch as (   -- fails closed to zero rows unless that user has exactly one active batch
   select b.id as batch_id
   from public.user_import_batches b
   join target_user tu on tu.user_id = b.user_id
   where b.status = 'active'
+    and (
+      select count(*) from public.user_import_batches b2
+      join target_user tu2 on tu2.user_id = b2.user_id
+      where b2.status = 'active'
+    ) = 1
+),
+active as (
+  select batch_id from target_batch
 ),
 snap as (
   select distinct coalesce(res.canonical_card_id, r.card_id) as card_id
@@ -478,11 +513,21 @@ with target_user as (
   group by b.user_id
   having (select count(distinct user_id) from public.user_import_batches where status = 'active') = 1
 ),
+target_batch as (   -- fails closed to zero rows unless that user has exactly one active batch
+  select b.id as batch_id
+  from public.user_import_batches b
+  join target_user tu on tu.user_id = b.user_id
+  where b.status = 'active'
+    and (
+      select count(*) from public.user_import_batches b2
+      join target_user tu2 on tu2.user_id = b2.user_id
+      where b2.status = 'active'
+    ) = 1
+),
 snap as (
   select distinct coalesce(res.canonical_card_id, r.card_id) as card_id
   from public.user_import_rows r
-  join public.user_import_batches b on b.id = r.batch_id and b.status = 'active'
-  join target_user tu on tu.user_id = b.user_id
+  join target_batch tb on tb.batch_id = r.batch_id
   left join public.card_identity_resolution res on res.alias_card_id = r.card_id
   where r.match_status = 'matched' and r.card_id is not null),
 fo as (select distinct co.card_id from public.card_overrides co
@@ -501,9 +546,9 @@ select
        and tgt not in (select card_id from fm))                       as cand_active_owned;
 
 -- Per-set distribution of the candidate population and its active-owned share.
--- Full authority (snapshot ∪ force-owned − force-missing), single-user scoped
--- — this previously used snapshot-only ownership, which under-counted any
--- candidate reachable only through the force-owned layer.
+-- Full authority (snapshot ∪ force-owned − force-missing), single-user AND
+-- single-batch scoped — this previously used snapshot-only ownership, which
+-- under-counted any candidate reachable only through the force-owned layer.
 with target_user as (
   select b.user_id
   from public.user_import_batches b
@@ -511,11 +556,21 @@ with target_user as (
   group by b.user_id
   having (select count(distinct user_id) from public.user_import_batches where status = 'active') = 1
 ),
+target_batch as (   -- fails closed to zero rows unless that user has exactly one active batch
+  select b.id as batch_id
+  from public.user_import_batches b
+  join target_user tu on tu.user_id = b.user_id
+  where b.status = 'active'
+    and (
+      select count(*) from public.user_import_batches b2
+      join target_user tu2 on tu2.user_id = b2.user_id
+      where b2.status = 'active'
+    ) = 1
+),
 snap as (
   select distinct coalesce(res.canonical_card_id, ur.card_id) as card_id
   from public.user_import_rows ur
-  join public.user_import_batches b on b.id = ur.batch_id and b.status = 'active'
-  join target_user tu on tu.user_id = b.user_id
+  join target_batch tb on tb.batch_id = ur.batch_id
   left join public.card_identity_resolution res on res.alias_card_id = ur.card_id
   where ur.match_status = 'matched' and ur.card_id is not null
 ),
