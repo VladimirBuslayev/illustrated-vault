@@ -1,5 +1,54 @@
 # Illustrated — Changelog
 
+> Slice-level history between Gate 2 close (2026-07-01) and CAT-3B.1
+> (2026-08-20) is not recorded here. It lives in the per-slice documents under
+> `docs/` and in `CURRENT_STATE.md` / `DECISION_LOG.md`, which are canonical.
+> This entry resumes the changelog at the point catalog image work closed; it
+> deliberately does not backfill the intervening slices.
+
+## CAT-3B.1 — Approved alias image activation — 2026-08-20
+
+**Production write executed and validated.** 192 approved alias image overrides
+activated in the CAT-3B durable override channel. PR #21 @
+`304c69dd05bd0d2809008a76e607c5e729ba1e87` — executed from the branch; the PR
+carries documentation and runbook evidence only, and merging it re-executes
+nothing.
+
+- `docs/sql/cat-3b1-1-alias-image-activation.sql` §B executed once, successfully
+- **190 inserts + 2 updates = 192** `card_extras` image-override bundles
+- `card_extras` rows: 5 → **195**
+- `cards_effective` missing images: 1,640 → **1,448**
+- Active-owned missing images: 122 → **77** (45 gaps closed)
+- `public.cards` raw missing images: **unchanged at 1,640** — this slice writes
+  only the `COALESCE` layer and never touches `public.cards`
+- CAT-1 enrichment preserved on `swsh12.5gg-GG19` and `swsh12.5gg-GG69`; both
+  retain `illustrator_override` and `source_note` and now also carry an image
+  override
+- §A preflight PASS · §C post-write validation PASS · §D rollback **not
+  executed**
+- Bundle integrity: 192/192 complete, 0 self-sourced, 192 distinct URLs, 0
+  without an approved alias relationship, 0 not matching the source image, 0
+  evidence self-check failures
+- Catalog containment: 192 targets with an effective image, 0 alias sources
+  visible in the effective catalog
+
+No schema, constraint, trigger, view, RLS or ACL change. No runtime code change —
+zero files under `src/`, `sync/` or config. Scheduled catalog sync **remains
+paused**.
+
+**Broad catalog image remediation is CLOSED.** The 192 approved same-printing
+alias pairs were the only authorized population. The remaining 1,448 effective
+image gaps are explicitly not authorized for another repair phase — CAT-3A
+established that none has an image available upstream today.
+
+**Not performed:** browser/UI QA. All acceptance evidence is SQL-proven; no
+visual spot-check was made. Recorded as an open item in
+`docs/CAT-3B.1_ACTIVATION_SLICE.md` §10 rather than treated as satisfied.
+
+Next slice: **NAV-1** (not started).
+
+---
+
 ## Gate 2 close — Phase 5O — 2026-07-01
 
 Final documentation update. Gate 2 is fully closed.
