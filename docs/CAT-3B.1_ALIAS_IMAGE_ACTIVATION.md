@@ -336,7 +336,7 @@ Alias resolution here collapses an id onto its canonical survivor **only** where
 CAT-2D.2 already admitted the two as the same physical card. No ownership is
 inferred across printings or languages.
 
-> **⚠ Correction applied post-merge review, independently re-verified.** The
+> **⚠ Correction applied following independent PR review, independently re-verified.** The
 > first cut of this reproduction filtered `user_import_batches` by
 > `status = 'active'` alone, with no `user_id` filter, and read
 > `card_overrides` unfiltered. The deployed RPC filters `user_import_batches`
@@ -579,7 +579,7 @@ in §11.2.
 
 ### 13.2 Correction record (did not change the disposition)
 
-§9.1 records a G0-6 methodology defect found in post-merge review: the
+§9.1 records a G0-6 methodology defect found in independent PR review: the
 ownership reproduction was missing the deployed RPC's per-user and
 per-batch boundary. `docs/sql/cat-3b1-0-gate0.sql` was corrected to fail
 closed to a single resolved user with a single resolved active batch,
