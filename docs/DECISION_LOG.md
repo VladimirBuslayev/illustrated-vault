@@ -1,5 +1,102 @@
 Illustrated Vault — Decision Log
 
+2026-08-19 — CAT-3B: durable provenance-aware approved image override channel
+
+Decision:
+
+Curated image values get their own durable channel; public.cards stays raw
+provider history. sync-cards.mjs performs a full-row upsert of image_url from
+whatever TCGdex returns, and there is no image provenance column, so a curated
+value written into cards.image_url would be silently reverted the next time its
+set is not skipped, with nothing recording that it was ever deliberate. The
+prerequisite is therefore the channel, not the image write.
+
+The channel extends card_extras rather than adding a table. Five columns —
+image_url_override, image_override_source_card_id (FK → cards(id), ON DELETE
+RESTRICT), image_override_evidence, image_override_approved_by,
+image_override_approved_at — are admitted all-or-nothing. An override without
+provenance is worse than no override: it renders a curated pixel nobody can
+trace. RESTRICT rather than CASCADE on the source reference is deliberate:
+deleting the record of where an approved image came from would destroy the audit
+trail while leaving the override in place and unexplained.
+
+cards_effective is the rendering chokepoint, and exactly one line of it changed:
+c.image_url became coalesce(ce.image_url_override, c.image_url). Every rendered
+image already originates from that view, so one view change reaches 100% of
+image consumers with zero application-code change. All 14 columns and their
+order, security_invoker = true, the card_extras LEFT JOIN and the CAT-2D.1 alias
+exclusion are preserved; src/** is unchanged.
+
+Admission is restricted to approved alias relationships, not to a card list. A
+BEFORE INSERT OR UPDATE trigger, SECURITY INVOKER, admits an override only where
+the source is an approved alias of the target card and the proposed value equals
+that source card's current image_url at admission time. It reads
+card_identity_resolution and public.cards and never touches
+card_identity_aliases, whose privilege wall stays intact. Nothing here widens
+anyone's access. A future approved alias becomes eligible automatically; nothing
+is ever applied automatically.
+
+Admission is not revalidation. An UPDATE where all five image fields are
+IS NOT DISTINCT FROM OLD returns without re-admission, because R3 compares
+against the source card's current image_url and provider churn is expected to
+change it — revalidating on an unrelated edit would fail a routine write for a
+reason that has nothing to do with it. Withdrawal is always permitted;
+re-admitting is a new decision at the current bar.
+
+Provenance is withheld from anon and authenticated. The production preflight
+measured a broader baseline than the documented one: anon and authenticated each
+held seven table-level privileges on card_extras, dormant only because RLS
+carried no write policy, but real. The migration narrowed that deliberately, and
+V-6 re-proved the resulting ACL after deploy.
+
+The channel ships EMPTY, and populating it is a separate decision. Zero override
+rows exist. No override may be created — not for the 192 CAT-3A-measured pairs,
+not for anything else — without its own separately approved slice.
+
+Reason:
+
+CAT-3A closed as a SCOPED PARTIAL and selected no implementation slice: its
+Decision Framework did not run, and it did not select D-ALIAS. Its A-dimension
+evidence is nonetheless decision-grade on its own — all 192 CAT-2D.2-approved
+alias pairs hold a live TCGdex asset their canonical survivor lacks, covering 45
+of the 117 active-owned image gaps out of 1,640 stored gaps, against TCGdex
+exact-current-identity recoverability of 0 / 1,640. CAT-3B rests on that
+evidence and on an explicitly accepted policy principle — a retained
+provider-history image is an admissible source for its canonical survivor only
+where CAT-2D.2 already established that the pair is the same physical printing —
+not on a CAT-3A decision.
+
+Shipping the channel empty is what made every contract change provably a no-op
+at deploy time, the same argument CAT-2D.1 used for the alias table. It also
+separates the two questions that would otherwise be decided together: whether a
+durable, traceable, revertible mechanism should exist, and whether any
+particular image should be curated. The first is architecture and was decidable
+now; the second is an editorial act on collector-visible pixels and belongs to
+its own approval.
+
+Status:
+
+Accepted. CAT-3B is CLOSED — deployed, production-validated (V-1 … V-6 all
+PASS), merged as PR #17, merge commit
+5d741372cf4f1ac89ce5386c069835f947b11f07. V-3 proved row-for-row equivalence:
+23,588 deployed rows against 23,588 expected, zero differing in either
+direction, 1,640 null images on both sides. Zero rendered pixels changed. The
+channel is empty: zero override rows.
+
+The non-production durability write test
+(docs/sql/cat-3b-3-durability-test.sql) was NOT run — no non-production Supabase
+environment exists — and remains a deferred observation, the same disposition
+CAT-1 took for its isolated G1 proof. Do not manufacture it in production. The
+durability claim rests meanwhile on three static proofs asserted in CI by
+scripts/cat3b-durability.test.mjs.
+
+The scheduled sync remains PAUSED. The next slice after CAT-3B is UNDECIDED
+pending strategy/review: CAT-3C is not named, and the 192 pairs are not
+authorized as next. The standing near-term order after catalog work is unchanged
+— NAV-1 → SEC-0 → AUTH-1 → BETA-0. Current state is recorded in
+CURRENT_STATE.md; the full slice account is in
+CAT-3B_DURABLE_IMAGE_OVERRIDE.md.
+
 2026-08-17 — CAT-2D.2: catalog identity reconciliation (Family A, stable-number renames)
 
 Decision:
