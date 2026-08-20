@@ -336,7 +336,32 @@ Alias resolution here collapses an id onto its canonical survivor **only** where
 CAT-2D.2 already admitted the two as the same physical card. No ownership is
 inferred across printings or languages.
 
-### 9.2 Live measurements
+> **⚠ Correction applied post-merge review.** The first cut of this
+> reproduction filtered `user_import_batches` by `status = 'active'` alone,
+> with no `user_id` filter, and read `card_overrides` unfiltered. The deployed
+> RPC filters `user_import_batches` by `user_id = auth.uid()` and fails closed
+> (an error state) if that one user does not have exactly one active batch —
+> the Gate 0 SQL dropped that boundary and would silently pool every user's
+> active batch and every user's force-owned/force-missing rows instead. This
+> is a methodology/invariant defect, not a data defect: independent read-only
+> verification found exactly one active-batch user in production, with all
+> `card_overrides` rows belonging to that same user, so the unscoped and
+> correctly-scoped queries return identical counts today. `docs/sql/cat-3b1-0-
+> gate0.sql` §G0-6 now derives a `target_user` CTE that resolves to the single
+> user_id holding an active batch and **fails closed to zero rows** (not an
+> unfiltered fallback) if that is ever ambiguous, scopes `card_overrides`
+> reads to that same user, fixes the per-set distribution query to use the
+> full ownership authority instead of snapshot-only, and adds an explicit
+> guard query that reconciles the active-batch user against the
+> `card_overrides` user set using only counts and booleans — no `user_id` is
+> ever projected. The figures in §9.2–§9.4 below are the original,
+> **unscoped** run; they are carried forward unchanged because the correctly-
+> scoped query is expected to reproduce them exactly under today's single-user
+> production state. **This has not yet been independently re-executed against
+> production under this correction** (see §15.1) — treat §9.2–§9.4 as
+> provisional until that re-run is recorded.
+
+### 9.2 Live measurements — pre-correction run, expected unchanged (see §15.1)
 
 | Measure | Live value |
 |---|---|
@@ -369,7 +394,8 @@ layer. The one force-owned candidate is already in the snapshot and adds nothing
 | `swsh4.5sv` | 122 | 24 |
 | **Total** | **192** | **45** |
 
-**G0-6: PASS.**
+**G0-6: PASS** (provisional — see the user-scoping correction note in §9.1 and
+the outstanding re-run in §15.1).
 
 ---
 
@@ -550,6 +576,17 @@ in §11.2.
 5. **Do not touch `public.cards`**, the CAT-3B schema, RLS, ACL, frontend code,
    sync code, or the 1,448 non-alias gaps.
 
+### 13.2 Outstanding correction (does not change the disposition)
+
+§9.1 records a G0-6 methodology defect found in post-merge review: the
+ownership reproduction was missing the deployed RPC's per-user boundary.
+`docs/sql/cat-3b1-0-gate0.sql` has been corrected to fail closed to a single
+resolved user rather than pooling all users. Independent read-only
+verification during review found exactly one active-batch user in production
+today, so the disposition above is **not expected to change**. It has not yet
+been re-confirmed by re-executing the corrected SQL against production — see
+§15.1.
+
 ---
 
 ## 14. Scope containment
@@ -578,6 +615,22 @@ this slice changes no runtime code.
 
 Gate 0 is complete and ready for the write / no-write decision. Independent
 ChatGPT review is required before any activation slice or production write.
+
+### 15.1 Outstanding: re-run corrected G0-6 SQL against production
+
+The user-scoping correction in §9.1/§13.2 has been applied to
+`docs/sql/cat-3b1-0-gate0.sql` but **not yet re-executed against production**
+under this correction — the environment that made this correction had no
+read-only Supabase/Postgres connection available. Before this Gate 0 is relied
+upon for an activation decision, re-run the corrected G0-6 queries (including
+the new guard query) read-only against production and confirm:
+
+* `target_user_resolved = 1` in the main G0-6 query (proves the fail-closed
+  `target_user` CTE resolved, not empty);
+* `single_active_user_confirmed = true` and
+  `active_and_override_user_scopes_reconcile = true` in the new guard query;
+* the counts in §9.2–§9.4 above (4,998 / 5,068 / 5,053 / 122 / 45 / 36.9%,
+  and the 21 / 24 per-set split) are unchanged.
 
 Roadmap intent, unchanged by this slice:
 

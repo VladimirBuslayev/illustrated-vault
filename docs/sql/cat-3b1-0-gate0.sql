@@ -330,16 +330,61 @@ from chk;
 --   which is null on this connection. The projection below is the same logic
 --   applied to the same tables.
 --
+--   ⚠ USER SCOPE. The deployed RPC (docs/sql/own-0a-1-active-snapshot-owned-
+--   card-ids.sql) filters user_import_batches by `user_id = auth.uid()` and
+--   fails closed if that user's active-batch count is not exactly 1. Every
+--   CTE below carries that same single-user boundary — filtering
+--   `status = 'active'` alone would pool every user's active batch, which is
+--   not what the RPC computes for any one user. `target_user` resolves to the
+--   one user_id holding an active batch, and to ZERO ROWS (fail closed, not
+--   an unfiltered fallback) if zero or more than one such user exists. Every
+--   downstream join is against `target_user`, so an ambiguous population
+--   yields empty results rather than a silently pooled cross-user one.
+--   card_overrides (force-owned / force-missing) is scoped the same way.
+--
 --   NO owned_keys fallback. NO inference of ownership across printings or
 --   languages: alias resolution collapses an id onto its canonical survivor
 --   only where CAT-2D.2 already admitted the two as the SAME physical card.
 
-with active as (
-  select b.id as batch_id
+-- G0-6 guard: proves exactly one user holds an active batch, and that every
+-- card_overrides row consumed below (force-owned / force-missing) belongs to
+-- that same user. Counts and booleans only — no user_id is ever selected.
+with active_users as (
+  select distinct user_id from public.user_import_batches where status = 'active'
+),
+override_users as (
+  select distinct user_id from public.card_overrides
+)
+select
+  (select count(*) from active_users)    as distinct_active_batch_users,
+  (select count(*) from override_users)  as distinct_override_users,
+  (select count(*) from override_users ou
+     where not exists (select 1 from active_users au where au.user_id = ou.user_id))
+                                          as override_users_outside_active_set,
+  ((select count(*) from active_users) = 1)
+                                          as single_active_user_confirmed,
+  (
+    (select count(*) from active_users) = 1
+    and not exists (
+      select 1 from override_users ou
+      where not exists (select 1 from active_users au where au.user_id = ou.user_id)
+    )
+  )                                       as active_and_override_user_scopes_reconcile;
+
+with target_user as (   -- fails closed to zero rows unless exactly one user is active
+  select b.user_id
   from public.user_import_batches b
   where b.status = 'active'
+  group by b.user_id
+  having (select count(distinct user_id) from public.user_import_batches where status = 'active') = 1
 ),
-snap as (   -- active snapshot, canonicalised
+active as (
+  select b.id as batch_id
+  from public.user_import_batches b
+  join target_user tu on tu.user_id = b.user_id
+  where b.status = 'active'
+),
+snap as (   -- active snapshot, canonicalised, single-user scoped
   select distinct coalesce(res.canonical_card_id, r.card_id) as card_id
   from public.user_import_rows r
   join active a on a.batch_id = r.batch_id
@@ -347,8 +392,12 @@ snap as (   -- active snapshot, canonicalised
   where r.match_status = 'matched'
     and r.card_id is not null
 ),
-fo as (select distinct card_id from public.card_overrides where override_type = 'owned'),
-fm as (select distinct card_id from public.card_overrides where override_type = 'missing'),
+fo as (select distinct co.card_id from public.card_overrides co
+         join target_user tu on tu.user_id = co.user_id
+         where co.override_type = 'owned'),
+fm as (select distinct co.card_id from public.card_overrides co
+         join target_user tu on tu.user_id = co.user_id
+         where co.override_type = 'missing'),
 owned as (
   select card_id
   from (select card_id from snap union select card_id from fo) u
@@ -361,6 +410,7 @@ owned_eff as (
 ),
 cand as (select r.canonical_card_id as tgt from public.card_identity_resolution r)
 select
+  (select count(*) from target_user) as target_user_resolved,   -- must be 1; 0 means the guard above failed closed
   (select count(*) from snap)      as snapshot_resolved_ids,
   (select count(*) from owned)     as owned_ids_total,
   (select count(*) from owned_eff) as owned_in_effective,
@@ -372,8 +422,22 @@ select
   (select count(*) from owned_eff oe join cand on cand.tgt = oe.id where oe.image_url is null) as owned_missing_image_fixable;
 
 -- Why the active-owned denominator moved vs CAT-3A. v1 is the snapshot ALONE
--- (CAT-3A's basis); v4 is the full authority mandated for CAT-3B.1.
-with active as (select id as batch_id from public.user_import_batches where status = 'active'),
+-- (CAT-3A's basis); v4 is the full authority mandated for CAT-3B.1. Both the
+-- snapshot and the force-owned/force-missing layers are scoped to the single
+-- resolved target_user, matching the G0-6 guard above.
+with target_user as (
+  select b.user_id
+  from public.user_import_batches b
+  where b.status = 'active'
+  group by b.user_id
+  having (select count(distinct user_id) from public.user_import_batches where status = 'active') = 1
+),
+active as (
+  select b.id as batch_id
+  from public.user_import_batches b
+  join target_user tu on tu.user_id = b.user_id
+  where b.status = 'active'
+),
 snap as (
   select distinct coalesce(res.canonical_card_id, r.card_id) as card_id
   from public.user_import_rows r
@@ -384,8 +448,12 @@ snap_raw as (
   select distinct r.card_id
   from public.user_import_rows r join active a on a.batch_id = r.batch_id
   where r.match_status = 'matched' and r.card_id is not null),
-fo as (select distinct card_id from public.card_overrides where override_type = 'owned'),
-fm as (select distinct card_id from public.card_overrides where override_type = 'missing')
+fo as (select distinct co.card_id from public.card_overrides co
+         join target_user tu on tu.user_id = co.user_id
+         where co.override_type = 'owned'),
+fm as (select distinct co.card_id from public.card_overrides co
+         join target_user tu on tu.user_id = co.user_id
+         where co.override_type = 'missing')
 select
   (select count(*) from public.cards_effective e join snap s     on s.card_id = e.id where e.image_url is null) as v1_snapshot_resolved_only,
   (select count(*) from public.cards_effective e join snap_raw s on s.card_id = e.id where e.image_url is null) as v2_snapshot_unresolved,
@@ -402,14 +470,27 @@ select
        and e.id not in (select card_id from snap)) as forced_owned_only_missing_img;
 
 -- Do the force-owned / force-missing layers touch the candidate set at all?
-with snap as (
+-- Same single-user scoping as the main G0-6 query.
+with target_user as (
+  select b.user_id
+  from public.user_import_batches b
+  where b.status = 'active'
+  group by b.user_id
+  having (select count(distinct user_id) from public.user_import_batches where status = 'active') = 1
+),
+snap as (
   select distinct coalesce(res.canonical_card_id, r.card_id) as card_id
   from public.user_import_rows r
   join public.user_import_batches b on b.id = r.batch_id and b.status = 'active'
+  join target_user tu on tu.user_id = b.user_id
   left join public.card_identity_resolution res on res.alias_card_id = r.card_id
   where r.match_status = 'matched' and r.card_id is not null),
-fo as (select distinct card_id from public.card_overrides where override_type = 'owned'),
-fm as (select distinct card_id from public.card_overrides where override_type = 'missing'),
+fo as (select distinct co.card_id from public.card_overrides co
+         join target_user tu on tu.user_id = co.user_id
+         where co.override_type = 'owned'),
+fm as (select distinct co.card_id from public.card_overrides co
+         join target_user tu on tu.user_id = co.user_id
+         where co.override_type = 'missing'),
 cand as (select canonical_card_id as tgt from public.card_identity_resolution)
 select
   (select count(*) from cand where tgt in (select card_id from snap)) as cand_in_snapshot,
@@ -419,15 +500,38 @@ select
      where tgt in (select card_id from snap union select card_id from fo)
        and tgt not in (select card_id from fm))                       as cand_active_owned;
 
--- Per-set distribution of the candidate population and its owned share.
+-- Per-set distribution of the candidate population and its active-owned share.
+-- Full authority (snapshot ∪ force-owned − force-missing), single-user scoped
+-- — this previously used snapshot-only ownership, which under-counted any
+-- candidate reachable only through the force-owned layer.
+with target_user as (
+  select b.user_id
+  from public.user_import_batches b
+  where b.status = 'active'
+  group by b.user_id
+  having (select count(distinct user_id) from public.user_import_batches where status = 'active') = 1
+),
+snap as (
+  select distinct coalesce(res.canonical_card_id, ur.card_id) as card_id
+  from public.user_import_rows ur
+  join public.user_import_batches b on b.id = ur.batch_id and b.status = 'active'
+  join target_user tu on tu.user_id = b.user_id
+  left join public.card_identity_resolution res on res.alias_card_id = ur.card_id
+  where ur.match_status = 'matched' and ur.card_id is not null
+),
+fo as (select distinct co.card_id from public.card_overrides co
+         join target_user tu on tu.user_id = co.user_id
+         where co.override_type = 'owned'),
+fm as (select distinct co.card_id from public.card_overrides co
+         join target_user tu on tu.user_id = co.user_id
+         where co.override_type = 'missing'),
+owned as (
+  select card_id from (select card_id from snap union select card_id from fo) u
+  where card_id not in (select card_id from fm)
+)
 select split_part(r.canonical_card_id, '-', 1) as target_set,
        count(*) as candidates,
-       count(*) filter (where r.canonical_card_id in (
-         select distinct coalesce(res.canonical_card_id, ur.card_id)
-         from public.user_import_rows ur
-         join public.user_import_batches b on b.id = ur.batch_id and b.status = 'active'
-         left join public.card_identity_resolution res on res.alias_card_id = ur.card_id
-         where ur.match_status = 'matched' and ur.card_id is not null)) as active_owned
+       count(*) filter (where r.canonical_card_id in (select card_id from owned)) as active_owned
 from public.card_identity_resolution r
 group by 1
 order by 1;
