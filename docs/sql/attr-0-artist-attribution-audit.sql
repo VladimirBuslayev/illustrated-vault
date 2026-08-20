@@ -41,9 +41,13 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- A-1. Headline attribution coverage over the EFFECTIVE catalog.
---      `illustrator_present_artist_null` is the population that is displayable
---      but not reachable from any Artist Page: the card shows a name, and no
---      artist page can ever list it.
+--      CORRECTED INTERPRETATION (external review, 2026-08-20): do not read
+--      `illustrator_present_artist_null` as "artist exists but is unreachable."
+--      Most illustrator strings intentionally have no `artists` row at all — the
+--      roster is a curated + user-tracked subset, not every credited name. This
+--      column is illustrator-string-present-but-no-FK; it only becomes an Artist
+--      Page reachability gap for the subset of those strings that resolve to an
+--      actual/tracked artist row (that subset is what C-4 ranks).
 select
   count(*)                                                          as effective_cards,
   count(*) filter (where illustrator is not null
@@ -352,12 +356,38 @@ join public.cards_effective ce on ce.id = c.id
 where c.illustrator is distinct from ce.illustrator;
 
 
--- D-4. Artist Page membership impact, per roster artist. `member_cards` is what
---      an Artist Page shows via the FK path (.eq('artist_id', ...)).
---      `displayed_but_not_filed` counts cards whose EFFECTIVE illustrator
---      resolves to this artist but whose artist_id does not — the F-15 leak.
+-- D-4. Artist Page membership impact, per roster artist, split by RUNTIME PATH.
+--
+--      CORRECTED (external review, 2026-08-20): `cardService.fetchArtistCards`
+--      has two distinct branches, confirmed against
+--      src/services/cardService.js and src/constants/artists.js as committed:
+--        CURATED  — the 20 artistId slugs hardcoded in src/constants/artists.js.
+--                   Runtime query is an exact `.eq('artist_id', entry.artistId)`
+--                   ONLY. For a curated artist, `displayed_but_not_filed` is a
+--                   REAL leak: the card is on-catalog under this illustrator but
+--                   the FK path never returns it.
+--        DYNAMIC  — every other `public.artists` row (added via
+--                   add_artist_to_archive / user_tracked_artists). Runtime query
+--                   is `artist_id.eq.<id> OR illustrator.in.(<exact names/
+--                   aliases>)`, so a DYNAMIC artist's `displayed_but_not_filed`
+--                   rows are already reachable through the illustrator branch of
+--                   the SAME query — this is FK-tagging incompleteness /
+--                   dynamic-fallback reliance, not a current visible membership
+--                   failure. Do not report it as one.
+--
+--      `member_cards` is what the FK path alone returns
+--      (`.eq('artist_id', ...)`).
+with curated_artist_ids as (
+  select unnest(array[
+    'yuka-morii','asako-ito','tomokazu-komiya','shinji-kanda','atsuko-nishida',
+    'sowsow','shibuzoh','yukiko-baba','sui','akira-egawa','kouki-saitou',
+    'saya-tsuruta','okacheke','0313','gossan','mizue','kayama','gapao',
+    'okubo','fukuda'
+  ]) as artist_id
+)
 select
   a.id                                                            as artist_id,
+  (a.id in (select artist_id from curated_artist_ids))            as is_curated,
   count(ce.id) filter (where ce.artist_id = a.id)                 as member_cards,
   count(ce.id) filter (
     where ce.artist_id is distinct from a.id
@@ -374,7 +404,7 @@ left join public.cards_effective ce
        where lower(btrim(al)) = lower(btrim(ce.illustrator))
      )
 group by a.id
-order by member_cards desc, a.id;
+order by is_curated desc, member_cards desc, a.id;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════

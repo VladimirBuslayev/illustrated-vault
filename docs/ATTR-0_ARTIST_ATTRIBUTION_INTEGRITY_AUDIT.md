@@ -11,7 +11,8 @@
 | Production mutations | **none** |
 | Catalog sync | **remains paused** — not resumed, not triggered |
 | Evidence | `docs/sql/attr-0-artist-attribution-audit.sql` (read-only) · `docs/attr-0-evidence/` · `scripts/attr0-variant-attribution-probe.mjs` |
-| Seed case | `xyp-XY67` / `xyp-XY67a` (Jirachi) |
+| Seed case | `xyp-XY67` / `xyp-XY67a` (Jirachi) — **CONFIRMED WRONG**, see §3 |
+| Correction pass | 2026-08-20 — Gate 1 measured against production (§5); XY67a promoted to CONFIRMED WRONG on a recorded external source (§3); D-4 Artist Page interpretation corrected to split curated vs. dynamic runtime paths (§5, §9) |
 
 ---
 
@@ -30,9 +31,16 @@ bad provider data. That is the good outcome — it rules out the STOP verdict.
 class.** Across all 218 TCGdex sets there are exactly **37** suffix-variant
 printings; **23** have a base printing in the same set; **21** of those assert a
 single illustrator across two printings whose artwork files are not identical.
-XY67a is one of the 21. The class is bounded and completely listed — but
-membership is *suspicion*, not guilt, and I could not verify authorship for any
-of them.
+XY67a is one of the 21. The class is bounded and completely listed — membership
+alone is *suspicion*, not guilt, and this audit could not itself verify
+authorship for any of them.
+
+**Correction (2026-08-20):** an external review recorded a source —
+Bulbapedia's print history for Jirachi (XY Promo 67), listing XY67 as Illus. sui
+and the XY67a Full Art / Yellow A Alternate as Illus. Naoki Saito — and that
+source is enough to satisfy this audit's own promotion bar (§3, §10 "Gate 2"):
+*"a recorded source, not my agreement."* XY67a is promoted to **CONFIRMED
+WRONG**. The other 20 R1 families remain SUSPECT pending the same treatment.
 
 **3. ⚑ The blocking finding: `illustrator_override` cannot repair an artist
 association.** `cards_effective` COALESCEs the override into `illustrator` but
@@ -140,8 +148,8 @@ cardService.fetchArtistCards                        illustrator_directory
 
 ## 3. XY67 / XY67a root cause
 
-**Determination: UPSTREAM DEFECT. Illustrated Vault is faithfully carrying bad
-provider data.**
+**Determination: UPSTREAM DEFECT, and — as of the 2026-08-20 correction —
+CONFIRMED WRONG. Illustrated Vault is faithfully carrying bad provider data.**
 
 Read-only probe of TCGdex on 2026-08-20:
 
@@ -172,14 +180,27 @@ The provider asserts `sui` for **both** printings. Chain of custody:
 > re-encode of one artwork also produces different bytes. Byte difference is a
 > risk signal, not authorship evidence.
 
-**On the Naoki Saito attribution:** the brief reports XY67a as externally
-identified as illustrated by Naoki Saito. I did not independently verify that,
-and nothing in this audit corroborates it. It is recorded as an **external
-claim**, and it is the only reason XY67a is singled out from the other 20
-members of the same risk class. Under this audit's own evidence standard, XY67a
-is **SUSPECT**, exactly like its 20 peers — the external identification is what
-would promote it to CONFIRMED WRONG, and that promotion needs a source recorded
-as provenance, not my inference.
+**On the Naoki Saito attribution — promoted to CONFIRMED WRONG, 2026-08-20.**
+The original session of this audit did not independently verify the brief's
+Naoki Saito claim and left XY67a at SUSPECT, on the stated rule that promotion
+needs a recorded source, not agreement. An external review has since supplied
+that source:
+
+> Bulbapedia, "Jirachi (XY Promo 67)" print history: the regular `XY67` print is
+> credited Illus. sui; the Full Art / Yellow A Alternate `XY67a` print is
+> credited Illus. Naoki Saito.
+> https://bulbapedia.bulbagarden.net/wiki/Jirachi_(XY_Promo_67)
+
+This is a print-level external identification for the specific pair TCGdex
+conflates, so it clears this audit's own bar. XY67a is reclassified
+**CONFIRMED WRONG**: `artist_id = 'sui'` (and the displayed `illustrator =
+'sui'`) is wrong for `xyp-XY67a`, whose correct illustrator is Naoki Saito. The
+upstream determination is unchanged — TCGdex is the origin of the bad value,
+Illustrated Vault carries it verbatim — so this row is simultaneously an
+UPSTREAM DEFECT (cause) and CONFIRMED WRONG (this audit's classification of the
+row). No write follows from this: **F-15 (§6, §8) still means there is no
+mechanism that could correctly repair it today.** The other 20 R1 members are
+unaffected by this source and remain SUSPECT.
 
 *(Incidental, not evidence: `g1-28` Jolteon-EX is upstream-attributed to Naoki
 Saito, so the name is present in the catalog and would resolve to an artist if
@@ -191,7 +212,7 @@ one exists. Noted only so a reviewer is not surprised by it.)*
 
 | Class | Definition | Population | Disposition |
 |---|---|---|---|
-| **R1** | Suffix variant + base printing in same set + **one** illustrator across **non-identical** artwork files | **21 families** | **SUSPECT** — the seed class |
+| **R1** | Suffix variant + base printing in same set + **one** illustrator across **non-identical** artwork files | **21 families** | **1 CONFIRMED WRONG** (`xyp-XY67a`, §3) + **20 SUSPECT** — the seed class |
 | **R2** | Suffix variant where upstream already differentiates attribution | **2 families** | Lower risk; shows the provider *does* model per-variant illustrators |
 | **R3** | Suffix variant with **no** base printing in the same set | **14 rows** | Lower risk — no sibling to inherit from |
 | **R4** | `illustrator_override` rows where the override disagrees with `artist_id` (F-15) | **unmeasured** (CAT-0: 0 of 5) | Query **B-1/B-2** |
@@ -223,51 +244,83 @@ demonstrates the assertion is nonetheless fallible.
 | Families where upstream differentiates (**R2**) | **2** |
 | Families where artwork bytes were identical | **0** |
 
-**Unmeasured — requires production.** I have no database access in this session
-(no Supabase MCP tools, no credentials, and the audit is read-only by design),
-so every production figure below is *deliberately left blank* rather than
-estimated. `docs/sql/attr-0-artist-attribution-audit.sql` is the figure of
-record:
+**Gate 1 — measured, production, 2026-08-20.** An external review ran
+`docs/sql/attr-0-artist-attribution-audit.sql` against production and reported
+the figures below. This session still has no direct database access (no
+Supabase MCP tools, no credentials); these numbers are recorded as reported,
+not independently re-run, in the same spirit the rest of this audit records
+external claims — attributed, not silently adopted as self-verified. Anyone
+with production access should re-run the file to confirm before relying on
+these for a repair decision.
 
-| Measure | Query |
-|---|---|
-| Total effective cards · illustrator present/null · artist_id present/null | **A-1** |
-| Illustrator present but `artist_id` null | **A-1** |
-| `illustrator_override` row count | **A-2** |
-| Suffix-variant rows *in production* + family split | **A-3 / A-4 / A-5** |
-| XY67 / XY67a full production state | **A-6** |
-| F-15 override/FK contradictions | **B-1 / B-2** |
-| Alias collapse · directory inconsistency | **C-1 / C-3** |
-| Same-set same-name multi-print families | **D-1 / D-2** |
-| Artist Page membership + "displayed but not filed" | **D-4** |
-| Ownership exposure of the risk population | **E-1 / E-2** |
+| Query | Measure | Value |
+|---|---|---|
+| **A-1** | effective_cards | 23,588 |
+| **A-1** | illustrator_present / illustrator_null | 21,639 / 1,949 |
+| **A-1** | artist_id_present / artist_id_null | 3,564 / 20,024 |
+| **A-1** | illustrator_present_artist_null | 18,075 — see corrected reading below |
+| **A-1** | illustrator_null_artist_present | 0 |
+| **A-2** | card_extras_rows / illustrator_overrides / image_overrides / source_notes | 195 / 5 / 192 / 5 |
+| **A-5** | suffix_variant_rows / with_base / lone | 37 / 23 / 14 |
+| **A-5** | same_illustrator (R1) / differing_illustrator (R2) / both_null | 21 / 2 / 0 |
+| **B-2** | illustrator_override_rows / with_artist_id / contradictory_override_fk_pairs | 5 / 3 / 0 |
+| **C-1** | duplicate normalized aliases across artists | 0 |
+| **C-3** | illustrator strings carrying >1 artist_id | 0 |
+| **D-3** | raw/effective illustrator differences | 4 |
+| **F-1** | raw_cards / effective_cards / alias_rows / card_extras_rows | 23,780 / 23,588 / 192 / 195 |
+| **E-1/E-2** | canonical-ownership cross-check | 1 resolved user context, 1 resolved batch; 0 owned suffix variants; 0 owned R1 suspect variants (no user IDs recorded) |
 
-> **A-3 is also a cross-check on the upstream proxy.** If production's
-> suffix-variant population is not 37/23/14, then `public.cards` and TCGdex have
-> diverged — which would itself be a finding, and would invalidate using upstream
-> as a proxy at all.
+> **A-5 confirms the upstream proxy.** Production is exactly 37/23/14/21/2/0 —
+> identical to the upstream-derived numbers above. `public.cards` and TCGdex
+> have **not** diverged on this population; using upstream as a proxy for §2–§4
+> was valid.
+
+> **Corrected reading of `illustrator_present_artist_null` (A-1 = 18,075).**
+> This is *not* "18,075 cards with a reachable artist that the FK can't find."
+> Most illustrator strings in the catalog intentionally have no `artists` row —
+> the roster is a curated-plus-user-tracked subset (currently 20 curated + a
+> handful of dynamic entries), not a comprehensive artist directory. This figure
+> is illustrator-string-present-but-no-FK; only the subset of those strings that
+> resolve to an actual/tracked artist row is an Artist Page reachability gap
+> (ranked by C-4, not yet run). Do not use 18,075 as a "cards invisible to their
+> artist" count — see §9 for the corrected, artist-scoped figure (D-4).
+
+> **B-2 confirms F-15 has no live contradiction today, but that doesn't close
+> it.** 0 of 5 overrides currently disagree with `artist_id`. F-15 remains a
+> real repair-path blocker (§6, §8) because the failure mode only appears once
+> someone writes an override that changes the effective illustrator without a
+> matching `artist_id` change — which is exactly what an XY67a repair would do.
 
 ### Classification
 
 | Classification | Count | Members |
 |---|---|---|
-| **CONFIRMED WRONG** | **0** | none *(see below)* |
+| **CONFIRMED WRONG** | **1** | `xyp-XY67a` — see §3 |
 | **CONFIRMED CORRECT** | **0** | nothing was positively cleared |
-| **SUSPECT** | **21 families** (+3 unmeasured classes) | all of R1, including `xyp-XY67a` |
+| **SUSPECT** | **20 families** (+3 unmeasured adjacent classes: D-1, C-4, R3) | R1 minus `xyp-XY67a` |
 | **STRUCTURAL DEFECT** | **1** | **F-15** — `illustrator_override` cannot move `artist_id`; a naive repair desynchronises display from filing |
-| **UPSTREAM DEFECT** | **≥1** | `xyp-XY67a` on the external Naoki Saito identification; the remaining 20 are unverified |
+| **UPSTREAM DEFECT** | **1 confirmed** | `xyp-XY67a`, same row as CONFIRMED WRONG — TCGdex currently reports `sui` for both `XY67` and `XY67a` |
 
-**CONFIRMED WRONG is deliberately zero.** XY67a is the obvious candidate, and
-the brief supplies an external identification for it — but this audit did not
-independently verify authorship of a single printing, and the hard rules forbid
-inferring a correction from a risk pattern. Promoting XY67a requires a *recorded
-source*, not my agreement. That promotion is cheap and is the first step of §10.
+**CONFIRMED WRONG is now 1, not 0.** XY67a was the obvious candidate from the
+start, but this audit's hard rule is that promotion needs a *recorded source*,
+not agreement with a risk pattern. That source has now been supplied and
+recorded (§3: Bulbapedia's print history for Jirachi (XY Promo 67)), so the
+promotion stands on the same evidentiary bar the rest of this audit uses. The
+remaining 20 R1 families have no comparable source yet and stay SUSPECT — §10
+Gate 2 is unchanged for them.
 
 ---
 
 ## 6. Confirmed defects
 
-**One, and it is architectural rather than per-row: F-15, re-escalated to P1.**
+**Two: one per-row, one architectural.**
+
+**Per-row: `xyp-XY67a` is misattributed.** `artist_id = 'sui'` (and the
+displayed `illustrator`) should be Naoki Saito, per the source recorded in §3.
+This is a confirmed data defect, not a repair — nothing in this audit writes to
+it. See §8 for why `illustrator_override` cannot fix it alone.
+
+**Architectural: F-15, re-escalated to P1.**
 
 `cards_effective` (current definition, `docs/sql/cat-3b-1-durable-image-override.sql`):
 
@@ -283,19 +336,26 @@ now fired. Any ATTR-1 repair performed with `illustrator_override` alone would
 produce cards that display one artist and are filed under another — a defect
 class the product currently does not have.
 
-No per-row attribution defect is confirmed by this audit.
+XY67a is the first per-row attribution defect this audit confirms, and F-15 is
+precisely why it cannot be repaired yet: writing `illustrator_override =
+'Naoki Saito'` today would fix the display and leave `artist_id = 'sui'`,
+producing exactly the display/filing split described above.
 
 ---
 
 ## 7. Suspect population
 
 The complete R1 list is `docs/attr-0-evidence/variant-family-attribution.csv`
-(21 rows at `risk_class = SUSPECT`), spanning `xyp`, `xy2`, `xy3`, `xy4`, `xy6`,
-`xy7`, `xy9`, `xy10`, `g1`, `sm4`.
+(21 rows, still tagged `risk_class = SUSPECT` in the evidence CSV — the CSV is
+upstream evidence and is left as-generated rather than hand-annotated; see §3
+and §5 for the one row, `xyp-XY67a`, now classified CONFIRMED WRONG in this
+document). The remaining **20** span `xyp`, `xy2`, `xy3`, `xy4`, `xy6`, `xy7`,
+`xy9`, `xy10`, `g1`, `sm4`.
 
-Every one needs the same thing: **artwork-level authorship verification from a
-recorded external source.** Nothing in the catalog, in the provider API, or in
-image bytes can supply it.
+Every one of the 20 needs the same thing: **artwork-level authorship
+verification from a recorded external source.** Nothing in the catalog, in the
+provider API, or in image bytes can supply it. XY67a is the worked example of
+what that verification looks like (§3) — the same standard applies to the rest.
 
 Two latent items, neither a current defect:
 
@@ -346,58 +406,94 @@ attribution repair is written.**
 
 ## 9. Product impact
 
+**Correction (2026-08-20): Artist Page membership is not universally
+`.eq('artist_id', …)`.** `src/services/cardService.js :: fetchArtistCards` has
+two runtime paths, verified directly against the committed source:
+
+- **Curated** — the 20 hardcoded `artistId` slugs in `src/constants/artists.js`
+  (`yuka-morii`, `asako-ito`, …, `fukuda`). Query is exactly
+  `.eq('artist_id', entry.artistId)`. For these, a false FK is a real,
+  unmitigated membership failure — no illustrator-string fallback covers it.
+- **Dynamic** (`entry.isDynamic`) — user-tracked artists added via
+  `add_artist_to_archive` / `user_tracked_artists`, not in the curated list.
+  Query is `artist_id.eq.<id> OR illustrator.in.(<exact names/aliases>)` — a
+  card with no FK but a matching illustrator string is **still** returned, via
+  the OR branch, until the FK catches up.
+
+D-4 (§5) measured 962 display-string-vs-FK mismatches, **all 962 with
+`artist_id` null** (0 filed to a *different* non-null artist), across 9
+artists — `midori-harada`, `akira-komayama`, `suwama-chiaki`, `hikaru-koike`,
+`minaminami-take`, `yoriyuki-ikegami`, `jiro-sasumo`, `satoma`, `aspara` — none
+of which are in the 20 curated IDs above. All 962 are therefore on the
+**dynamic** path and are **not** currently missing from their Artist Page; they
+are reached through the illustrator-equality branch of the same query, pending
+FK tagging by a future sync. A curated-only cross-check across the 20 constant
+artist IDs returned 0 mismatches, 0 filed-null, 0 wrong-nonnull. **D-4 measures
+FK-tagging incompleteness / reliance on the dynamic fallback, not a visible
+membership failure**, given the code as committed today.
+
+This does not change the F-15 risk (§6, §8): if `xyp-XY67a` received
+`illustrator_override = 'Naoki Saito'` while `artist_id` stayed `sui`, a
+*dynamic* Naoki Saito page would pick the card up via the exact-illustrator OR
+branch while the *curated* sui page would still return it via the FK — dual,
+contradictory membership, worse than any of the 962 dynamic-fallback rows
+above because it is self-contradicting on screen. That is the scenario §6/§8
+already describe; the 962 count was simply an overstated citation for it and is
+retracted here.
+
 For a card whose attribution is wrong, with **no** override applied (today's
 state — display and filing agree, and both are wrong):
 
 | Surface | Impact |
 |---|---|
-| **Artist Page membership** | Card appears on the **wrong** artist's page (`.eq('artist_id', …)`) |
-| **Missing from correct artist** | The true artist's page **never** lists it |
+| **Artist Page membership (curated artist)** | Card appears on the **wrong** artist's page (`.eq('artist_id', …)`, no fallback) |
+| **Artist Page membership (dynamic artist)** | Same wrong-page outcome via the FK branch; the OR/illustrator branch does not correct it because the illustrator string is also wrong |
+| **Missing from correct artist** | The true artist's page **never** lists it (curated); dynamic pages for the true artist may still surface it later once/if the illustrator string is corrected |
 | **Artist card counts** | Both artists' totals are off by one, in opposite directions |
 | **`illustrator_directory`** | Wrong `card_count` for both strings |
-| **Collection / owned-missing counts** | Per-artist owned/missing skewed **only if the card is owned** — Query E-1/E-2 |
+| **Collection / owned-missing counts** | Per-artist owned/missing skewed **only if the card is owned** — Query E-1/E-2 (measured: 0 owned in the R1 suspect population) |
 | **Hunt Board** | Affected only where hunts are artist-scoped; card surfaces under the wrong artist |
 | **Binder grouping** | Artist-grouped views place the card under the wrong artist |
 | **SharedBinder** | Unaffected — `isCardOwned` keys on name/number/set, never on artist |
 
-If an override were applied **without** closing F-15, add: the card displays the
-correct artist while remaining filed under the wrong one — visible to the user as
-a card that says "Naoki Saito" sitting on sui's page. That is a worse failure
-than the current silent one, because it is self-contradicting on screen.
-
-**Scale.** At most 21 printings of 23,588 (~0.09%) are suspect. This is a
-**trust** problem, not a volume problem: the artist-first wedge means one visibly
-wrong attribution on an artist page costs more than its row count suggests.
+**Scale.** 1 printing (`xyp-XY67a`) is confirmed wrong; at most 21 of 23,588
+(~0.09%) are suspect or confirmed combined. This is a **trust** problem, not a
+volume problem: the artist-first wedge means one visibly wrong attribution on
+an artist page costs more than its row count suggests.
 
 ---
 
 ## 10. Recommended next slice
 
-**Do not open ATTR-1 as a repair yet.** Two gates first.
+**Do not open ATTR-1 as a repair yet.** One gate remains.
 
-**Gate 1 — run the audit SQL (read-only, ~10 minutes).** Execute
-`docs/sql/attr-0-artist-attribution-audit.sql` and fill in §5. Specifically
-resolve: A-3 (does production match the 37/23/14 upstream population?), B-2
-(any live F-15 contradictions?), C-1 and C-3 (alias collapse — expected zero),
-and E-1/E-2 (is any suspect printing owned?). If B-2, C-1 or C-3 return non-zero,
-that is a bigger finding than XY67a and re-scopes everything.
+**Gate 1 — run the audit SQL (read-only, ~10 minutes). ✅ Done, 2026-08-20.**
+`docs/sql/attr-0-artist-attribution-audit.sql` has been executed against
+production and §5 is filled in. A-3/A-5 confirm production matches the
+37/23/14/21/2/0 upstream population exactly — no divergence. B-2, C-1 and C-3
+all returned zero — no live F-15 contradiction, no alias collapse. E-1/E-2:
+zero owned printings in the R1 suspect population. Nothing in Gate 1 re-scopes
+this audit.
 
-**Gate 2 — external verification, 21 printings.** Establish authorship for each
-R1 family from a recorded source. This is the only way SUSPECT becomes CONFIRMED
-WRONG. It is human work, not automatable, and it is small.
+**Gate 2 — external verification, 20 remaining printings.** Establish
+authorship for each remaining R1 family from a recorded source, the same way
+§3 did for `xyp-XY67a`. This is the only way SUSPECT becomes CONFIRMED WRONG
+for the rest of the class. It is human work, not automatable, and it is small.
 
 **Then, and only then, ATTR-1 — with F-15 closed first.** Scope in dependency
 order:
 
 1. Close **F-15** (option 1 or 2 from §8) — architectural, provable, no per-row
    claims.
-2. Repair only printings confirmed by Gate 2, each carrying its source as
-   provenance.
-3. Re-assert Artist Page membership before/after for every affected artist.
+2. Repair `xyp-XY67a` plus any further printings confirmed by Gate 2, each
+   carrying its source as provenance.
+3. Re-assert Artist Page membership before/after for every affected artist
+   (curated *and* dynamic — §9's runtime-path split matters here).
 
-If Gate 2 confirms only XY67a, ATTR-1 is a **one-row** repair sitting on top of a
-one-view architectural fix — which is a good trade, because the architectural
-fix is what makes every future attribution correction possible.
+If Gate 2 confirms no further printings, ATTR-1 is a **one-row** repair
+(`xyp-XY67a`) sitting on top of a one-view architectural fix — which is a good
+trade, because the architectural fix is what makes every future attribution
+correction possible. **ATTR-1 is not scoped or started in this PR.**
 
 ---
 
@@ -415,7 +511,11 @@ Not done, deliberately:
   printing, no assuming a suffix variant shares artwork with its base;
 - no general catalog cleanup; no IMG-0 work; no NAV-1 work;
 - no attempt to resolve the 1,448 remaining image gaps (CAT-3B.1 closed that);
-- **no promotion of SUSPECT to CONFIRMED WRONG**, including for XY67a.
+- **no promotion of the remaining 20 SUSPECT families to CONFIRMED WRONG** —
+  `xyp-XY67a` was promoted on a recorded external source (§3), which is exactly
+  the evidentiary bar the other 20 still have to clear; no other promotion was
+  made, and no promotion here implies or performs a repair;
+- no ATTR-1 scoping or repair started, for XY67a or any other row.
 
 ---
 
@@ -448,10 +548,14 @@ curl -s https://api.tcgdex.net/v2/en/cards/xyp-XY67a | jq '{id,name,illustrator}
 
 **HOLD — MORE VERIFICATION NEEDED.**
 
-A bounded suspect population of **21 variant families** exists and is fully
-enumerated, but **zero** attributions were confirmed wrong by this audit, and the
-existing `illustrator_override` mechanism **cannot** repair an artist association
-because `artist_id` bypasses it entirely (**CAT-0 F-15, re-escalated to P1**).
+A bounded population of **21 variant families** exists and is fully enumerated.
+**One**, `xyp-XY67a`, is now confirmed wrong on a recorded external source
+(§3); the remaining **20** are still unverified SUSPECT. Gate 1 (§10) is
+complete — production matches the upstream population exactly, and no
+additional live F-15 contradiction or alias collapse was found. The existing
+`illustrator_override` mechanism still **cannot** repair an artist association
+because `artist_id` bypasses it entirely (**CAT-0 F-15, re-escalated to P1**) —
+this is why even the one confirmed row, XY67a, is not repaired in this PR.
 
-No write is justified yet. Run the audit SQL, verify the 21 families externally,
-close F-15 — in that order.
+No write is justified yet. Verify the remaining 20 families externally, close
+F-15, then repair — in that order. **Do not open ATTR-1 in this PR.**
