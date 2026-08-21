@@ -273,6 +273,23 @@ console.log('\n4. THE UPSERT TOUCHES ONLY THE FIVE ATTRIBUTION COLUMNS');
   ok(!forbiddenCols.some((c) => onConflict.includes(c)),
      'ON CONFLICT DO UPDATE SET touches no unrelated card_extras column');
 
+  // P-4 TOCTOU guard: the DO UPDATE must be conditional on the conflicting
+  // row STILL carrying no attribution bundle, so a target that acquired a
+  // correction between P-4's snapshot and this statement is left untouched
+  // rather than overwritten.
+  const conflictWhere = (onConflict.match(/where([\s\S]*)$/i) || ['', ''])[1] || '';
+  ok(['illustrator_override', 'artist_id_override', 'attribution_override_evidence',
+      'attribution_override_approved_by', 'attribution_override_approved_at']
+     .every((c) => new RegExp(`card_extras\\.${c}\\s+is\\s+null`, 'i').test(conflictWhere)),
+     'ON CONFLICT DO UPDATE SET is guarded by a WHERE requiring all five attribution fields still NULL (closes the P-4 TOCTOU overwrite gap)');
+
+  // V-1 must require the exact ATTR-1 provenance fingerprint on all 12, not
+  // merely "some complete bundle" — this is what turns a skipped TOCTOU-guarded
+  // write into a hard abort instead of a silent partial commit.
+  const v1Block = (migration.match(/── V-1[\s\S]*?end if;/i) || [''])[0];
+  ok(/attr-1-confirmed-repair/i.test(v1Block) && /system:attr-1-migration/i.test(v1Block),
+     'V-1 requires the exact ATTR-1 provenance fingerprint (derivation + approved_by) on all 12 bundles');
+
   // V-8 must exist to prove unrelated fields survive both the "row already
   // existed" and "row is brand new" cases.
   ok(/V-8 FAILED/i.test(migration) && /source_note.*is distinct from.*post\.source_note/i.test(migration.replace(/\s+/g, ' ')),
@@ -330,6 +347,23 @@ console.log('\n6. PREFLIGHT DRIFT GUARDS EXIST');
   ok(/preflight P-1/i.test(mig), 'P-1: F-15 channel shape guard is present');
   ok(/card_extras_admit_attribution_override/i.test(mig),
      'P-1 checks for the F-15 admission trigger by name');
+
+  // P-1 must not stop at name-only: a disabled trigger still satisfies a
+  // name-only check while enforcing nothing.
+  ok(/tgenabled/i.test(mig) && /v_tgenabled\s*=\s*'D'/i.test(mig) && /DISABLED/i.test(migration),
+     "P-1 asserts the F-15 admission trigger is ENABLED (tgenabled), not merely present by name");
+  ok(/tgtype/i.test(mig) && /BEFORE INSERT OR UPDATE FOR EACH ROW/i.test(migration),
+     'P-1 asserts the trigger fires BEFORE INSERT OR UPDATE FOR EACH ROW (tgtype bitmask)');
+  ok(/tgfoid/i.test(mig) && /pg_proc/i.test(mig) && /pg_namespace/i.test(mig),
+     "P-1 resolves the trigger's bound function via tgfoid/pg_proc/pg_namespace, not by trigger name alone");
+  ok(/prosecdef/i.test(mig) && /SECURITY INVOKER/i.test(migration),
+     'P-1 asserts the admission function is still SECURITY INVOKER plpgsql');
+  ok(/prosrc/i.test(mig)
+     && /unnest\(coalesce\(a\.aliases/i.test(mig)
+     && /v_match_count > 1/i.test(mig)
+     && /v_match_count = 0/i.test(mig),
+     "P-1 pins the admission function's load-bearing resolver semantics (aliases-only, fail-closed-on-ambiguity, zero-match-requires-NULL) via prosrc, not just its name/binding");
+
   ok(/preflight P-2/i.test(mig), 'P-2: exact-12-ids-live guard is present');
   ok(/preflight P-3/i.test(mig) && /currency/i.test(migration),
      'P-3: currency check against the canonical pre-repair reading is present');
@@ -409,6 +443,23 @@ console.log('\n8. ROLLBACK IS TARGET/PROVENANCE-SCOPED');
       'image_override_evidence', 'image_override_approved_by', 'image_override_approved_at']
      .every((c) => deleteBlock.includes(c)),
      'the DELETE guard checks every unrelated nullable column before removing a row');
+
+  // Rollback postflight must check ALL FIVE attribution fields are cleared,
+  // not illustrator_override alone, and must actually use v_still_sui-style
+  // membership evidence rather than computing it and never checking it.
+  const postflightBlock = (rollback.match(/── Confirm the reversal[\s\S]*?commit;/i) || [''])[0];
+  ok(postflightBlock.length > 0, 'rollback postflight confirmation block is present');
+  ok(['illustrator_override', 'artist_id_override', 'attribution_override_evidence',
+      'attribution_override_approved_by', 'attribution_override_approved_at']
+     .every((c) => new RegExp(`${c}\\s+is not null`, 'i').test(postflightBlock)),
+     'rollback postflight checks all five attribution fields are cleared, not illustrator_override alone');
+
+  ok(/v_f15_active/i.test(rbk),
+     "rollback checks whether F-15's channel (cards_effective CASE on artist_id_override) is still live before asserting a membership reversal");
+  ok(/cannot prove xyp-XY67a.?.?s membership reversal/i.test(rbkJoined),
+     'rollback explicitly STOPs rather than silently succeeding when the membership reversal is not safely assertable');
+  ok(/expected sui \(the pre-ATTR-1 state/i.test(rbkJoined),
+     "rollback raises an exception (not merely a notice) if xyp-XY67a's effective artist_id is not 'sui' after the clear/delete pass");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

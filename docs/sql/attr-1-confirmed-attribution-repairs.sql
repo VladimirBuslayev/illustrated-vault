@@ -60,6 +60,16 @@
 --   image override) appears on one of these 12 rows between authoring and
 --   execution, the upsert still touches only the five attribution columns and
 --   preserves everything else (§9 V-8 proves this).
+--
+--   P-4 proves no target carries an attribution bundle AT THAT STATEMENT'S
+--   SNAPSHOT, which does not by itself close the window between P-4 and the
+--   upsert below. The `DO UPDATE SET` is therefore additionally guarded by a
+--   `WHERE` clause requiring all five attribution fields to still be NULL at
+--   the moment of the write (§1), so a target that acquires a correction in
+--   that window is left untouched rather than overwritten — and §9 V-1 then
+--   requires every one of the 12 to carry the exact ATTR-1 provenance
+--   fingerprint, so a skipped write aborts the whole migration instead of
+--   silently committing 11-of-12.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -216,6 +226,13 @@ declare
   ];
   v_trigger_count int;
   v_tablelevel    bigint;
+  v_tgenabled     "char";
+  v_tgtype        smallint;
+  v_fn_schema     text;
+  v_fn_name       text;
+  v_fn_secdef     bool;
+  v_fn_lang       text;
+  v_fn_src        text;
 begin
   if to_regclass('public.card_extras') is null then
     raise exception 'ATTR-1 preflight P-1: public.card_extras does not exist.';
@@ -256,6 +273,86 @@ begin
       'to enforce resolver consistency and must not bypass it by proceeding '
       'without it.';
   end if;
+
+  -- A trigger existing BY NAME is not the same as it being live and doing
+  -- the reviewed thing: a DISABLED trigger still satisfies the count check
+  -- above while enforcing nothing, and a same-named trigger could in
+  -- principle be rebound to a different function. This migration explicitly
+  -- relies on this trigger as its SECOND resolver wall (P-5 re-checks the
+  -- resolver, but the trigger is what actually enforces it at write time) —
+  -- so same-name drift must fail closed, not pass silently.
+  select t.tgenabled, t.tgtype, n.nspname, p.proname, p.prosecdef,
+         l.lanname, p.prosrc
+    into v_tgenabled, v_tgtype, v_fn_schema, v_fn_name, v_fn_secdef,
+         v_fn_lang, v_fn_src
+  from pg_trigger t
+  join pg_proc p      on p.oid = t.tgfoid
+  join pg_namespace n on n.oid = p.pronamespace
+  join pg_language l  on l.oid = p.prolang
+  where t.tgrelid = 'public.card_extras'::regclass
+    and not t.tgisinternal
+    and t.tgname = 'card_extras_admit_attribution_override';
+
+  if v_tgenabled = 'D' then
+    raise exception
+      'ATTR-1 preflight P-1: the F-15 admission trigger exists but is '
+      'DISABLED (tgenabled=D). A disabled trigger enforces nothing — ATTR-1 '
+      'must not write through a channel whose second wall is silently off. '
+      'STOP.';
+  end if;
+
+  -- tgtype bit flags (see postgres pg_trigger.tgtype / trigger.h):
+  -- 1=ROW, 2=BEFORE, 4=INSERT, 8=DELETE, 16=UPDATE. The reviewed trigger is
+  -- BEFORE INSERT OR UPDATE FOR EACH ROW; any other firing shape means the
+  -- trigger no longer runs where this migration's writes need it to.
+  if (v_tgtype & 1) = 0 or (v_tgtype & 2) = 0
+     or (v_tgtype & 4) = 0 or (v_tgtype & 16) = 0 then
+    raise exception
+      'ATTR-1 preflight P-1: the F-15 admission trigger is not '
+      'BEFORE INSERT OR UPDATE FOR EACH ROW (tgtype=%). Its firing shape has '
+      'drifted from the reviewed design. STOP.', v_tgtype;
+  end if;
+
+  if v_fn_schema is distinct from 'public'
+     or v_fn_name is distinct from 'card_extras_admit_attribution_override' then
+    raise exception
+      'ATTR-1 preflight P-1: the trigger is bound to %.%(), not '
+      'public.card_extras_admit_attribution_override(). A same-named trigger '
+      'pointing at a different function must fail closed, not pass by name '
+      'alone. STOP.', v_fn_schema, v_fn_name;
+  end if;
+
+  if v_fn_secdef is distinct from false or v_fn_lang is distinct from 'plpgsql' then
+    raise exception
+      'ATTR-1 preflight P-1: the F-15 admission function is no longer '
+      'SECURITY INVOKER plpgsql (secdef=%, lang=%) — its privilege shape has '
+      'drifted from the reviewed design. STOP.', v_fn_secdef, v_fn_lang;
+  end if;
+
+  -- Pin the load-bearing SEMANTICS, not just the name and binding: the
+  -- aliases-only resolver, the fail-closed-on-ambiguity rule (R4), the
+  -- zero-match-requires-NULL rule (R3), and provenance completeness (R1).
+  -- A same-named, correctly-bound function whose body was quietly redefined
+  -- without these would otherwise pass every check above while removing
+  -- ATTR-1's second wall.
+  if position('unnest(coalesce(a.aliases' in v_fn_src) = 0
+     or position('v_match_count > 1' in v_fn_src) = 0
+     or position('v_match_count = 0' in v_fn_src) = 0
+     or position('attribution_override_evidence' in v_fn_src) = 0
+     or position('attribution_override_approved_by' in v_fn_src) = 0
+     or position('attribution_override_approved_at' in v_fn_src) = 0 then
+    raise exception
+      'ATTR-1 preflight P-1: the F-15 admission function body no longer '
+      'contains the reviewed aliases-only resolver, fail-closed-on-ambiguity, '
+      'zero-match-requires-NULL, or provenance-completeness logic. Same-name, '
+      'same-binding drift must still fail closed. STOP and re-review before '
+      'trusting this channel.';
+  end if;
+
+  raise notice
+    'ATTR-1 preflight P-1: F-15 admission trigger is enabled, correctly '
+    'shaped, bound to the reviewed function, and its load-bearing resolver '
+    'semantics are intact.';
 
   -- cards_effective must be reading artist_id_override through the F-15 CASE,
   -- not the pre-F-15 raw passthrough — otherwise this migration's writes would
@@ -469,6 +566,15 @@ end $$;
 -- write time against the SAME aliases-only resolver P-5 just re-checked; if
 -- production moved between P-5 and this INSERT within the same transaction,
 -- the trigger — not this file's own logic — is the second, independent wall.
+--
+-- The ON CONFLICT DO UPDATE's WHERE guard closes the P-4 TOCTOU gap: it only
+-- overwrites a conflicting row if that row STILL carries no attribution
+-- bundle at write time. A target that acquired a correction between P-4's
+-- snapshot and this statement (a manual or service-role writer racing this
+-- migration) is left untouched — its DO UPDATE simply does not match — and
+-- §9 V-1 catches the resulting short write by requiring all 12 to carry the
+-- ATTR-1 provenance fingerprint, aborting the whole transaction rather than
+-- silently committing a partial repair.
 
 insert into public.card_extras (
   card_id,
@@ -501,7 +607,12 @@ on conflict (card_id) do update set
   artist_id_override                = excluded.artist_id_override,
   attribution_override_evidence     = excluded.attribution_override_evidence,
   attribution_override_approved_by  = excluded.attribution_override_approved_by,
-  attribution_override_approved_at  = excluded.attribution_override_approved_at;
+  attribution_override_approved_at  = excluded.attribution_override_approved_at
+where card_extras.illustrator_override             is null
+  and card_extras.artist_id_override               is null
+  and card_extras.attribution_override_evidence    is null
+  and card_extras.attribution_override_approved_by is null
+  and card_extras.attribution_override_approved_at is null;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -528,6 +639,13 @@ declare
   v_extra_bundles     bigint;
 begin
   -- ── V-1 — exactly 12 complete ATTR-1 bundles, exactly the target set ──────
+  -- Requires the exact ATTR-1 provenance fingerprint (derivation +
+  -- approved_by), not merely "some complete bundle" — this is what turns the
+  -- P-4/upsert TOCTOU guard into an actual abort rather than a silent partial
+  -- write: if the conditional DO UPDATE skipped a target because a racing
+  -- writer got there first, that row carries the RACING write's fingerprint
+  -- (or none), v_bundle_count comes in under 12, and the whole transaction
+  -- rolls back instead of committing 11-of-12.
   select count(*) into v_bundle_count
   from public.card_extras ce
   join attr1_targets t on t.card_id = ce.card_id
@@ -535,13 +653,20 @@ begin
     and ce.artist_id_override               is null
     and ce.attribution_override_evidence    is not null
     and ce.attribution_override_approved_by is not null
-    and ce.attribution_override_approved_at is not null;
+    and ce.attribution_override_approved_at is not null
+    and (ce.attribution_override_evidence ->> 'derivation') = 'attr-1-confirmed-repair'
+    and ce.attribution_override_approved_by = 'system:attr-1-migration';
 
   if v_bundle_count <> 12 then
     raise exception
       'ATTR-1 V-1 FAILED: expected exactly 12 complete attribution bundles '
-      '(illustrator_override set, artist_id_override NULL, full provenance), '
-      'found %. ABORTING.', v_bundle_count;
+      'carrying the ATTR-1 provenance fingerprint (illustrator_override set, '
+      'artist_id_override NULL, full provenance, derivation='
+      'attr-1-confirmed-repair, approved_by=system:attr-1-migration), found '
+      '%. A short count means a target already acquired a different '
+      'correction between P-4 and the upsert and this migration correctly '
+      'refused to overwrite it — ABORTING the whole transaction rather than '
+      'committing a partial repair.', v_bundle_count;
   end if;
 
   -- No OTHER row anywhere in card_extras now carries an ATTR-1-shaped bundle

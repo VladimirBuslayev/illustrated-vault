@@ -144,32 +144,74 @@ and image_override_approved_at       is null;
 
 do $$
 declare
-  v_remaining bigint;
-  v_still_sui bigint;
+  v_remaining  bigint;
+  v_f15_active boolean;
+  v_xy67a_now  text;
 begin
+  -- All FIVE attribution fields, not illustrator_override alone — a row could
+  -- in principle retain a stray artist_id_override or evidence/approval
+  -- fragment even with illustrator_override cleared, and that would still be
+  -- an incomplete reversal.
   select count(*) into v_remaining
   from public.card_extras
   where card_id in (
     'g1-28a','g1-73a','xy10-111a','xy10-43a','xy4-65a','xy6-77a',
     'xy7-75a','xy9-107a','xy9-98b','xyp-XY150a','xyp-XY177a','xyp-XY67a'
   )
-  and illustrator_override is not null;
+  and (
+    illustrator_override             is not null
+    or artist_id_override            is not null
+    or attribution_override_evidence is not null
+    or attribution_override_approved_by is not null
+    or attribution_override_approved_at is not null
+  );
 
   if v_remaining <> 0 then
     raise exception
-      'ATTR-1 rollback FAILED: % target(s) still carry an illustrator_override '
-      'after the clear/delete pass. ABORTING.', v_remaining;
+      'ATTR-1 rollback FAILED: % target(s) still carry a non-NULL attribution '
+      'field after the clear/delete pass — all five ATTR-1 fields must be '
+      'cleared, not illustrator_override alone. ABORTING.', v_remaining;
   end if;
 
-  select count(*) into v_still_sui
+  -- Prove the EFFECTIVE reversal, not merely that storage-layer columns are
+  -- NULL. This is only honestly assertable while F-15's channel is still
+  -- live to read through (cards_effective discriminating on
+  -- artist_id_override via its CASE) — if F-15 has itself been rolled back
+  -- in the same window, this file cannot safely claim what xyp-XY67a's
+  -- membership "should" read, so it STOPs rather than silently reporting
+  -- success on an unproven claim.
+  select position('artist_id_override' in lower(pg_get_viewdef('public.cards_effective'::regclass, true))) > 0
+     and position('case' in lower(pg_get_viewdef('public.cards_effective'::regclass, true))) > 0
+    into v_f15_active;
+
+  if not coalesce(v_f15_active, false) then
+    raise exception
+      'ATTR-1 rollback FAILED: cannot prove xyp-XY67a''s membership reversal '
+      '— cards_effective no longer reads artist_id_override through the F-15 '
+      'CASE, so the pre-ATTR-1 effective state is not safely assertable here. '
+      'The five attribution fields ARE cleared (checked above), but this file '
+      'refuses to claim the membership reversal is proven when it is not. '
+      'STOP and verify xyp-XY67a''s effective artist_id manually before '
+      'treating this rollback as complete.';
+  end if;
+
+  select artist_id into v_xy67a_now
   from public.cards_effective
-  where id = 'xyp-XY67a' and artist_id is not distinct from 'sui';
+  where id = 'xyp-XY67a';
+
+  if v_xy67a_now is distinct from 'sui' then
+    raise exception
+      'ATTR-1 rollback FAILED: xyp-XY67a effective artist_id is % after '
+      'rollback, expected sui (the pre-ATTR-1 state this rollback claims to '
+      'restore). Clearing the storage-layer override is not sufficient — the '
+      'effective reversal must be proven before COMMIT. ABORTING.',
+      coalesce(v_xy67a_now, 'NULL');
+  end if;
 
   raise notice
-    'ATTR-1 rollback: all 12 target bundles cleared. xyp-XY67a effective '
-    'artist_id is now % (expect it to read sui again, restoring the '
-    'pre-ATTR-1 state, unless F-15 itself is also rolled back).',
-    (select artist_id from public.cards_effective where id = 'xyp-XY67a');
+    'ATTR-1 rollback: all 12 target bundles fully cleared (all five '
+    'attribution fields) and xyp-XY67a''s effective artist_id is confirmed '
+    'restored to sui.';
 end $$;
 
 commit;

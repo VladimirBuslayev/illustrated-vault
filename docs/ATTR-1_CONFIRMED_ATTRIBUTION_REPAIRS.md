@@ -21,6 +21,7 @@ approval gate. Catalog sync: still paused.**
 | Runtime changes | **none** — `src/**` and `sync/**` are untouched |
 | Catalog sync | **remains paused** — not resumed, not triggered |
 | Authored | 2026-08-21 |
+| Corrected | 2026-08-21 — independent review HOLD on `217bfe7` addressed; see §12 |
 
 ---
 
@@ -45,10 +46,15 @@ interactive tool approval that was not available in this authoring session
 ## 2. The migration SHA-256 — and why it is verifiable
 
 ```
-0607ac1580ed283f5dc53eba5a36f220663d58a8fbf3a0f1a96d8ffd08ec4789  docs/sql/attr-1-confirmed-attribution-repairs.sql
+d15127c36b99369e294bb177efab2df195146777c8d613d6a9b00ee01295542f  docs/sql/attr-1-confirmed-attribution-repairs.sql
 2f6e75d1c50b65eeedd97e521d3ddb211e1485b1e6739408f715a2ecd13b9968  docs/sql/attr-1-confirmed-attribution-repairs-validation.sql
-5c4fc55a505e89773fc9d0d9a1384408b43bff5f0b32044a2fb0c3440f689b9b  docs/sql/attr-1-confirmed-attribution-repairs-rollback.sql
+df6b8e8ecc48460db5f73c31aa9b312a697620802800ea1eeb874d77ea359761  docs/sql/attr-1-confirmed-attribution-repairs-rollback.sql
 ```
+
+**Updated 2026-08-21** in the correction round addressing the P-4 TOCTOU
+overwrite gap, the P-1 trigger-enabled/pinned-semantics guard, and the
+rollback postflight fix (see §12). The validation file's checksum is
+unchanged — that file was not touched by this round.
 
 A checksum whose only purpose is to be re-derived by a reviewer before
 authorising a production run is worthless if it depends on the platform doing
@@ -167,10 +173,10 @@ validation shape F-15 established, scoped narrowly to data repair only.
 
 | Gate | Checks | STOPs if |
 |---|---|---|
-| P-1 | The F-15 channel exists: all 4 columns, all 4 constraints (`card_extras_artist_id_override_fk`, `..._all_or_nothing`, `..._approved_by_nonempty`, `..._requires_illustrator`), the `card_extras_admit_attribution_override` trigger, `cards_effective` reads `artist_id_override` via a CASE, and the CAT-3B/F-15 column ACL still has no table-level grant for anon/authenticated | F-15 has drifted from its deployed shape |
+| P-1 | The F-15 channel exists: all 4 columns, all 4 constraints (`card_extras_artist_id_override_fk`, `..._all_or_nothing`, `..._approved_by_nonempty`, `..._requires_illustrator`), the `card_extras_admit_attribution_override` trigger — **enabled**, firing `BEFORE INSERT OR UPDATE FOR EACH ROW`, bound to `public.card_extras_admit_attribution_override()` via `tgfoid` (not by name alone), that function still `SECURITY INVOKER` plpgsql with its load-bearing resolver semantics intact (aliases-only lookup, fail-closed-on-ambiguity, zero-match-requires-NULL) — `cards_effective` reads `artist_id_override` via a CASE, and the CAT-3B/F-15 column ACL still has no table-level grant for anon/authenticated | F-15 has drifted from its deployed shape, including a disabled trigger or same-name-drifted admission logic |
 | P-2 | Exactly the 12 target IDs are live in `cards_effective` | any target is missing, or the count is not exactly 12 |
 | P-3 | Each target's current effective `(illustrator, artist_id)` matches the canonical pre-repair reading in `f15-repair-impact.csv` | anything has changed since the evidence was captured |
-| P-4 | No target already carries any attribution bundle field | a prior correction (verified or not) would be silently overwritten |
+| P-4 | No target already carries any attribution bundle field at this statement's snapshot. The `ON CONFLICT DO UPDATE SET` in §1 additionally re-checks this at write time (`WHERE` all five fields still `NULL`), closing the TOCTOU gap between P-4's snapshot and the upsert | a prior correction (verified or not) would be silently overwritten |
 | P-5 | Each of the 7 distinct verified illustrator names still resolves to zero `public.artists` rows via the aliases-only resolver | any name now resolves to ≥1 artist — the approved `artist_id_override = NULL` plan may no longer be correct |
 
 Before mutation, five temporary snapshots (`ON COMMIT DROP`) capture: the
@@ -203,7 +209,7 @@ just re-checked; it is the second, independent wall, not merely a formality.
 
 | Check | Proves |
 |---|---|
-| V-1 | Exactly 12 complete attribution bundles exist, exactly for the target set — no non-target row gained a new bundle |
+| V-1 | Exactly 12 complete attribution bundles exist, exactly for the target set, each carrying the exact ATTR-1 provenance fingerprint (`derivation = 'attr-1-confirmed-repair'`, `approved_by = 'system:attr-1-migration'`) — no non-target row gained a new bundle, and a short count (e.g. because the P-4 upsert guard skipped a racing target) aborts the whole transaction |
 | V-2 | Each target's effective illustrator equals the verified name |
 | V-3 | Effective `artist_id` is NULL on all 12 |
 | V-4 | The eleven non-`xyp-XY67a` targets had no FK membership change |
@@ -256,7 +262,10 @@ properties above:
    (V-7, V-8, V-9), plus the membership postconditions (V-4, V-5, V-6).
 8. The rollback is scoped to the exact 12 IDs, checks a provenance fingerprint
    (`derivation` + `approved_by` + expected illustrator name) before touching
-   any row, and never writes `public.cards`.
+   any row, never writes `public.cards`, and its postflight proves — not just
+   asserts — the reversal: all five attribution fields cleared on every
+   target, plus `xyp-XY67a`'s effective membership confirmed restored to
+   `sui` (or an explicit `STOP` if that is not safely assertable).
 9. Structural sanity: balanced `BEGIN`/`COMMIT`, balanced `$$` dollar-quoting,
    nothing executable after the final `COMMIT`.
 
@@ -358,3 +367,63 @@ not updated by an authoring-only slice (AGENTS.md "Documentation closeout").
 4. After successful execution and its own separate review, update
    `docs/CURRENT_STATE.md` / `docs/DECISION_LOG.md` / `docs/ROADMAP.md` as a
    deliberate closeout step — not before.
+
+---
+
+## 12. Independent review correction round (2026-08-21)
+
+Independent review on head `217bfe7` returned HOLD, identifying three
+fail-closed gaps in the authored package. This round closes all three,
+narrowly, without broadening scope:
+
+1. **P-4 TOCTOU overwrite gap.** P-4 proved no target carried an attribution
+   bundle at that statement's snapshot, but the `INSERT ... ON CONFLICT DO
+   UPDATE SET` that followed was unconditional — a target that acquired a
+   correction after P-4 but before the upsert (a manual or service-role
+   writer racing this migration) would have been silently overwritten.
+   Fixed by adding a `WHERE` guard to the `DO UPDATE SET` requiring all five
+   attribution fields to still be `NULL` on the conflicting row (§1), and by
+   tightening §9 V-1 to require the exact ATTR-1 provenance fingerprint
+   (`derivation = 'attr-1-confirmed-repair'`, `approved_by =
+   'system:attr-1-migration'`) on all 12 bundles — so a target the guard
+   skipped drops the count below 12 and aborts the whole transaction instead
+   of committing a partial repair.
+2. **P-1 checked the F-15 admission trigger by name only.** A disabled
+   trigger, or a same-named trigger rebound to a different function, would
+   have passed the original P-1 silently. P-1 now additionally asserts:
+   the trigger is enabled (`tgenabled <> 'D'`); its firing shape is exactly
+   `BEFORE INSERT OR UPDATE FOR EACH ROW` (`tgtype` bitmask); it is bound to
+   `public.card_extras_admit_attribution_override()` via `tgfoid`/`pg_proc`,
+   not by name coincidence; that function is still `SECURITY INVOKER`
+   plpgsql; and the function body (`pg_proc.prosrc`) still contains the
+   load-bearing resolver semantics — the aliases-only lookup, the
+   fail-closed-on-ambiguity rule, and the zero-match-requires-NULL rule —
+   so same-name drift of the underlying logic fails closed rather than
+   passing silently.
+3. **Rollback postflight was incomplete.** It computed `v_still_sui` but
+   never checked it, and reported success after checking only
+   `illustrator_override IS NULL`. The postflight now checks all five
+   ATTR-1 attribution fields are cleared, and mechanically proves the
+   effective reversal: it confirms `xyp-XY67a`'s effective `artist_id` reads
+   `sui` again before allowing `COMMIT`, and — if F-15's own channel is not
+   live enough to safely make that assertion (e.g. F-15 was also rolled
+   back in the same window) — it `STOP`s explicitly rather than silently
+   reporting success on an unproven claim.
+
+The static harness (`scripts/attr1-attribution-repairs.test.mjs`) was
+updated to assert all three fixes structurally: the P-4 `WHERE` guard and
+the V-1 provenance fingerprint requirement, the P-1 enabled/firing-shape/
+binding/security/semantics checks, and the rollback's all-five-fields
+postflight plus its explicit STOP path. The three SQL checksums in §2 were
+regenerated; the validation file was not touched by this round and its
+checksum is unchanged.
+
+**Still not executed.** `node scripts/attr1-attribution-repairs.test.mjs`
+could not be run in this session either — `node`/`npm` again required
+interactive tool approval unavailable here. Every new/changed regex was
+traced by hand against the actual committed SQL and rollback text, and the
+`tgtype` bitmask was independently re-derived (`ROW=1, BEFORE=2, INSERT=4,
+DELETE=8, UPDATE=16` per `pg_trigger.tgtype`/`trigger.h`) — an earlier draft
+of this fix used `8` for `UPDATE`, which is `DELETE`'s bit, and was caught
+and corrected before commit. **Please run the static harness on this head
+before treating the implementation gate as approved**, exactly as requested.
