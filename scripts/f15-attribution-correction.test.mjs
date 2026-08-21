@@ -591,11 +591,21 @@ console.log('\n12. PREFLIGHT / POSTFLIGHT — exact-shape fail-closed guards (PR
   ok(/F-15 preflight P-8[\s\S]*?table-level grant\(s\) exist/i.test(mig),
      'P-8 also rejects a table-level grant re-added for anon/authenticated');
 
-  // P-9 — RLS enabled/not forced, exactly one USING-true SELECT policy.
+  // P-9 — RLS enabled/not forced, exactly one policy pinned to its FULL
+  // reviewed shape: name, cmd, permissiveness, exact role scope, USING, and
+  // WITH CHECK — not just cmd/using (PR #26 review 4989308333).
   ok(/F-15 preflight P-9[\s\S]*?rowsecurity/i.test(mig),
      'P-9 asserts RLS is enabled and not forced before mutating card_extras');
   ok(/polrelid\s*=\s*'public\.card_extras'::regclass/i.test(mig),
      'P-9 reads the live card_extras RLS policy');
+  ok(/v_policy_name\s+is\s+distinct\s+from\s+'card_extras_public_select'/i.test(mig),
+     'P-9 pins the exact policy name card_extras_public_select');
+  ok(/v_policy_permissive\s+is\s+distinct\s+from\s+true/i.test(mig),
+     'P-9 pins polpermissive=true');
+  ok(/v_policy_roles\s+is\s+distinct\s+from\s+array\['anon','authenticated'\]/i.test(mig),
+     "P-9 pins the policy roles to exactly {anon,authenticated}");
+  ok(/v_policy_check\s+is\s+not\s+null/i.test(mig),
+     'P-9 asserts WITH CHECK is NULL (no check expression)');
 
   // P-10 — exactly the two pre-F-15 triggers, by name.
   ok(/array\['card_extras_admit_image_override','card_extras_set_updated_at'\]/.test(mig),
@@ -606,16 +616,23 @@ console.log('\n12. PREFLIGHT / POSTFLIGHT — exact-shape fail-closed guards (PR
      'f15_pre_viewdef snapshot is TEMPORARY … ON COMMIT DROP, captured before §1');
 
   // V-11b — the post-migration view is proven to differ from the captured
-  // pre-migration definition ONLY in the known artist_id tail, without
-  // hardcoding a guessed hash for text this environment cannot render ahead
-  // of execution (ruleutils' rendering of the new CASE cannot be predicted
-  // without actually running PostgreSQL).
+  // pre-migration definition ONLY in the isolated artist_id projection,
+  // without assuming pg_get_viewdef() ends at the final SELECT-list
+  // projection (it does not — FROM/JOIN/WHERE follow it, confirmed against
+  // live production in PR #26 review 4989308333), and without hardcoding a
+  // guessed hash for post-migration text this environment cannot render
+  // ahead of execution (ruleutils' rendering of the new CASE cannot be
+  // predicted without actually running PostgreSQL).
   ok(/select\s+def\s+into\s+v_pre_def\s+from\s+f15_pre_viewdef/i.test(mig),
      'V-11b reads back the pre-migration definition snapshot');
-  ok(/position\(v_pre_head\s+in\s+v_def\)\s*<>\s*1/i.test(mig),
+  ok(/v_needle_ct\s*<>\s*1/i.test(mig),
+     'V-11b requires the raw c.artist_id projection to appear exactly once, so it can be unambiguously isolated');
+  ok(/position\(v_pre_prefix\s+in\s+v_def\)\s*<>\s*1/i.test(mig),
      'V-11b proves everything before the final projection is byte-identical to the pre-migration definition');
-  ok(/v_post_tail\s*:=\s*substring\(v_def\s+from\s+length\(v_pre_head\)\s*\+\s*1\)/i.test(mig),
-     'V-11b isolates the changed tail and checks it is the approved CASE expression');
+  ok(/right\(v_def,\s*length\(v_pre_suffix\)\)\s*<>\s*v_pre_suffix/i.test(mig),
+     'V-11b proves the entire FROM/JOIN/WHERE tail after the projection is byte-identical to the pre-migration definition');
+  ok(/v_mid\s*:=\s*substring\(v_def\s+from\s+length\(v_pre_prefix\)\s*\+\s*1/i.test(mig),
+     'V-11b isolates the replaced middle and checks it is the approved CASE expression');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

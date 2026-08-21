@@ -11,10 +11,10 @@
 | Base | `main` @ `9f233de3405e1aba26358bc54a0b4156b9b09df8` |
 | Design (authoritative) | `docs/F-15_DURABLE_ATTRIBUTION_CORRECTION_DESIGN.md` (PR #25, merged) |
 | Migration | `docs/sql/f15-durable-attribution-correction.sql` — **NOT EXECUTED** |
-| Migration SHA-256 | `66fd722b05477fabb3f6062f4a94f3c783b4521403c66192b0ccf9c36b576772` |
+| Migration SHA-256 | `6483bb602890e9d4ca3f24feb1cc1bab643fb513b8994a5bba773332ebc105af` |
 | Validation | `docs/sql/f15-durable-attribution-correction-validation.sql` — **NOT EXECUTED** |
 | Rollback | `docs/sql/f15-durable-attribution-correction-rollback.sql` — **NOT EXECUTED** |
-| Static harness | `scripts/f15-attribution-correction.test.mjs` — **146 assertions, all pass at authoring; extended by the PR #26 correction below, not re-run in that session (§16)** |
+| Static harness | `scripts/f15-attribution-correction.test.mjs` — **146 assertions at original authoring; extended twice by PR #26 review corrections; not executed in this session (tool-permission restriction, §17) — assertion count not re-verified** |
 | Production reads | read-only introspection only (Supabase MCP is read-only) |
 | Production writes | **none** |
 | Production execution | **a separate, explicitly-approved gate. Not granted here.** |
@@ -41,7 +41,7 @@ preflight (P-6) and once before it commits (V-13).
 ## 2. The migration SHA-256 — and why it is verifiable
 
 ```
-66fd722b05477fabb3f6062f4a94f3c783b4521403c66192b0ccf9c36b576772  docs/sql/f15-durable-attribution-correction.sql
+6483bb602890e9d4ca3f24feb1cc1bab643fb513b8994a5bba773332ebc105af  docs/sql/f15-durable-attribution-correction.sql
 04373eaa3e5e11312ac0652071369c5df3157b0c417e3c5a9d04253dd496cd5a  docs/sql/f15-durable-attribution-correction-validation.sql
 14f397f6063007ac41a880314d3c2f84c0b68f1eca32cb43987bdca33bce26ee  docs/sql/f15-durable-attribution-correction-rollback.sql
 ```
@@ -297,15 +297,15 @@ more than that.**
 failures**, at authoring. No test framework introduced; matches the
 OL-0A/0C/0D, CAT-2D and CAT-3B harnesses.
 
-**The PR #26 review correction (§16) added further assertions to this file
-for the new preflight/postflight guards it required.** The environment that
-applied that correction could not execute `node` (tool-permission
-restriction; git and `sha256sum` were available, `node`/`npm` were not), so
-those new assertions were verified by manual trace against the harness's own
-regexes rather than by running the suite. **Re-run
-`node scripts/f15-attribution-correction.test.mjs` before trusting the
-146-assertion figure above still holds** — treat it as the pre-correction
-baseline until it is.
+**The PR #26 review corrections (§16, §17) added further assertions to this
+file for the preflight/postflight guards they required.** In both correction
+sessions the environment could not execute `node` (tool-permission
+restriction; `git`, `sha256sum` and `git diff --check` were available,
+`node`/`npm`/`gh` were not), so the new assertions were verified by manual
+trace against the harness's own regexes rather than by running the suite.
+**Re-run `node scripts/f15-attribution-correction.test.mjs` before trusting
+the 146-assertion figure above still holds** — treat it as the
+pre-correction baseline until it is.
 
 | Group | Proves |
 |---|---|
@@ -477,3 +477,67 @@ No production SQL was executed to produce this correction. Sync remains
 paused. The migration and validation SHA-256 checksums (§2) were regenerated
 for the new migration file text; the validation and rollback files are
 unchanged and keep their original checksums.
+
+---
+
+## 17. Correction — PR #26 review 4989308333 (HOLD, two remaining fail-closed gaps)
+
+Independent re-review of the §16 correction found the fail-closed hardening
+substantially landed (P-2b, P-7, P-8, P-10 all confirmed against live
+production), but held on two remaining gaps:
+
+1. **V-11b was guaranteed to fail on the real production view.** It asserted
+   `right(v_pre_def, length('c.artist_id')) = 'c.artist_id'` — i.e. that
+   `pg_get_viewdef()` ends at the final SELECT-list projection. It does not:
+   the `FROM`/`LEFT JOIN`/`WHERE` clauses follow it. An independent
+   re-measurement of production confirmed `ends_with_raw_artist_projection =
+   false`; the tail continues past `c.artist_id` into the `FROM`/`JOIN`/`WHERE`
+   clauses. As written, a *correct* F-15 run would reach V-11b and raise every
+   time.
+2. **P-9 pinned only `polcmd='r'` and `USING true`**, not the policy's full
+   shape. The live reviewed baseline is `polname='card_extras_public_select'`,
+   `polcmd='r'`, `polpermissive=true`, roles exactly `{anon, authenticated}`,
+   `USING true`, `WITH CHECK NULL`.
+
+Both were corrected in `docs/sql/f15-durable-attribution-correction.sql`,
+inside the existing §0 preflight / §9 validation sections — still read-only
+until §1:
+
+1. **V-11b rewritten** to not assume the raw `c.artist_id` projection is a
+   trailing substring of the view definition. It now requires the literal
+   text `c.artist_id` to appear **exactly once** in the pinned pre-migration
+   snapshot (`v_needle_ct <> 1` raises otherwise, so there is no ambiguity
+   about which occurrence is the final projection), splits the snapshot into
+   `v_pre_prefix` (everything before it) and `v_pre_suffix` (everything
+   after it — the entire `FROM`/`JOIN`/`WHERE` tail), then requires the
+   post-migration definition to start with `v_pre_prefix` and end with
+   `v_pre_suffix` byte-for-byte, with only the isolated middle (`v_mid`)
+   checked against the approved `CASE` expression. This still does not
+   hardcode a guessed hash for post-migration text this environment cannot
+   render ahead of execution.
+2. **P-9 rewritten** to pin the single existing `card_extras` RLS policy to
+   its full shape: `polname`, `polcmd`, `polpermissive`, the exact role set
+   (resolved from `polroles` via `pg_roles`, not assumed), the `USING`
+   expression, and that `WITH CHECK` is `NULL`. Any drift on any of these
+   fields now raises instead of running.
+
+`scripts/f15-attribution-correction.test.mjs` was updated to match: the
+old `v_pre_head`/`v_post_tail` assertions were replaced with assertions on
+`v_needle_ct`, `v_pre_prefix`, `v_pre_suffix` and `v_mid`; new P-9 assertions
+check for the exact policy name, `polpermissive`, the exact role array, and
+`WITH CHECK` being `NULL`.
+
+**This correction's new/changed assertions were not run** — same
+tool-permission restriction as §16 (`node`, `npm` and `gh` all required
+approval that could not be granted in this unattended session; `git`,
+`sha256sum` and `git diff --check` were available and were run — the latter
+is clean). Each new/changed regex was manually traced against the actual
+edited SQL text and confirmed to match. **Re-run
+`node scripts/f15-attribution-correction.test.mjs` and `npm.cmd run build`
+before treating this correction as verified.**
+
+No production SQL was executed to produce this correction. No ATTR-1 rows
+were touched. Sync remains paused. The migration SHA-256 (§2) was
+regenerated for the new migration file text:
+`6483bb602890e9d4ca3f24feb1cc1bab643fb513b8994a5bba773332ebc105af`. The
+validation and rollback file checksums are unchanged.

@@ -228,11 +228,16 @@ declare
   v_acl_auth      text[];
   v_acl_expect    text[] := array['card_id','illustrator_override','image_url_override'];
   v_tablelevel    bigint;
-  v_rls           boolean;
-  v_force_rls     boolean;
-  v_policy_count  bigint;
-  v_policy_cmd    "char";
-  v_policy_using  text;
+  v_rls              boolean;
+  v_force_rls        boolean;
+  v_policy_count     bigint;
+  v_policy_name      name;
+  v_policy_cmd       "char";
+  v_policy_permissive boolean;
+  v_policy_using     text;
+  v_policy_check     text;
+  v_policy_roles_oid oid[];
+  v_policy_roles     text[];
   v_trigger_names text[];
 begin
   -- P-8  CAT-3B's public column ACL is exactly the three pre-F-15 columns,
@@ -284,8 +289,14 @@ begin
   end if;
 
   -- P-9  RLS is enabled and not forced, with exactly the one existing public
-  --      SELECT policy. This migration adds no policy and must not run
-  --      against a table whose RLS shape it has not reviewed.
+  --      SELECT policy pinned to its FULL reviewed shape — name, command,
+  --      permissiveness, exact role scope, and both the USING and WITH CHECK
+  --      expressions — not just cmd/using. This migration adds no policy and
+  --      must not run against a table whose RLS shape it has not reviewed to
+  --      this level of detail (design §18 step 0 / audit A-1…A-5). The live
+  --      reviewed baseline (PR #26 review 4989308333) is exactly:
+  --      polname='card_extras_public_select', polcmd='r', polpermissive=true,
+  --      roles={anon,authenticated}, USING true, WITH CHECK NULL.
   select relrowsecurity, relforcerowsecurity into v_rls, v_force_rls
   from pg_class where oid = 'public.card_extras'::regclass;
   if v_rls is distinct from true or v_force_rls is distinct from false then
@@ -302,12 +313,47 @@ begin
       'exactly 1.', v_policy_count;
   end if;
 
-  select polcmd, pg_get_expr(polqual, polrelid) into v_policy_cmd, v_policy_using
+  select
+      polname, polcmd, polpermissive,
+      pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid),
+      polroles
+    into v_policy_name, v_policy_cmd, v_policy_permissive,
+         v_policy_using, v_policy_check, v_policy_roles_oid
   from pg_policy where polrelid = 'public.card_extras'::regclass;
-  if v_policy_cmd is distinct from 'r' or v_policy_using is distinct from 'true' then
+
+  select coalesce(array_agg(rolname order by rolname), array[]::text[])
+    into v_policy_roles
+  from pg_roles where oid = any(v_policy_roles_oid);
+
+  if v_policy_name is distinct from 'card_extras_public_select' then
     raise exception
-      'F-15 preflight P-9: the existing card_extras policy is cmd=%, using=% '
-      '— expected the read-only USING true policy.', v_policy_cmd, v_policy_using;
+      'F-15 preflight P-9: the existing card_extras policy is named % — '
+      'expected card_extras_public_select.', v_policy_name;
+  end if;
+  if v_policy_cmd is distinct from 'r' then
+    raise exception
+      'F-15 preflight P-9: the existing card_extras policy has cmd=% — '
+      'expected r (SELECT-only).', v_policy_cmd;
+  end if;
+  if v_policy_permissive is distinct from true then
+    raise exception
+      'F-15 preflight P-9: the existing card_extras policy permissive=% — '
+      'expected true.', v_policy_permissive;
+  end if;
+  if v_policy_roles is distinct from array['anon','authenticated'] then
+    raise exception
+      'F-15 preflight P-9: the existing card_extras policy roles are % — '
+      'expected exactly {anon,authenticated}.', v_policy_roles;
+  end if;
+  if v_policy_using is distinct from 'true' then
+    raise exception
+      'F-15 preflight P-9: the existing card_extras policy USING is % — '
+      'expected true.', v_policy_using;
+  end if;
+  if v_policy_check is not null then
+    raise exception
+      'F-15 preflight P-9: the existing card_extras policy has a WITH CHECK '
+      'expression (%) — expected none (NULL).', v_policy_check;
   end if;
 
   -- P-10  Exactly the two pre-F-15 triggers exist. §6 adds a third; if a
@@ -1020,8 +1066,12 @@ declare
   ];
   v_tablelevel bigint;
   v_pre_def    text;
-  v_pre_head   text;
-  v_post_tail  text;
+  v_needle     text := 'c.artist_id';
+  v_needle_ct  bigint;
+  v_split_pos  int;
+  v_pre_prefix text;
+  v_pre_suffix text;
+  v_mid        text;
 begin
   -- ── V-1 — THE HEADLINE INVARIANT ──────────────────────────────────────────
   -- Full pre/post diff of the effective attribution contract, in BOTH
@@ -1194,35 +1244,59 @@ begin
   --    guess would fail a CORRECT migration forever. Instead it derives the
   --    expected post-text from f15_pre_viewdef — what production itself
   --    said pre-migration, captured live in §0 and hash-pinned there by
-  --    P-2b — and proves every character before the final projection is
-  --    byte-identical to it.
+  --    P-2b.
+  --
+  --    ⚠ pg_get_viewdef() does NOT end at the final SELECT-list projection —
+  --    the FROM/LEFT JOIN/WHERE clauses follow it (confirmed against live
+  --    production, PR #26 review 4989308333: the definition continues past
+  --    "c.artist_id" with "FROM cards c LEFT JOIN ... WHERE ..."). So this
+  --    does not assume the raw projection is a trailing substring. Instead
+  --    it isolates the raw "c.artist_id" projection WITHIN the SELECT list —
+  --    requiring it to appear exactly once so there is no ambiguity about
+  --    which occurrence is the final projection — and proves the prefix
+  --    (everything before it) AND the suffix (everything after it, i.e. the
+  --    entire FROM/JOIN/WHERE tail) are byte-identical between pre- and
+  --    post-migration, with only the isolated middle replaced by the
+  --    approved CASE expression.
   select def into v_pre_def from f15_pre_viewdef;
   if v_pre_def is null then
     raise exception 'F-15 V-11 FAILED: pre-migration view definition snapshot (f15_pre_viewdef) is missing.';
   end if;
-  if right(v_pre_def, length('c.artist_id')) <> 'c.artist_id' then
+
+  v_needle_ct := (length(v_pre_def) - length(replace(v_pre_def, v_needle, ''))) / length(v_needle);
+  if v_needle_ct <> 1 then
     raise exception
-      'F-15 V-11 FAILED: the pre-migration snapshot does not end in the raw '
-      '"c.artist_id" tail this proof assumes (tail=%). Re-derive the exact-'
-      'diff assertion before trusting this migration.', right(v_pre_def, 40);
+      'F-15 V-11 FAILED: the pre-migration snapshot contains % occurrence(s) '
+      'of the raw "c.artist_id" projection — expected exactly 1, so the '
+      'final projection cannot be unambiguously isolated. Re-derive the '
+      'exact-diff assertion before trusting this migration.', v_needle_ct;
   end if;
 
-  v_pre_head := left(v_pre_def, length(v_pre_def) - length('c.artist_id'));
+  v_split_pos  := position(v_needle in v_pre_def);
+  v_pre_prefix := left(v_pre_def, v_split_pos - 1);
+  v_pre_suffix := substring(v_pre_def from v_split_pos + length(v_needle));
 
-  if position(v_pre_head in v_def) <> 1 then
+  if position(v_pre_prefix in v_def) <> 1 then
     raise exception
-      'F-15 V-11 FAILED: cards_effective changed somewhere other than the '
-      'final artist_id projection — every character before it must be '
+      'F-15 V-11 FAILED: cards_effective changed somewhere before the final '
+      'artist_id projection — every character up to it must be '
+      'byte-identical to the pre-migration definition. ABORTING.';
+  end if;
+  if right(v_def, length(v_pre_suffix)) <> v_pre_suffix then
+    raise exception
+      'F-15 V-11 FAILED: cards_effective changed somewhere after the final '
+      'artist_id projection (the FROM/JOIN/WHERE tail) — that tail must be '
       'byte-identical to the pre-migration definition. ABORTING.';
   end if;
 
-  v_post_tail := substring(v_def from length(v_pre_head) + 1);
-  if regexp_replace(lower(v_post_tail), '\s+', ' ', 'g') !~
+  v_mid := substring(v_def from length(v_pre_prefix) + 1
+                      for length(v_def) - length(v_pre_prefix) - length(v_pre_suffix));
+  if regexp_replace(lower(v_mid), '\s+', ' ', 'g') !~
      'case\s+when\s+ce\.illustrator_override\s+is\s+not\s+null\s+then\s+ce\.artist_id_override\s+else\s+c\.artist_id\s+end'
   then
     raise exception
-      'F-15 V-11 FAILED: the replaced tail (%) is not the approved CASE '
-      'expression.', v_post_tail;
+      'F-15 V-11 FAILED: the replaced middle (%) is not the approved CASE '
+      'expression.', v_mid;
   end if;
 
   -- ── V-12 — the public column ACL is EXACTLY the four intended columns ─────
