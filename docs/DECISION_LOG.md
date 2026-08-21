@@ -81,10 +81,12 @@ from PR #26 head `856250c4cc472ce38afc443a8c99b6a390037215`; Supabase
 migration history `20260821132512_f15_durable_attribution_correction`.
 Effective attribution changed on **0** rows during F-15 itself (V-1 held);
 five legacy rows backfilled, resolver-consistent 5/5; C1/C2/C3 violations
-0/0/0; `card_extras` ACL/RLS/trigger set match the pinned pre-review baseline
-exactly. **ATTR-1 — the twelve confirmed repairs — is untouched and remains a
-separate, unstarted, separately-approved slice**; `sui` stays at 224 until it
-runs. Part B negative admission tests and V-8 sync durability remain
+0/0/0; `card_extras` ACL and RLS match their intended pinned outcomes exactly,
+and the trigger set is the intended post-F-15 three-trigger set (the pinned
+pre-review baseline was two triggers; F-15 intentionally adds the third,
+attribution admission, trigger). **ATTR-1 — the twelve confirmed repairs — is
+untouched and remains a separate, unstarted, separately-approved slice**;
+`sui` stays at 224 until it runs. Part B negative admission tests and V-8 sync durability remain
 deferred, unchanged from the design (no mutation-safe or non-production
 environment exists). The scheduled catalog sync remains PAUSED. PR #26 is
 **not merged**; merge is a further separate authorization. Full account in

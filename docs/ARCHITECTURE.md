@@ -276,9 +276,11 @@ presence of an illustrator correction is what makes the raw FK untrustworthy.
 **Admission is restricted and channel-specific**, each via its own `BEFORE
 INSERT OR UPDATE`, `SECURITY INVOKER` trigger on `card_extras`:
 
-- Image admission (CAT-3B) admits only where the source is an approved
-  `card_identity_aliases` relationship of the target card and the proposed
-  value equals that source card's current `image_url`.
+- Image admission (CAT-3B) admits only where the source is an approved alias
+  relationship of the target card, read through the public owner-rights view
+  `public.card_identity_resolution` (never the private `card_identity_aliases`
+  table directly), and the proposed value equals that source card's current
+  `image_url`.
 - Attribution admission (F-15) admits only through the same aliases-only
   resolver contract `sync/sync-cards.mjs :: resolveArtistId()` uses — never
   `artists.id`, never fuzzy, never substring — so sync and admission can
@@ -298,12 +300,15 @@ provenance exposure. RLS is enabled, not forced, with exactly one permissive
 policy (`card_extras_public_select`, roles `{anon, authenticated}`, `USING
 true`, no `WITH CHECK`).
 
-Both channels shipped their schema **empty** and were populated (or, for
-attribution, remain unpopulated) by a separate, later, separately-approved
-slice: CAT-3B.1 wrote the 192 approved image overrides; F-15's own execution
-wrote zero attribution corrections — ATTR-1 (twelve confirmed repairs) is the
-channel's first intended use and has not run. See `CURRENT_STATE.md`,
-`CAT-3B_DURABLE_IMAGE_OVERRIDE.md` and `F-15_IMPLEMENTATION.md`.
+Both channels shipped their schema **empty** and were populated by a
+separate, later, separately-approved slice: CAT-3B.1 wrote the 192 approved
+image overrides; F-15's own execution backfilled the five pre-existing
+`illustrator_override` rows with the new provenance bundle (resolver-
+consistent, zero effective-attribution change). What remains at zero is NEW
+ATTR-1 correction targets — the twelve confirmed repairs are the channel's
+first intended *new-correction* use and have not run (0/12). See
+`CURRENT_STATE.md`, `CAT-3B_DURABLE_IMAGE_OVERRIDE.md` and
+`F-15_IMPLEMENTATION.md`.
 
 ## Data flow — hunt intent
 

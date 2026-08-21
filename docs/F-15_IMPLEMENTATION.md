@@ -223,11 +223,13 @@ a record of what was actually done — see §19 for the result.
 3. **Executed the whole file as one script.** Running it statement-by-statement
    in a console that autocommits each one would have discarded exactly the
    atomicity every ordering guarantee depends on.
-4. Read the `NOTICE` output, confirming, in order: `§0 preflight: PASS`,
-   `§0 P-7: PASS`, `§0 P-8/P-9/P-10: PASS`,
-   `§0 snapshot: N effective rows, M raw rows`,
-   `§2 B-2 gate: PASS (override_rows=5, would_change_membership=0, ambiguous_rows=0)`,
-   `§4 backfill verified`, `§9 validation: ALL PASS`.
+4. The connector reported `success: true` for the script; it did not expose
+   or read the `NOTICE` stream. Because every embedded gate (§0 preflight,
+   P-7, P-8/P-9/P-10, §2 B-2, §4 backfill verification, §9 V-1…V-14) raises
+   on failure — and a raise inside the single transaction rolls the whole
+   migration back rather than committing partially — the successful commit
+   itself is the proof that every embedded gate passed, not a transcript of
+   the notices they emitted.
 5. Ran `docs/sql/f15-durable-attribution-correction-validation.sql` Part A and
    recorded the output (§19). Part B was **not** run — still deferred (§10).
 6. ATTR-1 was **not** started. It remains a separate slice, requiring its own
@@ -279,10 +281,11 @@ Two items from design §20 are **not** covered by this slice, and neither is
 quietly dropped.
 
 **V-4 negative admission tests — authored, not executed.** Every case requires a
-*write* to prove a rejection, and this slice carries no mutation authorization.
-Manufacturing throwaway rows in production to test a constraint is exactly the
-kind of "it's only temporary" write that leaves residue when a session drops
-mid-transaction. The cases are written out in the validation file's Part B,
+*write* to prove a rejection, and that write has no separate authorization of
+its own — distinct from the migration itself, which *was* separately reviewed,
+approved and executed (§19). Manufacturing throwaway rows in production to test
+a constraint is exactly the kind of "it's only temporary" write that leaves
+residue when a session drops mid-transaction. The cases are written out in the validation file's Part B,
 wrapped in an explicit `ROLLBACK` and commented out, with the preferred
 execution environments ranked. Twelve cases are covered, including two positive
 controls (a valid intentional-NULL correction must be *admitted*, and an
@@ -309,9 +312,15 @@ more than that.**
 ## 11. Static validation performed
 
 `node scripts/f15-attribution-correction.test.mjs` — **175 assertions, 0
-failures**, executed 2026-08-21 on `d1008e3` (base `main` @ `9f233de`), i.e.
-*after* all three PR #26 review corrections. No test framework introduced;
-matches the OL-0A/0C/0D, CAT-2D and CAT-3B harnesses.
+failures**, 2026-08-21, after all three PR #26 review corrections. No test
+framework introduced; matches the OL-0A/0C/0D, CAT-2D and CAT-3B harnesses.
+
+**Exact chronology, because it matters for what this figure is worth.** The
+first exact-head harness run — on commit `d1008e3` (base `main` @ `9f233de`)
+— surfaced the stale `updated_at` assertion described below and did **not**
+pass 175/0. That assertion was corrected in the working tree, which then
+passed 175/0 and was committed as `856250c`. The 175/0 figure is therefore
+the result on the working tree that became `856250c`, not on `d1008e3` itself.
 
 **History, because it matters for how much this figure is worth.** The
 harness was 146 assertions at original authoring. The PR #26 review
@@ -434,10 +443,14 @@ These held through authoring and review, and continue to hold after the
   how much it clears, V-12 asserts the *resulting* ACL is exactly the four
   intended columns and that no table-level grant survives for
   anon/authenticated. Verified by outcome, not by assumption.
-- **Pre-existing hazard, recorded and not fixed** (design §6.5): `swsh11-186`
-  carries a raw `artist_id` the sync cannot reproduce, so a future full sync
-  would drop it from Shinji Kanda's page *today*. F-15 happens to close this
-  once backfilled, as a side effect. It is not repaired here.
+- **Pre-existing hazard (design §6.5), resolved at the effective layer by
+  F-15's backfill.** `swsh11-186` carries a raw `artist_id` the sync cannot
+  reproduce. Before F-15, a future full sync could have dropped its raw FK and
+  its effective membership. After F-15's legacy backfill, a raw FK change to
+  this row is masked by its durable `card_extras` attribution override, so its
+  effective membership stays protected unless that override is itself
+  withdrawn or changed. The underlying raw-data hazard was not repaired — only
+  its effective-layer consequence was closed, as a side effect of the backfill.
 
 ---
 
