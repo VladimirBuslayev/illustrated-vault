@@ -14,7 +14,7 @@
 | Migration SHA-256 | `9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0` |
 | Validation | `docs/sql/f15-durable-attribution-correction-validation.sql` — **NOT EXECUTED** |
 | Rollback | `docs/sql/f15-durable-attribution-correction-rollback.sql` — **NOT EXECUTED** |
-| Static harness | `scripts/f15-attribution-correction.test.mjs` — **146 assertions at original authoring; extended three times by PR #26 review corrections; not executed in this or the two prior correction sessions (tool-permission restriction, §18) — assertion count not re-verified against a live run** |
+| Static harness | `scripts/f15-attribution-correction.test.mjs` — **executed 2026-08-21 after the three PR #26 review corrections: 175 assertions, 0 failures.** The run surfaced one stale assertion (a bare-name test for `card_extras_set_updated_at`, which review-added preflight P-10 legitimately reads as a guard); it was tightened to test that no DDL targets that trigger. See §11. |
 | Production reads | read-only introspection only (Supabase MCP is read-only) |
 | Production writes | **none** |
 | Production execution | **a separate, explicitly-approved gate. Not granted here.** |
@@ -293,19 +293,30 @@ more than that.**
 
 ## 11. Static validation performed
 
-`node scripts/f15-attribution-correction.test.mjs` — **146 assertions, 0
-failures**, at authoring. No test framework introduced; matches the
-OL-0A/0C/0D, CAT-2D and CAT-3B harnesses.
+`node scripts/f15-attribution-correction.test.mjs` — **175 assertions, 0
+failures**, executed 2026-08-21 on `d1008e3` (base `main` @ `9f233de`), i.e.
+*after* all three PR #26 review corrections. No test framework introduced;
+matches the OL-0A/0C/0D, CAT-2D and CAT-3B harnesses.
 
-**The PR #26 review corrections (§16, §17) added further assertions to this
-file for the preflight/postflight guards they required.** In both correction
-sessions the environment could not execute `node` (tool-permission
-restriction; `git`, `sha256sum` and `git diff --check` were available,
-`node`/`npm`/`gh` were not), so the new assertions were verified by manual
-trace against the harness's own regexes rather than by running the suite.
-**Re-run `node scripts/f15-attribution-correction.test.mjs` before trusting
-the 146-assertion figure above still holds** — treat it as the
-pre-correction baseline until it is.
+**History, because it matters for how much this figure is worth.** The
+harness was 146 assertions at original authoring. The PR #26 review
+corrections (§16, §17) added further assertions for the preflight/postflight
+guards they required, but in both of those correction sessions the
+environment could not execute `node` (tool-permission restriction; `git`,
+`sha256sum` and `git diff --check` were available, `node`/`npm`/`gh` were
+not), so the new assertions were verified by manual trace against the
+harness's own regexes rather than by running the suite. That caveat is now
+**discharged**: the suite has been run.
+
+**The run found one real defect, which is why running it mattered.** A
+pre-existing assertion tested that the literal string
+`card_extras_set_updated_at` appeared nowhere in the migration. That was a
+sound proxy for "the `updated_at` trigger is not touched" when it was
+written, but review-added preflight **P-10** legitimately *reads* `tgname`
+from `pg_trigger` to assert the exact pre-F-15 trigger set — a guard, not a
+mutation. The assertion has been tightened to test what it actually means:
+no `DROP`/`CREATE`/`ALTER TRIGGER` targets that trigger, and its function is
+not redefined. Manual trace had not caught this; the run did.
 
 | Group | Proves |
 |---|---|

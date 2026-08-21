@@ -389,8 +389,15 @@ console.log('\n7. TRIGGER — security, idempotence, coexistence');
      'CAT-3B image admission trigger is not dropped');
   ok(!/create\s+or\s+replace\s+function\s+public\.card_extras_admit_image_override/i.test(mig),
      'CAT-3B image admission function is not redefined');
-  ok(!/card_extras_set_updated_at/i.test(mig),
-     'the updated_at trigger is not touched');
+  // Tests what this actually means — no DDL targets the updated_at trigger or
+  // its function — rather than "the name never appears". A bare name test was a
+  // valid proxy until the PR #26 review added preflight P-10, which legitimately
+  // READS tgname from pg_trigger to assert the exact pre-F-15 trigger set. That
+  // read is a guard, not a mutation, and must not fail this assertion.
+  ok(!/\b(drop|create|alter)\s+trigger\b[^;]*card_extras_set_updated_at/i.test(mig),
+     'no DDL drops, creates or alters the updated_at trigger');
+  ok(!/create\s+or\s+replace\s+function\s+public\.set_card_extras_updated_at/i.test(mig),
+     'the updated_at trigger function is not redefined');
 
   ok(/drop\s+trigger\s+if\s+exists\s+card_extras_admit_attribution_override/i.test(mig),
      'F-15 trigger creation is idempotent (drop if exists first)');
