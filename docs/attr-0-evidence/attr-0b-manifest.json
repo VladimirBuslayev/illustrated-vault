@@ -1,0 +1,78 @@
+{
+  "slice": "ATTR-0b",
+  "gate": "lone suffix variant attribution and printing identity audit",
+  "type": "external verification — evidence only",
+  "base_main_sha": "2a2c65eedf95d89e3388b3d9432ac003ee21140a",
+  "follows": [
+    "PR #22 — ATTR-0 artist attribution integrity audit",
+    "PR #23 — ATTR-0 Gate 2 print-level artist attribution verification"
+  ],
+  "canonical_population_source": "docs/attr-0-evidence/lone-suffix-variants.csv",
+  "population_rule": "the 14 suffix-variant printings ATTR-0 found with no base printing in the same set — unchanged, not re-derived, not broadened",
+  "population_size": 14,
+  "population_split": {
+    "xya_yellow_a_alternate": 6,
+    "ecard2_dot_code_variant": 8
+  },
+  "checked_at": "2026-08-20",
+  "production_reads": "none — this gate never contacted Supabase",
+  "production_writes": "none",
+  "catalog_sync": "remains paused — not resumed, not triggered",
+  "evidence_classes_used": [
+    "Bulbapedia per-card Release information sections that explicitly distinguish the suffixed printing from the base printing",
+    "Bulbapedia Yellow A Alternate cards (TCG) — the numbering rule establishing that alternate prints carry the ORIGINAL expansion symbol and collector number, which is the print-identity evidence for the six xya links",
+    "PkmnCards per-print scan-backed card pages carrying an exact-print illustrator credit",
+    "TCGdex public API read of the 14 rows and of all 218 sets, used only to state what the feed under audit currently says and to re-derive the population — never as verification"
+  ],
+  "sources_rejected_as_non_independent": [
+    "limitlesstcg.com — Gate 2 established it reproduces the same base-illustrator defect as TCGdex; not consulted as corroboration here"
+  ],
+  "results": {
+    "rows_investigated": 14,
+    "confirmed_correct": 14,
+    "confirmed_wrong": 0,
+    "unresolved": 0,
+    "same_physical_printing": 6,
+    "distinct_physical_printing": 8,
+    "no_link_identified": 0,
+    "unresolved_identity": 0
+  },
+  "newly_confirmed_wrong": [],
+  "confirmed_wrong_population_unchanged_at": 12,
+  "xya_same_physical_printing_pairs": {
+    "xya-28a": "g1-28a",
+    "xya-107a": "xy9-107a",
+    "xya-24a": "xy4-24a",
+    "xya-54a": "xy10-54a",
+    "xya-55a": "xy3-55a",
+    "xya-92a": "xy6-92a"
+  },
+  "xya_contradictions_resolved_in_favour_of_xya": [
+    "xya-28a (Ryo Ueda) vs g1-28a (Naoki Saito) — xya correct",
+    "xya-107a (Naoki Saito) vs xy9-107a (Yusuke Ohmura) — xya correct"
+  ],
+  "ecard2_printing_phenomenon": "Pokemon-e Dot Code variants. Aquapolis issued four cards (Golduck 50, Drowzee 74, Mr. Mime 95, Porygon 103) in two physical prints each, distinguished only by the e-Reader dot code data — and, on Mr. Mime alone, by one clause of Poke-Body wording. Artwork and illustrator are identical across each a/b pair. No un-suffixed print of these four numbers exists, so ATTR-0's 'lone' classification is correct rather than a modelling gap. Unrelated to the Yellow A Alternate mechanism.",
+  "f16_bounding": {
+    "verdict": "FULLY BOUNDED",
+    "xya_set_closed_at": 6,
+    "generalised_cross_set_duplicate_test": "every one of the 37 suffix-variant printings across all 218 TCGdex sets was tested for a same-local_id counterpart in a different set; exactly 12 rows matched — the 6 xya rows and their 6 set-scoped twins — and no other suffix variant in the catalog has any cross-set counterpart",
+    "ecard2_cross_set_counterparts": 0,
+    "population_re_derivation": "37 suffix variants / 23 with base / 14 lone, re-derived independently from all 218 sets on 2026-08-20; identical to ATTR-0 §5 and to Gate 1 production A-5",
+    "rows_added_to_repair_population_by_f16": 0
+  },
+  "repair_population_effect": "unchanged. All 6 xya rows are CONFIRMED_CORRECT and must not be repaired. The ATTR-1 repair population remains exactly the 12 rows confirmed by ATTR-0 and Gate 2.",
+  "post_repair_convergence": "repairing g1-28a to Ryo Ueda and xy9-107a to Naoki Saito makes all six xya/twin pairs agree on illustrator, eliminating both F-16 attribution contradictions. F-16 then degrades from an attribution-correctness problem to a pure catalog duplicate-identity problem.",
+  "incidental_observations": [
+    "All six xya rows carry no image asset upstream (image = null) while all six twins do — the xya rows are metadata-only duplicates. Recorded for a later image/coverage slice; IMG-0 not started.",
+    "The xya set carries no logo and no symbol, and a releaseDate of 2014-02-05 inherited from the XY series rather than the May 2017 – November 2020 Yellow A Alternate window — further evidence it is a synthetic provider grouping, not a physical expansion.",
+    "Card names differ cosmetically across three of the six pairs (e.g. 'Zygarde EX' vs 'Zygarde-EX'), so any future dedup keyed on name equality would fail on half the pairs. Recorded for F-16 design, not acted on."
+  ],
+  "catalog_completeness_follow_up": "79 (Bulbapedia Yellow A Alternate, May 2017 – November 2020) vs 37 (catalog suffix variants) discrepancy re-confirmed and explicitly NOT resolved here. ATTR-0b produced no evidence that it must be resolved before attribution repair: a printing absent from the catalog cannot carry a wrong attribution, so it cannot enlarge the confirmed-defect population. Remains a separate Catalog Trust / sync-coverage item.",
+  "gate_verdict": "PASS — ATTRIBUTION EVIDENCE POPULATION CLOSED",
+  "gate_verdict_reason": "all 14 canonical rows investigated at the exact-printing level with two agreeing sources each, zero unresolved; F-16 fully bounded at 6 duplicate pairs by a generalised cross-set test over the whole catalog; no new evidence class discovered; the confirmed repair population is unchanged at 12 rows",
+  "artifacts": {
+    "attr-0b-lone-suffix-verification.csv": "ee72cff1c56f4db0d1aeead3b9080f06b6ea0c5c2a540bf972be4653951b35c3"
+  },
+  "artifact_hash_note": "SHA-256 over the LF-normalised UTF-8 bytes of the committed CSV. docs/attr-0-evidence/*.csv is pinned to eol=lf in .gitattributes, so the working-tree bytes match on every platform.",
+  "interpretation_limit": "This gate verifies the ILLUSTRATOR CREDIT on each exact printing and the PHYSICAL PRINTING IDENTITY relationship between provider rows. It does not verify artist_id, aliases, or any Illustrated Vault resolution behaviour, it proposes no aliasing or deduplication mechanism, and it performs no repair. CAT-0 F-15 remains open and still blocks per-row repair."
+}
