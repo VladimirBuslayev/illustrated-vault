@@ -68,9 +68,12 @@ provider-synced data stays untouched and re-syncable, the override lives in
 `card_extras` beside it, provenance is mandatory and honest rather than
 retrofitted, and admission is restricted to the same resolver sync itself
 trusts so the two can never disagree about what a name means. F-15 is that
-same pattern applied to artist attribution, and — like CAT-3B — it shipped
-its correction data separately from building the channel, so each step is
-independently reviewable and revertible.
+same pattern applied to artist attribution. Unlike CAT-3B, F-15's own
+migration also performed the required behavior-preserving backfill of the
+five pre-existing legacy rows — that step was not shipped separately. The new
+correction population — ATTR-1's twelve confirmed repairs — is, like CAT-3B.1,
+a separate, later, separately-approved slice, so each step is independently
+reviewable and revertible.
 
 Status:
 

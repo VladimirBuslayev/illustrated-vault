@@ -300,15 +300,17 @@ provenance exposure. RLS is enabled, not forced, with exactly one permissive
 policy (`card_extras_public_select`, roles `{anon, authenticated}`, `USING
 true`, no `WITH CHECK`).
 
-Both channels shipped their schema **empty** and were populated by a
-separate, later, separately-approved slice: CAT-3B.1 wrote the 192 approved
-image overrides; F-15's own execution backfilled the five pre-existing
-`illustrator_override` rows with the new provenance bundle (resolver-
-consistent, zero effective-attribution change). What remains at zero is NEW
-ATTR-1 correction targets — the twelve confirmed repairs are the channel's
-first intended *new-correction* use and have not run (0/12). See
-`CURRENT_STATE.md`, `CAT-3B_DURABLE_IMAGE_OVERRIDE.md` and
-`F-15_IMPLEMENTATION.md`.
+The image channel shipped its schema **empty** in CAT-3B and was populated
+by a separate, later, separately-approved slice — CAT-3B.1 wrote the 192
+approved image overrides. The attribution channel did not ship empty: F-15's
+**same** migration that built the channel also performed the required
+behavior-preserving backfill of the five pre-existing `illustrator_override`
+rows with the new provenance bundle (resolver-consistent, zero
+effective-attribution change) — that backfill was not a separate slice. What
+remains at zero is NEW ATTR-1 correction targets — the twelve confirmed
+repairs are the channel's first intended *new-correction* use, are a
+separate later population, and have not run (0/12). See `CURRENT_STATE.md`,
+`CAT-3B_DURABLE_IMAGE_OVERRIDE.md` and `F-15_IMPLEMENTATION.md`.
 
 ## Data flow — hunt intent
 
