@@ -18,7 +18,7 @@
 | Repair performed | **none** — the 12 confirmed rows are untouched |
 | Artifacts | `docs/sql/f15-attribution-correction-design-audit.sql` (SELECT-only) · `docs/attr-0-evidence/f15-repair-impact.csv` |
 | Measured at | 2026-08-20 |
-| Corrections (2026-08-21, PR #25 review) | (1) admission resolver corrected to aliases-only, matching `sync-cards.mjs` exactly — §12, §6.3; (2) legacy-row provenance grandfathering replaced with a concrete, unconditional representation — §6.4, §12.2 C1, §13.4; (3) §18 sequence reordered so the provenance CHECKs (C1–C3) are added and validated *after* the legacy-row backfill, not before — §18 |
+| Corrections (2026-08-21, PR #25 review) | (1) admission resolver corrected to aliases-only, matching `sync-cards.mjs` exactly — §12, §6.3; (2) legacy-row provenance grandfathering replaced with a concrete, unconditional representation — §6.4, §12.2 C1, §13.4; (3) §18 sequence reordered so the provenance CHECKs (C1–C3) are added and validated *after* the legacy-row backfill, not before — §18; (4) C1 restated as an explicit two-state, four-field bundle (State A: all four NULL; State B: all four NOT NULL) closing a mixed-state loophole in the prior wording — §12.2, §18 step 5, V-4 |
 
 ---
 
@@ -569,14 +569,45 @@ rather than coupling.
 
 ### 12.2 Declarative constraints
 
-- **C1 — all-or-nothing provenance, no exceptions.** Either `illustrator_override`
-  + `attribution_override_{evidence,approved_by,approved_at}` are all present, or
-  all three provenance fields are absent. This holds unconditionally for every
-  row, including the five legacy overrides: the backfill supplies a real
-  (system-authored, explicitly-labeled-as-derived) provenance bundle for them
-  rather than being exempted from C1 (§6.4, §13.4). A declarative CHECK cannot
-  see how a value arrived, so C1 must not depend on that — it can only depend
-  on what is present in the row today.
+- **C1 — all-or-nothing provenance, no exceptions.** The four-field bundle
+  (`illustrator_override`, `attribution_override_evidence`,
+  `attribution_override_approved_by`, `attribution_override_approved_at`) has
+  exactly two valid states; every mixed combination is rejected.
+
+  - **State A — no override.** `illustrator_override IS NULL` **and** all
+    three provenance fields are NULL.
+  - **State B — override with full provenance.** `illustrator_override IS NOT
+    NULL` **and** all three provenance fields are NOT NULL.
+
+  `illustrator_override IS NOT NULL` with any provenance field NULL is
+  **State B violated, not State A** — the earlier draft's wording ("either all
+  four present, or all three provenance fields absent") left that combination
+  unaddressed, which admitted exactly the no-provenance override C1 exists to
+  block. As a single boolean CHECK expression:
+
+  ```sql
+  (
+    illustrator_override IS NULL
+    AND attribution_override_evidence IS NULL
+    AND attribution_override_approved_by IS NULL
+    AND attribution_override_approved_at IS NULL
+  )
+  OR
+  (
+    illustrator_override IS NOT NULL
+    AND attribution_override_evidence IS NOT NULL
+    AND attribution_override_approved_by IS NOT NULL
+    AND attribution_override_approved_at IS NOT NULL
+  )
+  ```
+
+  This holds unconditionally for every row, including the five legacy
+  overrides: the backfill supplies a real (system-authored,
+  explicitly-labeled-as-derived) provenance bundle for them, landing them in
+  State B, rather than being exempted from C1 (§6.4, §13.4). A declarative
+  CHECK cannot see how a value arrived, so C1 must not depend on that — it can
+  only depend on what is present in the row today, and only States A and B are
+  ever present.
 - **C2 — non-empty `approved_by`.**
 - **C3 — R5.** `artist_id_override IS NOT NULL` requires
   `illustrator_override IS NOT NULL`.
@@ -833,7 +864,7 @@ constraints are validated.
 | 2 | Run the corrected, aliases-only **B-2** gate | **Must read `override_rows = 5`, `would_change_membership = 0`, `ambiguous_rows = 0` — else HOLD.** Independent review re-ran this against production on 2026-08-20 and got exactly that reading (§6.3); re-run it again here, immediately before proceeding — a point-in-time reading is not a standing fact |
 | 3 | **Backfill `artist_id_override` plus the full provenance bundle for the 5 existing rows** (§6.2, §6.4/§13.4 — no C1 exemption; the bundle itself *is* how C1 is satisfied for these rows) | Row-for-row: `artist_id_override` equals B-2's `resolved` value for all 5; all three provenance fields set on all 5 |
 | 4 | Verify: 5 rows backfilled with `artist_id_override` **and** all three provenance fields set; expected effective `artist_id` unchanged for all 5 | Row-for-row equality vs. a pre-migration snapshot |
-| 5 | Add **and validate** C1–C3 (provenance all-or-nothing, non-empty `approved_by`, R5 bare-FK) | Validation passes on the **first** attempt — every row already satisfies it, because step 3 ran first. No `NOT VALID` window is needed or used |
+| 5 | Add **and validate** C1–C3 — C1 is the two-state, four-field bundle of §12.2 (State A: `illustrator_override` and all three provenance fields NULL; State B: all four NOT NULL; every mixed state rejected), C2 non-empty `approved_by`, C3 R5 bare-FK | Validation passes on the **first** attempt — every row already satisfies it, because step 3 ran first. No `NOT VALID` window is needed or used |
 | 6 | Add the admission trigger (R1–R7) | SECURITY INVOKER |
 | 7 | Rebuild `cards_effective` from the **live** definition, changing exactly one expression | 14 columns, order preserved, `security_invoker`, alias exclusion intact |
 | 8 | Extend the column ACL with `artist_id_override`; withhold provenance (§13.3) | anon/authenticated read the view successfully; provenance unreadable |
@@ -890,7 +921,7 @@ behaviour the rollback restores.
 | **V-1** | Row-for-row diff of `(id, illustrator, artist_id)` from `cards_effective` before vs. after, over all 23,588 rows | **Zero** differences. F-15 changes no rendered value by itself. |
 | **V-2** | The 5 override rows: effective `artist_id` after == snapshot before | I-7 non-regression, per row |
 | **V-3** | `shinji-kanda`, `asako-ito`, `akira-egawa`, `sui` FK counts unchanged (`sui` = 224 pre-ATTR-1) | No membership moved by F-15 |
-| **V-4** | Admission negative tests: R2 wrong artist → reject · R3 non-NULL with 0 matches → reject · R4 ambiguous → reject · R5 bare FK → reject · C1 missing provenance → reject | Fail-closed is real, not documented |
+| **V-4** | Admission negative tests: R2 wrong artist → reject · R3 non-NULL with 0 matches → reject · R4 ambiguous → reject · R5 bare FK → reject · C1 mixed state (`illustrator_override` set with any provenance field NULL, or any provenance field set with `illustrator_override` NULL) → reject | Fail-closed is real, not documented |
 | **V-5** | Admission idempotence: UPDATE `source_note` alone on a row with a correction succeeds without re-admission | §12.1 — no unrelated-write coupling |
 | **V-6** | `select ... from cards_effective` as `anon` succeeds; direct select of the three provenance columns as `anon` **fails** | I-8 |
 | **V-7** | View shape: 14 columns, order preserved, `security_invoker`, alias exclusion present; exactly one expression differs from the live definition | No silent CAT-2D.1/CAT-3B revert |
