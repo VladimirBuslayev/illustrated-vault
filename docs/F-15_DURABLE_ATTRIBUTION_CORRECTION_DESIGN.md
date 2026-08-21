@@ -18,7 +18,7 @@
 | Repair performed | **none** — the 12 confirmed rows are untouched |
 | Artifacts | `docs/sql/f15-attribution-correction-design-audit.sql` (SELECT-only) · `docs/attr-0-evidence/f15-repair-impact.csv` |
 | Measured at | 2026-08-20 |
-| Corrections (2026-08-21, PR #25 review) | (1) admission resolver corrected to aliases-only, matching `sync-cards.mjs` exactly — §12, §6.3; (2) legacy-row provenance grandfathering replaced with a concrete, unconditional representation — §6.4, §12.2 C1, §13.4 |
+| Corrections (2026-08-21, PR #25 review) | (1) admission resolver corrected to aliases-only, matching `sync-cards.mjs` exactly — §12, §6.3; (2) legacy-row provenance grandfathering replaced with a concrete, unconditional representation — §6.4, §12.2 C1, §13.4; (3) §18 sequence reordered so the provenance CHECKs (C1–C3) are added and validated *after* the legacy-row backfill, not before — §18 |
 
 ---
 
@@ -285,6 +285,14 @@ into a non-match, never the reverse, so it cannot introduce a new
 formula didn't already have — but the three matched legacy rows (§6.1) must
 still be re-measured under the corrected query rather than assumed, since the
 figures recorded here were captured before this correction.
+
+**Independent re-run, corrected query, 2026-08-20.** Independent review
+re-ran the corrected aliases-only B-2 against production and confirmed:
+`override_rows = 5`, `would_change_membership = 0`, `ambiguous_rows = 0`.
+This satisfies the three matched legacy rows' pending re-measurement above.
+It is still a point-in-time reading, not a standing fact — §18 step 2
+requires B-2 to be re-run again immediately before the migration executes,
+since `artists.aliases` can change between now and implementation.
 
 ### 6.4 Provenance for the five legacy rows
 
@@ -805,23 +813,44 @@ sequenced before the overall Catalog Trust Exit Gate.
 **Nothing below is authored, executed, or staged in this PR.** No migration file
 exists; this is the shape a future approved slice should take.
 
+**Correction, from review.** An earlier draft of this sequence added
+columns **and** C1–C4 in the same step (step 1), then backfilled in step 2.
+That is invalid: corrected C1 (§12.2) is unconditional — provenance must be
+present whenever `illustrator_override` is present — and the five legacy
+rows already carry `illustrator_override` with no provenance at the moment
+step 1's `ALTER TABLE … ADD CONSTRAINT` would run. `ADD CONSTRAINT` validates
+existing rows immediately unless declared `NOT VALID`, so the migration would
+fail on its own first step, before the backfill that is supposed to satisfy
+C1 ever executes. The fix is **ordering, not a `NOT VALID` deferral**: split
+"add columns/FK" from "add the provenance CHECKs" and place the backfill
+between them, so every row already satisfies C1–C3 at the moment those
+constraints are validated.
+
 | # | Step | Gate |
 |---|---|---|
 | 0 | Re-run the ACL/shape preflight (audit **A-1…A-5**) | Production must match §5 |
-| 1 | Add the four columns, nullable, no default; add FK + C1–C4 | Additive, idempotent |
-| 2 | **Backfill `artist_id_override` plus the full provenance bundle for the 5 existing rows** (§6.2, §6.4/§13.4 — no C1 exemption) | **B-2 must read 0 / 0 — else HOLD** |
-| 3 | Verify: 5 rows backfilled with `artist_id_override` **and** all three provenance fields set; expected effective `artist_id` unchanged for all 5 | Row-for-row equality vs. a pre-migration snapshot; C1 satisfied on all 5 |
-| 4 | Add the admission trigger (R1–R7) | SECURITY INVOKER |
-| 5 | Rebuild `cards_effective` from the **live** definition, changing exactly one expression | 14 columns, order preserved, `security_invoker`, alias exclusion intact |
-| 6 | Extend the column ACL with `artist_id_override`; withhold provenance (§13.3) | anon/authenticated read the view successfully; provenance unreadable |
-| 7 | Validation suite (§20) | All pass |
+| 1 | Add the four columns, nullable, no default; add the FK (**C4**, `artist_id_override → artists(id)` ON DELETE RESTRICT) | Additive, idempotent — no provenance CHECKs yet, so the 5 pre-existing `illustrator_override` rows need not satisfy C1–C3 to pass this step |
+| 2 | Run the corrected, aliases-only **B-2** gate | **Must read `override_rows = 5`, `would_change_membership = 0`, `ambiguous_rows = 0` — else HOLD.** Independent review re-ran this against production on 2026-08-20 and got exactly that reading (§6.3); re-run it again here, immediately before proceeding — a point-in-time reading is not a standing fact |
+| 3 | **Backfill `artist_id_override` plus the full provenance bundle for the 5 existing rows** (§6.2, §6.4/§13.4 — no C1 exemption; the bundle itself *is* how C1 is satisfied for these rows) | Row-for-row: `artist_id_override` equals B-2's `resolved` value for all 5; all three provenance fields set on all 5 |
+| 4 | Verify: 5 rows backfilled with `artist_id_override` **and** all three provenance fields set; expected effective `artist_id` unchanged for all 5 | Row-for-row equality vs. a pre-migration snapshot |
+| 5 | Add **and validate** C1–C3 (provenance all-or-nothing, non-empty `approved_by`, R5 bare-FK) | Validation passes on the **first** attempt — every row already satisfies it, because step 3 ran first. No `NOT VALID` window is needed or used |
+| 6 | Add the admission trigger (R1–R7) | SECURITY INVOKER |
+| 7 | Rebuild `cards_effective` from the **live** definition, changing exactly one expression | 14 columns, order preserved, `security_invoker`, alias exclusion intact |
+| 8 | Extend the column ACL with `artist_id_override`; withhold provenance (§13.3) | anon/authenticated read the view successfully; provenance unreadable |
+| 9 | Validation suite (§20) | All pass |
 
-**Ordering is load-bearing.** Step 2 **must** precede step 5, or three existing
-artist memberships vanish the moment the view is replaced (§6.2). Steps 1–6
-belong in **one `BEGIN; … COMMIT;`** — columns, constraints, trigger, backfill,
-view and privileges are a single logical unit, and PostgreSQL makes DDL and
-GRANT/REVOKE transactional. The worst half-applied shape is the view rewritten
-before the backfill lands.
+**Ordering is load-bearing, in two independent ways.** Step 3 (backfill)
+**must** precede step 5 (provenance CHECKs), or C1 rejects the migration
+against its own five legacy rows before they can be repaired. Step 3 **must**
+also precede step 7 (view switch), or three existing artist memberships
+vanish the moment the view is replaced (§6.2). Steps 1–8 belong in **one
+`BEGIN; … COMMIT;`** — columns, the FK, the gate re-check, the backfill, the
+provenance CHECKs, the trigger, the view and the privileges are a single
+logical unit, and PostgreSQL makes DDL, data writes, and GRANT/REVOKE
+transactional together. The worst half-applied shape is either the view
+rewritten before the backfill lands, or the provenance CHECKs added before
+the backfill lands — this ordering rules out both in one pass, with no
+constraint ever in a temporarily-unvalidated state.
 
 **ATTR-1 is a separate slice.** It writes twelve rows through this channel and
 must be separately reviewed and approved. F-15 creates the channel and populates

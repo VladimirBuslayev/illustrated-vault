@@ -136,6 +136,11 @@ order by ce.card_id;
 -- MUST BE 0 AND 0 BEFORE THE VIEW SEMANTICS ARE SWITCHED.
 -- Any non-zero value means the backfill would silently change an existing
 -- artist membership → HOLD, do not proceed (design doc §6).
+--
+-- Independent re-run against production, 2026-08-20 (post aliases-only
+-- correction): override_rows = 5, would_change_membership = 0,
+-- ambiguous_rows = 0. A point-in-time reading, not a standing fact — re-run
+-- again immediately before the migration executes (design doc §18 step 2).
 with r as (
   select
     ce.card_id,
