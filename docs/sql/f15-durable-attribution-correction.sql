@@ -1072,6 +1072,9 @@ declare
   v_pre_prefix text;
   v_pre_suffix text;
   v_mid        text;
+  v_mid_norm   text;
+  v_mid_expect text := 'case when ce.illustrator_override is not null then '
+                        'ce.artist_id_override else c.artist_id end as artist_id';
 begin
   -- ── V-1 — THE HEADLINE INVARIANT ──────────────────────────────────────────
   -- Full pre/post diff of the effective attribution contract, in BOTH
@@ -1291,12 +1294,19 @@ begin
 
   v_mid := substring(v_def from length(v_pre_prefix) + 1
                       for length(v_def) - length(v_pre_prefix) - length(v_pre_suffix));
-  if regexp_replace(lower(v_mid), '\s+', ' ', 'g') !~
-     'case\s+when\s+ce\.illustrator_override\s+is\s+not\s+null\s+then\s+ce\.artist_id_override\s+else\s+c\.artist_id\s+end'
-  then
+  -- Exact equality, not containment: an unanchored "contains the approved
+  -- CASE" check would also admit a wrapper like
+  -- COALESCE(CASE ... END, c.artist_id) AS artist_id, which still preserves
+  -- V-1's five legacy rows today while silently reintroducing the
+  -- known-wrong raw artist_id fallback for future ATTR-1 intentional-NULL
+  -- corrections. Normalize whitespace/case and require the middle to equal
+  -- the approved projection byte-for-byte — no wrapper, cast, fallback,
+  -- extra token, or second expression may pass.
+  v_mid_norm := btrim(regexp_replace(lower(v_mid), '\s+', ' ', 'g'));
+  if v_mid_norm is distinct from v_mid_expect then
     raise exception
-      'F-15 V-11 FAILED: the replaced middle (%) is not the approved CASE '
-      'expression.', v_mid;
+      'F-15 V-11 FAILED: the replaced middle (%) is not exactly the approved '
+      'CASE expression (expected: %).', v_mid, v_mid_expect;
   end if;
 
   -- ── V-12 — the public column ACL is EXACTLY the four intended columns ─────

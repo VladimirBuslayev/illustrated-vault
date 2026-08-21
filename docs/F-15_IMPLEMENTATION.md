@@ -11,10 +11,10 @@
 | Base | `main` @ `9f233de3405e1aba26358bc54a0b4156b9b09df8` |
 | Design (authoritative) | `docs/F-15_DURABLE_ATTRIBUTION_CORRECTION_DESIGN.md` (PR #25, merged) |
 | Migration | `docs/sql/f15-durable-attribution-correction.sql` — **NOT EXECUTED** |
-| Migration SHA-256 | `6483bb602890e9d4ca3f24feb1cc1bab643fb513b8994a5bba773332ebc105af` |
+| Migration SHA-256 | `9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0` |
 | Validation | `docs/sql/f15-durable-attribution-correction-validation.sql` — **NOT EXECUTED** |
 | Rollback | `docs/sql/f15-durable-attribution-correction-rollback.sql` — **NOT EXECUTED** |
-| Static harness | `scripts/f15-attribution-correction.test.mjs` — **146 assertions at original authoring; extended twice by PR #26 review corrections; not executed in this session (tool-permission restriction, §17) — assertion count not re-verified** |
+| Static harness | `scripts/f15-attribution-correction.test.mjs` — **146 assertions at original authoring; extended three times by PR #26 review corrections; not executed in this or the two prior correction sessions (tool-permission restriction, §18) — assertion count not re-verified against a live run** |
 | Production reads | read-only introspection only (Supabase MCP is read-only) |
 | Production writes | **none** |
 | Production execution | **a separate, explicitly-approved gate. Not granted here.** |
@@ -41,7 +41,7 @@ preflight (P-6) and once before it commits (V-13).
 ## 2. The migration SHA-256 — and why it is verifiable
 
 ```
-6483bb602890e9d4ca3f24feb1cc1bab643fb513b8994a5bba773332ebc105af  docs/sql/f15-durable-attribution-correction.sql
+9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0  docs/sql/f15-durable-attribution-correction.sql
 04373eaa3e5e11312ac0652071369c5df3157b0c417e3c5a9d04253dd496cd5a  docs/sql/f15-durable-attribution-correction-validation.sql
 14f397f6063007ac41a880314d3c2f84c0b68f1eca32cb43987bdca33bce26ee  docs/sql/f15-durable-attribution-correction-rollback.sql
 ```
@@ -540,4 +540,71 @@ No production SQL was executed to produce this correction. No ATTR-1 rows
 were touched. Sync remains paused. The migration SHA-256 (§2) was
 regenerated for the new migration file text:
 `6483bb602890e9d4ca3f24feb1cc1bab643fb513b8994a5bba773332ebc105af`. The
+validation and rollback file checksums are unchanged.
+
+---
+
+## 18. Correction — PR #26 comment (2026-08-21, unanchored V-11b containment check)
+
+Follow-up review of the §17 correction found V-11b's final check — the one
+that proves the isolated `v_mid` *is* the approved `CASE` expression — was
+still a containment check, not an equality check:
+
+```sql
+if regexp_replace(lower(v_mid), '\s+', ' ', 'g') !~
+   'case\s+when\s+ce\.illustrator_override\s+is\s+not\s+null\s+then\s+ce\.artist_id_override\s+else\s+c\.artist_id\s+end'
+then
+```
+
+This proves the approved `CASE` exists *somewhere* in `v_mid`, not that
+`v_mid` *is* the approved projection and nothing else. A wrapper such as
+`COALESCE(CASE WHEN ce.illustrator_override IS NOT NULL THEN
+ce.artist_id_override ELSE c.artist_id END, c.artist_id) AS artist_id` would
+still contain the approved substring, preserve all 14 view columns, and would
+not move V-1 (the five current legacy rows already resolve to their existing
+`artist_id` or would coincidentally read the same under the `COALESCE`
+fallback) — while silently reintroducing the known-wrong raw-`artist_id`
+fallback for future ATTR-1 intentional-`NULL` corrections, the exact defect
+CASE-not-COALESCE (§5.2/design) exists to remove.
+
+**Fix**, in `docs/sql/f15-durable-attribution-correction.sql` §9 (V-11b),
+still read-only until §1:
+
+- Added a fixed `v_mid_expect` constant holding the exact normalized approved
+  projection: `case when ce.illustrator_override is not null then
+  ce.artist_id_override else c.artist_id end as artist_id`.
+- Replaced the unanchored `!~` pattern-search with `v_mid_norm := btrim(
+  regexp_replace(lower(v_mid), '\s+', ' ', 'g'))` followed by `if v_mid_norm
+  is distinct from v_mid_expect then raise exception ...` — an exact
+  normalized-string equality, not a substring search. No wrapper, cast,
+  fallback, extra token, or second expression can pass.
+
+`scripts/f15-attribution-correction.test.mjs` gained five new assertions: the
+old unanchored-regex shape is asserted absent, `v_mid_expect` is asserted
+declared with the exact expected text, `v_mid_norm`'s normalization is
+asserted (lowercase, collapsed whitespace, trimmed), and the final `is
+distinct from` equality check is asserted present.
+
+**Validation actually run this time** — the tool-permission restriction
+noted in §16/§17 (`node`, `npm`, `gh` requiring approval this session) was
+tested again and still holds: `node scripts/f15-attribution-correction.test.mjs`
+and `npm run build` both returned "This command requires approval" with no
+way to grant it in this unattended run. `git diff --check` and `sha256sum`
+were available and were run (both clean/as expected). In their place, every
+new/changed regex in the harness was traced by hand against the exact edited
+SQL text and confirmed to match (including catching and fixing one
+self-authored assertion bug during that trace — an early draft of the
+`v_mid_expect` assertion omitted the `text` type keyword between the
+variable name and `:=` and would have false-failed against correct SQL), and
+the file's `$$` dollar-quote count was re-confirmed even (20, unchanged from
+§17, since this edit does not add or remove any dollar-quoted block). **This
+is still not a substitute for actually running the suite.** Please run
+`node scripts/f15-attribution-correction.test.mjs` and `npm.cmd run build`
+before treating this correction as verified, or grant `node`/`npm`/`gh` in
+`--allowedTools` so a future session can do it directly.
+
+No production SQL was executed to produce this correction. No ATTR-1 rows
+were touched. Sync remains paused. The migration SHA-256 (§2) was
+regenerated for the new migration file text:
+`9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0`. The
 validation and rollback file checksums are unchanged.

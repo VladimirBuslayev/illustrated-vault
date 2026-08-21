@@ -633,6 +633,25 @@ console.log('\n12. PREFLIGHT / POSTFLIGHT — exact-shape fail-closed guards (PR
      'V-11b proves the entire FROM/JOIN/WHERE tail after the projection is byte-identical to the pre-migration definition');
   ok(/v_mid\s*:=\s*substring\(v_def\s+from\s+length\(v_pre_prefix\)\s*\+\s*1/i.test(mig),
      'V-11b isolates the replaced middle and checks it is the approved CASE expression');
+
+  // V-11b (PR #26 review 4989308333, second pass) — the isolated middle must
+  // equal the approved projection EXACTLY, not merely contain it. An
+  // unanchored "contains the CASE" check would also admit a wrapper like
+  // COALESCE(CASE ... END, c.artist_id) AS artist_id, which still passes V-1
+  // today (the five legacy rows keep their current resolved values) while
+  // silently reintroducing the known-wrong raw-artist_id fallback for future
+  // ATTR-1 intentional-NULL corrections.
+  ok(!/regexp_replace\(lower\(v_mid\),\s*'\\s\+',\s*' ',\s*'g'\)\s*!~/i.test(mig),
+     'V-11b no longer uses the old unanchored containment regex against v_mid');
+  ok(/v_mid_expect\s+text\s*:=/i.test(mig),
+     'V-11b declares a fixed expected-projection constant, not a pattern to search for');
+  ok(/v_mid_expect\s+text\s*:=\s*'case when ce\.illustrator_override is not null then '/i.test(mig) &&
+     /'ce\.artist_id_override else c\.artist_id end as artist_id'/i.test(mig),
+     'V-11b pins the exact expected normalized projection text');
+  ok(/v_mid_norm\s*:=\s*btrim\(regexp_replace\(lower\(v_mid\),\s*'\\s\+',\s*' ',\s*'g'\)\)/i.test(mig),
+     'V-11b normalizes the isolated middle (lowercase, collapsed whitespace, trimmed) before comparing');
+  ok(/v_mid_norm\s+is\s+distinct\s+from\s+v_mid_expect/i.test(mig),
+     'V-11b requires the normalized middle to equal the expected projection exactly, not merely contain it — no wrapper, cast, fallback, or extra token can pass');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
