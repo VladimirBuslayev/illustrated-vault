@@ -22,3 +22,10 @@ docs/attr-0-evidence/*.csv text eol=lf
 # and get the same value before authorising a production run, so the
 # working-tree bytes must equal the committed bytes on every platform.
 docs/sql/f15-durable-attribution-correction*.sql text eol=lf
+
+# ATTR-1: same reasoning as F-15. The confirmed-attribution-repairs migration,
+# its validation and its rollback are checksummed in
+# docs/ATTR-1_CONFIRMED_ATTRIBUTION_REPAIRS.md, and a reviewer must be able to
+# hash the committed file by hand and get that same value before authorising
+# production execution.
+docs/sql/attr-1-confirmed-attribution-repairs*.sql text eol=lf
