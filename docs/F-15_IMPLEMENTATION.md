@@ -11,10 +11,10 @@
 | Base | `main` @ `9f233de3405e1aba26358bc54a0b4156b9b09df8` |
 | Design (authoritative) | `docs/F-15_DURABLE_ATTRIBUTION_CORRECTION_DESIGN.md` (PR #25, merged) |
 | Migration | `docs/sql/f15-durable-attribution-correction.sql` — **NOT EXECUTED** |
-| Migration SHA-256 | `2cac6639c41d38fd99ad2e7e2b977771458c98b2f583dbd0e1791ec26d57d186` |
+| Migration SHA-256 | `66fd722b05477fabb3f6062f4a94f3c783b4521403c66192b0ccf9c36b576772` |
 | Validation | `docs/sql/f15-durable-attribution-correction-validation.sql` — **NOT EXECUTED** |
 | Rollback | `docs/sql/f15-durable-attribution-correction-rollback.sql` — **NOT EXECUTED** |
-| Static harness | `scripts/f15-attribution-correction.test.mjs` — **146 assertions, all pass** |
+| Static harness | `scripts/f15-attribution-correction.test.mjs` — **146 assertions, all pass at authoring; extended by the PR #26 correction below, not re-run in that session (§16)** |
 | Production reads | read-only introspection only (Supabase MCP is read-only) |
 | Production writes | **none** |
 | Production execution | **a separate, explicitly-approved gate. Not granted here.** |
@@ -41,7 +41,7 @@ preflight (P-6) and once before it commits (V-13).
 ## 2. The migration SHA-256 — and why it is verifiable
 
 ```
-2cac6639c41d38fd99ad2e7e2b977771458c98b2f583dbd0e1791ec26d57d186  docs/sql/f15-durable-attribution-correction.sql
+66fd722b05477fabb3f6062f4a94f3c783b4521403c66192b0ccf9c36b576772  docs/sql/f15-durable-attribution-correction.sql
 04373eaa3e5e11312ac0652071369c5df3157b0c417e3c5a9d04253dd496cd5a  docs/sql/f15-durable-attribution-correction-validation.sql
 14f397f6063007ac41a880314d3c2f84c0b68f1eca32cb43987bdca33bce26ee  docs/sql/f15-durable-attribution-correction-rollback.sql
 ```
@@ -89,7 +89,7 @@ Ordering is load-bearing in two independent ways, and the file enforces both.
 
 | § | Step | Why it is where it is |
 |---|---|---|
-| **0** | Preflight (P-1…P-6) + two `TEMPORARY … ON COMMIT DROP` snapshots | Fails closed on any drift from the shape the design was measured against. Refuses to run against an already-migrated database. |
+| **0** | Preflight (P-1…P-10) + three `TEMPORARY … ON COMMIT DROP` snapshots | Fails closed on any drift from the shape the design was measured against, including an exact hash of the pre-migration view (P-2b), the four F-15 columns being fully absent (P-7), and the exact CAT-3B ACL / RLS / trigger shape (P-8–P-10, §16). Refuses to run against an already-migrated database. |
 | **1** | Four columns + the C4 FK to `artists(id)` ON DELETE RESTRICT | **No provenance CHECKs yet** — see below. |
 | **2** | The embedded, aliases-only **B-2 gate** | Re-measures production *at execution time* and aborts if the world moved. |
 | **3** | Backfill the 5 legacy rows: `artist_id_override` + full provenance | Must precede §5 **and** §7. |
@@ -212,6 +212,7 @@ ATTR-1 correction by reading `.derivation` and `.verified` — not by the
    in a console that autocommits each one discards exactly the atomicity every
    ordering guarantee depends on.
 4. Read the `NOTICE` output. Expect, in order: `§0 preflight: PASS`,
+   `§0 P-7: PASS`, `§0 P-8/P-9/P-10: PASS`,
    `§0 snapshot: N effective rows, M raw rows`,
    `§2 B-2 gate: PASS (override_rows=5, would_change_membership=0, ambiguous_rows=0)`,
    `§4 backfill verified`, `§9 validation: ALL PASS`.
@@ -219,7 +220,7 @@ ATTR-1 correction by reading `.derivation` and `.verified` — not by the
    record the output. Part B is **not** run (§10).
 6. Only then consider ATTR-1 — a separate slice, separately approved.
 
-**If any gate raises, nothing applied.** §0–§9 are one transaction, both
+**If any gate raises, nothing applied.** §0–§9 are one transaction, all three
 snapshots drop automatically, and the database is left in the complete pre-F-15
 state. Fix the cause and re-run the whole file.
 
@@ -293,8 +294,18 @@ more than that.**
 ## 11. Static validation performed
 
 `node scripts/f15-attribution-correction.test.mjs` — **146 assertions, 0
-failures.** No test framework introduced; matches the OL-0A/0C/0D, CAT-2D and
-CAT-3B harnesses.
+failures**, at authoring. No test framework introduced; matches the
+OL-0A/0C/0D, CAT-2D and CAT-3B harnesses.
+
+**The PR #26 review correction (§16) added further assertions to this file
+for the new preflight/postflight guards it required.** The environment that
+applied that correction could not execute `node` (tool-permission
+restriction; git and `sha256sum` were available, `node`/`npm` were not), so
+those new assertions were verified by manual trace against the harness's own
+regexes rather than by running the suite. **Re-run
+`node scripts/f15-attribution-correction.test.mjs` before trusting the
+146-assertion figure above still holds** — treat it as the pre-correction
+baseline until it is.
 
 | Group | Proves |
 |---|---|
@@ -409,3 +420,60 @@ documents — updated after successful production execution, not before).
    `artist_id_override` NULL on all twelve, full external provenance,
    separately reviewed and separately approved. Expected visible effect: twelve
    corrected illustrators and exactly one membership change (`sui` 224 → 223).
+
+---
+
+## 16. Correction — PR #26 review (HOLD, fail-closed preflight)
+
+Independent review of this implementation HELD it on one gap: §0 fail-closed
+on the 14 column names, `security_invoker`, and *substrings* of the CAT-2D.1
+alias exclusion / illustrator override / image override — but not on the
+**full** pre-F-15 shape §7 is about to replace. A legitimate unrelated change
+to `cards_effective` (pricing, `release_date`, join/filter semantics) landing
+between review and execution, while `(id, illustrator, artist_id)` stayed the
+same, could have been silently overwritten by §7's hardcoded
+`CREATE OR REPLACE`, and V-1/V-11 would not have caught it — V-1 diffs only
+`(id, illustrator, artist_id)`, and V-11 was substring-based.
+
+Four corrections were made to `docs/sql/f15-durable-attribution-correction.sql`,
+all inside the existing §0 preflight / §9 validation sections, all read-only
+until §1 (no change to what the migration mutates):
+
+1. **P-2b** — an exact `md5(pg_get_viewdef(...))` check of the pre-migration
+   `cards_effective` definition, pinned to `cf06bc44df3dbcabab9763331b5713da`
+   (an independent read-only re-measurement, 2026-08-21, from the review
+   comment). STOPs rather than lets §7 overwrite unreviewed drift.
+2. **V-11b** — a post-migration exact-diff proof. This deliberately does
+   **not** hardcode a guessed hash for the *post*-migration view: this
+   environment cannot execute PostgreSQL ahead of time to learn how
+   `ruleutils` renders the new `CASE` expression, and a wrong guess would
+   fail a *correct* migration forever. Instead it captures the pre-migration
+   definition live in a new `f15_pre_viewdef` snapshot (§0, `ON COMMIT DROP`,
+   hash-pinned by P-2b) and proves the post-migration definition is
+   byte-identical to it up to the final projection, with only the known
+   `CASE ... END AS artist_id` tail differing.
+3. **P-7** — `card_extras` must carry **none** of the four F-15 columns
+   before §1 runs. `ADD COLUMN IF NOT EXISTS` is idempotent against a clean
+   re-run of *this* migration, but the same idempotence would silently adopt
+   a column someone created by hand with an unreviewed type or default; P-5
+   only catches an already-switched *view*, not this narrower partial state.
+4. **P-8 / P-9 / P-10** — the security-sensitive surfaces §6–§8 extend are
+   now asserted exactly, matching design §18 step 0 / audit A-1…A-5: the
+   CAT-3B public column ACL is exactly `card_id, illustrator_override,
+   image_url_override` with no table-level grant for anon/authenticated
+   (P-8); RLS is enabled and not forced with exactly the one existing
+   `USING true` SELECT policy (P-9); and exactly the two pre-F-15 triggers
+   (`card_extras_admit_image_override`, `card_extras_set_updated_at`) exist
+   (P-10).
+
+`scripts/f15-attribution-correction.test.mjs` gained a new assertion group
+(§12 in the harness) asserting all four guards are present in the migration
+text, plus one ordering assertion that P-7 runs before §1's `ADD COLUMN`.
+**This correction's new assertions were not run** — see §11's caveat above —
+because this session's tool permissions did not allow executing `node`.
+Re-run the harness and the build before treating this correction as verified.
+
+No production SQL was executed to produce this correction. Sync remains
+paused. The migration and validation SHA-256 checksums (§2) were regenerated
+for the new migration file text; the validation and rollback files are
+unchanged and keep their original checksums.

@@ -164,6 +164,9 @@ console.log('\n2. ORDERING — backfill precedes the CHECKs and the view switch'
   const iColumns  = mig.search(/add\s+column\s+if\s+not\s+exists\s+artist_id_override/i);
   const iAcl      = mig.search(/revoke\s+all\s+on\s+table\s+public\.card_extras/i);
 
+  const iP7 = mig.search(/F-15 preflight P-7/i);
+  ok(iP7 > -1 && iP7 < iColumns, 'P-7 (F-15 columns absent) runs before §1 adds them');
+
   ok(iColumns > -1 && iColumns < iBackfill, 'columns added before the backfill');
   ok(iGate > -1 && iGate < iBackfill,       'B-2 gate runs before the backfill');
   ok(iBackfill > -1 && iBackfill < iC1,     'backfill precedes C1  (else C1 rejects the legacy rows)');
@@ -555,6 +558,64 @@ console.log('\n11. VALIDATION FILE — read-only, no production writes');
      'negative-test harness is wrapped in an explicit ROLLBACK (never committed)');
   ok(/NOT\s+(BE\s+)?RUN|DO\s+NOT\s+(RUN|EXECUTE)|not executed/i.test(validation),
      'validation file states the negative tests are not executed against production');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n12. PREFLIGHT / POSTFLIGHT — exact-shape fail-closed guards (PR #26 review)');
+
+{
+  // P-2b — the pre-migration view definition is checked as an exact md5, not
+  // just by column-name substring, so unrelated drift (pricing, release_date,
+  // join/filter semantics) cannot slip through V-1's narrower
+  // (id, illustrator, artist_id) diff.
+  ok(/md5\(v_def\)\s*<>\s*'cf06bc44df3dbcabab9763331b5713da'/i.test(mig),
+     'P-2b asserts an exact md5 hash of the pre-migration cards_effective definition');
+
+  // P-7 — the four F-15 columns must be entirely ABSENT before §1, so
+  // `ADD COLUMN IF NOT EXISTS` cannot silently adopt a hand-created column
+  // with an unreviewed type or default.
+  const p7 = (mig.match(/column_name in \('artist_id_override'[\s\S]*?end \$\$;/i) || [''])[0];
+  ok(p7.length > 0, 'P-7 partial-shape guard located');
+  for (const col of ['artist_id_override', 'attribution_override_evidence',
+                     'attribution_override_approved_by', 'attribution_override_approved_at']) {
+    ok(p7.includes(col), `P-7 checks ${col} is absent`);
+  }
+
+  // P-8 — the pre-F-15 CAT-3B column ACL (three columns, no table-level grant)
+  // is asserted exactly, mirroring V-12's outcome-based pattern but for the
+  // PRE-state, instead of assuming it hasn't drifted.
+  ok(/F-15 preflight P-8[\s\S]*?anon column SELECT/i.test(mig),
+     'P-8 asserts the pre-F-15 anon column ACL exactly');
+  ok(/v_acl_expect\s*text\[\]\s*:=\s*array\['card_id','illustrator_override','image_url_override'\]/.test(mig),
+     'P-8 pins the pre-F-15 ACL to exactly the three CAT-3B columns');
+  ok(/F-15 preflight P-8[\s\S]*?table-level grant\(s\) exist/i.test(mig),
+     'P-8 also rejects a table-level grant re-added for anon/authenticated');
+
+  // P-9 — RLS enabled/not forced, exactly one USING-true SELECT policy.
+  ok(/F-15 preflight P-9[\s\S]*?rowsecurity/i.test(mig),
+     'P-9 asserts RLS is enabled and not forced before mutating card_extras');
+  ok(/polrelid\s*=\s*'public\.card_extras'::regclass/i.test(mig),
+     'P-9 reads the live card_extras RLS policy');
+
+  // P-10 — exactly the two pre-F-15 triggers, by name.
+  ok(/array\['card_extras_admit_image_override','card_extras_set_updated_at'\]/.test(mig),
+     'P-10 asserts exactly the two expected pre-F-15 triggers by name');
+
+  // f15_pre_viewdef — a third snapshot, captured pre-mutation, feeding V-11b.
+  ok(/create\s+temporary\s+table\s+f15_pre_viewdef\s+on\s+commit\s+drop/i.test(mig),
+     'f15_pre_viewdef snapshot is TEMPORARY … ON COMMIT DROP, captured before §1');
+
+  // V-11b — the post-migration view is proven to differ from the captured
+  // pre-migration definition ONLY in the known artist_id tail, without
+  // hardcoding a guessed hash for text this environment cannot render ahead
+  // of execution (ruleutils' rendering of the new CASE cannot be predicted
+  // without actually running PostgreSQL).
+  ok(/select\s+def\s+into\s+v_pre_def\s+from\s+f15_pre_viewdef/i.test(mig),
+     'V-11b reads back the pre-migration definition snapshot');
+  ok(/position\(v_pre_head\s+in\s+v_def\)\s*<>\s*1/i.test(mig),
+     'V-11b proves everything before the final projection is byte-identical to the pre-migration definition');
+  ok(/v_post_tail\s*:=\s*substring\(v_def\s+from\s+length\(v_pre_head\)\s*\+\s*1\)/i.test(mig),
+     'V-11b isolates the changed tail and checks it is the approved CASE expression');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

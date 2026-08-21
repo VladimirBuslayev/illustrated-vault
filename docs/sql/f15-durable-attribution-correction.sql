@@ -111,6 +111,25 @@ begin
       v_expected, v_cols;
   end if;
 
+  -- P-2b  the ENTIRE pre-migration definition must match byte-for-byte, not
+  --       just its column names. Two different view bodies can share a
+  --       column list — P-2 alone would let unreviewed drift in pricing,
+  --       release_date, or the join/filter logic reach §7's hardcoded
+  --       CREATE OR REPLACE undetected, because V-1 only diffs
+  --       (id, illustrator, artist_id), not the other ten projected columns.
+  --       Pinned by an independent read-only re-measurement, 2026-08-21
+  --       (PR #26 review). If a reviewed, intentional change to
+  --       cards_effective lands before execution, re-derive this constant —
+  --       do not delete the check.
+  if md5(v_def) <> 'cf06bc44df3dbcabab9763331b5713da' then
+    raise exception
+      'F-15 preflight: cards_effective definition does not match the '
+      'reviewed pre-F-15 shape (md5=%, expected=cf06bc44df3dbcabab9763331b5713da). '
+      'The column list can match while the body has drifted — STOP and '
+      're-derive rather than letting §7 overwrite unreviewed changes.',
+      md5(v_def);
+  end if;
+
   -- P-3  security_invoker must already be set; this migration must not be the
   --      thing that silently turns it on or off.
   select reloptions into v_reloptions
@@ -166,6 +185,150 @@ begin
 end $$;
 
 
+-- ── P-7: reject a partial/manual F-15 shape ──────────────────────────────────
+--
+-- ADD COLUMN IF NOT EXISTS in §1 is idempotent against a clean RE-RUN of this
+-- exact migration, but that same idempotence would silently adopt a column
+-- someone created by hand with an unreviewed type or default. P-5 above
+-- already refuses to run once cards_effective references artist_id_override;
+-- this closes the narrower gap where the COLUMNS exist but the view has not
+-- been switched yet — a partial state P-5 cannot see because it only reads
+-- the view, never the table shape.
+
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'card_extras'
+      and column_name in ('artist_id_override', 'attribution_override_evidence',
+                           'attribution_override_approved_by', 'attribution_override_approved_at')
+  ) then
+    raise exception
+      'F-15 preflight P-7: card_extras already carries one or more F-15 '
+      'columns, but cards_effective has not been switched to reference them '
+      '— an unexpected partial F-15 shape. STOP and inspect; ADD COLUMN IF '
+      'NOT EXISTS must not silently adopt a column this migration did not '
+      'create.';
+  end if;
+
+  raise notice 'F-15 §0 P-7: PASS — no F-15 column pre-exists.';
+end $$;
+
+
+-- ── P-8 / P-9 / P-10: the security-sensitive surfaces §6–§8 are about to
+--    extend must match the exact shape independent review audited (design
+--    §18 step 0 / audit A-1…A-5). If any of these moved, something outside
+--    this slice touched card_extras, and normalizing production back to the
+--    old reviewed state — rather than stopping — would hide that instead of
+--    surfacing it.
+
+do $$
+declare
+  v_acl_anon      text[];
+  v_acl_auth      text[];
+  v_acl_expect    text[] := array['card_id','illustrator_override','image_url_override'];
+  v_tablelevel    bigint;
+  v_rls           boolean;
+  v_force_rls     boolean;
+  v_policy_count  bigint;
+  v_policy_cmd    "char";
+  v_policy_using  text;
+  v_trigger_names text[];
+begin
+  -- P-8  CAT-3B's public column ACL is exactly the three pre-F-15 columns,
+  --      with no table-level grant for anon/authenticated. §8 REVOKEs then
+  --      GRANTs the four-column list unconditionally; if the pre-state has
+  --      already drifted, that REVOKE/GRANT would silently re-narrow or
+  --      re-widen access nobody reviewed here.
+  select coalesce(array_agg(distinct a.attname order by a.attname), array[]::text[])
+    into v_acl_anon
+  from pg_attribute a
+  cross join lateral aclexplode(a.attacl) x
+  join pg_roles r on r.oid = x.grantee
+  where a.attrelid = 'public.card_extras'::regclass
+    and a.attnum > 0 and not a.attisdropped
+    and r.rolname = 'anon' and x.privilege_type = 'SELECT';
+
+  select coalesce(array_agg(distinct a.attname order by a.attname), array[]::text[])
+    into v_acl_auth
+  from pg_attribute a
+  cross join lateral aclexplode(a.attacl) x
+  join pg_roles r on r.oid = x.grantee
+  where a.attrelid = 'public.card_extras'::regclass
+    and a.attnum > 0 and not a.attisdropped
+    and r.rolname = 'authenticated' and x.privilege_type = 'SELECT';
+
+  if v_acl_anon is distinct from v_acl_expect then
+    raise exception
+      'F-15 preflight P-8: anon column SELECT on card_extras is % — expected '
+      'the pre-F-15 CAT-3B set %. STOP — the ACL has drifted from what §8 was '
+      'reviewed to extend.', v_acl_anon, v_acl_expect;
+  end if;
+  if v_acl_auth is distinct from v_acl_expect then
+    raise exception
+      'F-15 preflight P-8: authenticated column SELECT on card_extras is % '
+      '— expected %.', v_acl_auth, v_acl_expect;
+  end if;
+
+  select count(*) into v_tablelevel
+  from pg_class c
+  cross join lateral aclexplode(c.relacl) x
+  join pg_roles r on r.oid = x.grantee
+  where c.oid = 'public.card_extras'::regclass
+    and r.rolname in ('anon', 'authenticated');
+  if v_tablelevel <> 0 then
+    raise exception
+      'F-15 preflight P-8: % table-level grant(s) exist for anon/authenticated '
+      'on card_extras — the CAT-3B narrowing has already been undone by '
+      'something outside this slice.', v_tablelevel;
+  end if;
+
+  -- P-9  RLS is enabled and not forced, with exactly the one existing public
+  --      SELECT policy. This migration adds no policy and must not run
+  --      against a table whose RLS shape it has not reviewed.
+  select relrowsecurity, relforcerowsecurity into v_rls, v_force_rls
+  from pg_class where oid = 'public.card_extras'::regclass;
+  if v_rls is distinct from true or v_force_rls is distinct from false then
+    raise exception
+      'F-15 preflight P-9: card_extras RLS state is rowsecurity=%, '
+      'forcerowsecurity=% — expected true, false.', v_rls, v_force_rls;
+  end if;
+
+  select count(*) into v_policy_count
+  from pg_policy where polrelid = 'public.card_extras'::regclass;
+  if v_policy_count <> 1 then
+    raise exception
+      'F-15 preflight P-9: card_extras carries % RLS policies — expected '
+      'exactly 1.', v_policy_count;
+  end if;
+
+  select polcmd, pg_get_expr(polqual, polrelid) into v_policy_cmd, v_policy_using
+  from pg_policy where polrelid = 'public.card_extras'::regclass;
+  if v_policy_cmd is distinct from 'r' or v_policy_using is distinct from 'true' then
+    raise exception
+      'F-15 preflight P-9: the existing card_extras policy is cmd=%, using=% '
+      '— expected the read-only USING true policy.', v_policy_cmd, v_policy_using;
+  end if;
+
+  -- P-10  Exactly the two pre-F-15 triggers exist. §6 adds a third; if a
+  --       third already existed, something outside this slice reached
+  --       card_extras and this migration must not proceed over it blind.
+  select coalesce(array_agg(tgname order by tgname), array[]::text[])
+    into v_trigger_names
+  from pg_trigger
+  where tgrelid = 'public.card_extras'::regclass and not tgisinternal;
+  if v_trigger_names is distinct from
+     array['card_extras_admit_image_override','card_extras_set_updated_at']
+  then
+    raise exception
+      'F-15 preflight P-10: card_extras triggers are % — expected exactly '
+      'the two pre-F-15 triggers.', v_trigger_names;
+  end if;
+
+  raise notice 'F-15 §0 P-8/P-9/P-10: PASS — ACL, RLS and trigger shape match the reviewed baseline.';
+end $$;
+
+
 -- ── Pre-migration snapshots ──────────────────────────────────────────────────
 --
 -- Taken BEFORE any F-15 object exists, so they capture genuine pre-F-15
@@ -184,6 +347,16 @@ from public.cards_effective;
 create temporary table f15_pre_raw_cards on commit drop as
 select id, illustrator, artist_id
 from public.cards;
+
+-- Captured for §9 V-11's exact-diff proof: the ONLY way to prove the
+-- post-migration view differs from today's in exactly the reviewed place,
+-- without hardcoding a guess of how ruleutils will render the new CASE
+-- expression. This file cannot execute against PostgreSQL ahead of time to
+-- learn that rendering, and a wrong guess would fail a CORRECT migration
+-- forever — so V-11 derives the expected post-text from what production
+-- itself said pre-migration instead of from an assumed literal.
+create temporary table f15_pre_viewdef on commit drop as
+select pg_get_viewdef('public.cards_effective'::regclass, true) as def;
 
 do $$
 declare
@@ -846,6 +1019,9 @@ declare
     'artist_id_override','card_id','illustrator_override','image_url_override'
   ];
   v_tablelevel bigint;
+  v_pre_def    text;
+  v_pre_head   text;
+  v_post_tail  text;
 begin
   -- ── V-1 — THE HEADLINE INVARIANT ──────────────────────────────────────────
   -- Full pre/post diff of the effective attribution contract, in BOTH
@@ -1005,6 +1181,48 @@ begin
      or position('case' in lower(v_def)) = 0 then
     raise exception
       'F-15 V-11 FAILED: the artist_id CASE expression is not present.';
+  end if;
+
+  -- ── V-11b — the CASE expression is the ONLY difference from the pre-
+  --    migration definition, proven character-for-character rather than by
+  --    the token checks above (which prove presence, not exclusivity — a
+  --    view that ALSO changed pricing or release_date would still pass them).
+  --
+  --    This deliberately does NOT hardcode an expected hash for the POST
+  --    view: this file cannot execute against PostgreSQL ahead of time to
+  --    learn how ruleutils renders the new CASE expression, and a wrong
+  --    guess would fail a CORRECT migration forever. Instead it derives the
+  --    expected post-text from f15_pre_viewdef — what production itself
+  --    said pre-migration, captured live in §0 and hash-pinned there by
+  --    P-2b — and proves every character before the final projection is
+  --    byte-identical to it.
+  select def into v_pre_def from f15_pre_viewdef;
+  if v_pre_def is null then
+    raise exception 'F-15 V-11 FAILED: pre-migration view definition snapshot (f15_pre_viewdef) is missing.';
+  end if;
+  if right(v_pre_def, length('c.artist_id')) <> 'c.artist_id' then
+    raise exception
+      'F-15 V-11 FAILED: the pre-migration snapshot does not end in the raw '
+      '"c.artist_id" tail this proof assumes (tail=%). Re-derive the exact-'
+      'diff assertion before trusting this migration.', right(v_pre_def, 40);
+  end if;
+
+  v_pre_head := left(v_pre_def, length(v_pre_def) - length('c.artist_id'));
+
+  if position(v_pre_head in v_def) <> 1 then
+    raise exception
+      'F-15 V-11 FAILED: cards_effective changed somewhere other than the '
+      'final artist_id projection — every character before it must be '
+      'byte-identical to the pre-migration definition. ABORTING.';
+  end if;
+
+  v_post_tail := substring(v_def from length(v_pre_head) + 1);
+  if regexp_replace(lower(v_post_tail), '\s+', ' ', 'g') !~
+     'case\s+when\s+ce\.illustrator_override\s+is\s+not\s+null\s+then\s+ce\.artist_id_override\s+else\s+c\.artist_id\s+end'
+  then
+    raise exception
+      'F-15 V-11 FAILED: the replaced tail (%) is not the approved CASE '
+      'expression.', v_post_tail;
   end if;
 
   -- ── V-12 — the public column ACL is EXACTLY the four intended columns ─────
