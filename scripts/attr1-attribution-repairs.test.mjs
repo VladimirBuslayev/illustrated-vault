@@ -348,12 +348,16 @@ console.log('\n6. PREFLIGHT DRIFT GUARDS EXIST');
   ok(/card_extras_admit_attribution_override/i.test(mig),
      'P-1 checks for the F-15 admission trigger by name');
 
-  // P-1 must not stop at name-only: a disabled trigger still satisfies a
-  // name-only check while enforcing nothing.
-  ok(/tgenabled/i.test(mig) && /v_tgenabled\s*=\s*'D'/i.test(mig) && /DISABLED/i.test(migration),
-     "P-1 asserts the F-15 admission trigger is ENABLED (tgenabled), not merely present by name");
-  ok(/tgtype/i.test(mig) && /BEFORE INSERT OR UPDATE FOR EACH ROW/i.test(migration),
-     'P-1 asserts the trigger fires BEFORE INSERT OR UPDATE FOR EACH ROW (tgtype bitmask)');
+  // P-1 must not stop at "not disabled": it must require EXACTLY tgenabled='O'
+  // (origin-session enabled) — R (replica-only) and A (always) must also fail
+  // closed, not just D (disabled).
+  ok(/tgenabled/i.test(mig) && /v_tgenabled\s*<>\s*'O'/i.test(mig) && /origin-session enabled/i.test(migration),
+     "P-1 requires the F-15 admission trigger tgenabled to be EXACTLY 'O' (origin-session enabled), not merely non-disabled");
+  // P-1 must require the EXACT tgtype value (23), not merely "these bits are
+  // present" — the latter would still admit an unexpected extra bit (e.g. an
+  // added OR DELETE clause).
+  ok(/tgtype/i.test(mig) && /v_tgtype\s*<>\s*23/i.test(mig),
+     'P-1 requires the trigger tgtype to be EXACTLY 23 (ROW|BEFORE|INSERT|UPDATE), not merely "these bits present"');
   ok(/tgfoid/i.test(mig) && /pg_proc/i.test(mig) && /pg_namespace/i.test(mig),
      "P-1 resolves the trigger's bound function via tgfoid/pg_proc/pg_namespace, not by trigger name alone");
   ok(/prosecdef/i.test(mig) && /SECURITY INVOKER/i.test(migration),
@@ -363,6 +367,18 @@ console.log('\n6. PREFLIGHT DRIFT GUARDS EXIST');
      && /v_match_count > 1/i.test(mig)
      && /v_match_count = 0/i.test(mig),
      "P-1 pins the admission function's load-bearing resolver semantics (aliases-only, fail-closed-on-ambiguity, zero-match-requires-NULL) via prosrc, not just its name/binding");
+
+  // FINAL WALL — the exact trigger/function-definition MD5 fingerprint,
+  // read-only verified against live production during independent review
+  // (PR #28). Every structural check above (name, binding, tgenabled, tgtype,
+  // security shape, prosrc substrings) can pass while the definition itself
+  // was quietly redefined around them — only this catches that.
+  ok(mig.includes('cbae7726ba19f228954cc51895525a26'),
+     'P-1 pins the exact reviewed trigger-definition MD5 (cbae7726ba19f228954cc51895525a26)');
+  ok(mig.includes('0831dd22d8e63840501b324e4f3ba3e5'),
+     'P-1 pins the exact reviewed function-definition MD5 (0831dd22d8e63840501b324e4f3ba3e5)');
+  ok(/pg_get_triggerdef\(t\.oid,\s*true\)/i.test(mig) && /pg_get_functiondef\(p\.oid\)/i.test(mig),
+     'P-1 computes the fingerprint live from pg_get_triggerdef/pg_get_functiondef against the actual trigger/function OIDs, not a hardcoded string match alone');
 
   ok(/preflight P-2/i.test(mig), 'P-2: exact-12-ids-live guard is present');
   ok(/preflight P-3/i.test(mig) && /currency/i.test(migration),
@@ -455,11 +471,44 @@ console.log('\n8. ROLLBACK IS TARGET/PROVENANCE-SCOPED');
      'rollback postflight checks all five attribution fields are cleared, not illustrator_override alone');
 
   ok(/v_f15_active/i.test(rbk),
-     "rollback checks whether F-15's channel (cards_effective CASE on artist_id_override) is still live before asserting a membership reversal");
-  ok(/cannot prove xyp-XY67a.?.?s membership reversal/i.test(rbkJoined),
-     'rollback explicitly STOPs rather than silently succeeding when the membership reversal is not safely assertable');
-  ok(/expected sui \(the pre-ATTR-1 state/i.test(rbkJoined),
-     "rollback raises an exception (not merely a notice) if xyp-XY67a's effective artist_id is not 'sui' after the clear/delete pass");
+     "rollback checks whether F-15's channel (cards_effective CASE on artist_id_override) is still live before asserting an effective reversal");
+  ok(/cannot prove the 12 targets/i.test(rbkJoined),
+     'rollback explicitly STOPs rather than silently succeeding when the effective reversal is not safely assertable');
+
+  // Guard A must check EVERY load-bearing attribution/provenance field on a
+  // present bundle — not just derivation/approved_by/illustrator_override —
+  // so a later edit to artist_id_override or any evidence-payload field
+  // cannot slip past undetected.
+  const guardABlock = (rollback.match(/── Guard A[\s\S]*?end \$\$;/i) || [''])[0];
+  ok(guardABlock.length > 0, 'rollback Guard A (exact present-bundle match) block is present');
+  ok(['gate', 'verified', 'verified_illustrator', 'primary_source', 'secondary_source',
+      'evidence_artifact', 'evidence_artifact_sha256', 'design_doc']
+     .every((k) => guardABlock.includes(`'${k}'`)),
+     'Guard A checks every load-bearing evidence-payload field, not derivation/approved_by/illustrator_override alone');
+  ok(/artist_id_override\s+is\s+not\s+null/i.test(guardABlock),
+     'Guard A fails closed if a present bundle carries a non-NULL artist_id_override');
+
+  // Guard B must verify raw public.cards has not drifted from the canonical
+  // pre-ATTR-1 reading before this file promises a restoration.
+  const guardBBlock = (rollback.match(/── Guard B[\s\S]*?end \$\$;/i) || [''])[0];
+  ok(guardBBlock.length > 0, 'rollback Guard B (canonical raw pre-state check) block is present');
+  ok(/join public\.cards c on c\.id = t\.card_id/i.test(guardBBlock)
+     && /pre_illustrator/i.test(guardBBlock) && /pre_artist_id/i.test(guardBBlock),
+     'Guard B compares live public.cards against the canonical pre-ATTR-1 reading for all 12 targets before clearing');
+
+  ok(/attr1_rollback_targets/i.test(rbk),
+     'rollback carries its own canonical target population (pre_illustrator/pre_artist_id/verified_illustrator), duplicated from the migration for this deliberately-separate file');
+
+  // Postflight must prove all 12 targets' effective (illustrator, artist_id)
+  // against the canonical pre-ATTR-1 reading, not xyp-XY67a alone.
+  ok(/attr1_rollback_targets/.test(postflightBlock) && /v_mismatched_post/.test(postflightBlock),
+     'rollback postflight compares all 12 targets against attr1_rollback_targets, not xyp-XY67a alone');
+  ok(/join public\.cards_effective ce on ce\.id = t\.card_id/i.test(postflightBlock),
+     'rollback postflight joins the canonical target table against cards_effective for every target');
+  ok(/do not read back to their/i.test(rbkJoined),
+     'rollback raises an exception listing every target whose effective state fails to match the canonical pre-ATTR-1 reading');
+  ok(!/v_xy67a_now/i.test(rbk),
+     'rollback postflight no longer special-cases only xyp-XY67a for the effective-reversal proof — all 12 are checked uniformly');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

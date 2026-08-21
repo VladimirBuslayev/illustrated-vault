@@ -233,6 +233,17 @@ declare
   v_fn_secdef     bool;
   v_fn_lang       text;
   v_fn_src        text;
+  v_trigger_md5   text;
+  v_function_md5  text;
+  -- Exact fingerprints of the specific F-15 trigger/function object read-only
+  -- verified against today's live production during independent review of
+  -- this migration (PR #28). This is the final wall: the structural checks
+  -- above (columns, constraints, name, binding, tgenabled, tgtype, security,
+  -- prosrc substrings) stay as human-readable context, but same-name,
+  -- same-binding, same-shape drift that alters anything else in the
+  -- definition is only caught here.
+  v_expected_trigger_md5  constant text := 'cbae7726ba19f228954cc51895525a26';
+  v_expected_function_md5 constant text := '0831dd22d8e63840501b324e4f3ba3e5';
 begin
   if to_regclass('public.card_extras') is null then
     raise exception 'ATTR-1 preflight P-1: public.card_extras does not exist.';
@@ -282,9 +293,10 @@ begin
   -- resolver, but the trigger is what actually enforces it at write time) —
   -- so same-name drift must fail closed, not pass silently.
   select t.tgenabled, t.tgtype, n.nspname, p.proname, p.prosecdef,
-         l.lanname, p.prosrc
+         l.lanname, p.prosrc,
+         md5(pg_get_triggerdef(t.oid, true)), md5(pg_get_functiondef(p.oid))
     into v_tgenabled, v_tgtype, v_fn_schema, v_fn_name, v_fn_secdef,
-         v_fn_lang, v_fn_src
+         v_fn_lang, v_fn_src, v_trigger_md5, v_function_md5
   from pg_trigger t
   join pg_proc p      on p.oid = t.tgfoid
   join pg_namespace n on n.oid = p.pronamespace
@@ -293,24 +305,30 @@ begin
     and not t.tgisinternal
     and t.tgname = 'card_extras_admit_attribution_override';
 
-  if v_tgenabled = 'D' then
+  -- Require exactly the O (origin-session enabled) firing state. D (disabled)
+  -- and R (replica-only, would not fire for a normal origin-session
+  -- migration) and A (always) are all rejected — only O is what the reviewed
+  -- design assumes a live migration session sees.
+  if v_tgenabled <> 'O' then
     raise exception
-      'ATTR-1 preflight P-1: the F-15 admission trigger exists but is '
-      'DISABLED (tgenabled=D). A disabled trigger enforces nothing — ATTR-1 '
-      'must not write through a channel whose second wall is silently off. '
-      'STOP.';
+      'ATTR-1 preflight P-1: the F-15 admission trigger tgenabled=% — '
+      'expected exactly O (origin-session enabled). D (disabled), R '
+      '(replica-only) and A (always) all mean this migration''s second wall '
+      'would not fire the way the reviewed design assumes. STOP.',
+      v_tgenabled;
   end if;
 
   -- tgtype bit flags (see postgres pg_trigger.tgtype / trigger.h):
   -- 1=ROW, 2=BEFORE, 4=INSERT, 8=DELETE, 16=UPDATE. The reviewed trigger is
-  -- BEFORE INSERT OR UPDATE FOR EACH ROW; any other firing shape means the
-  -- trigger no longer runs where this migration's writes need it to.
-  if (v_tgtype & 1) = 0 or (v_tgtype & 2) = 0
-     or (v_tgtype & 4) = 0 or (v_tgtype & 16) = 0 then
+  -- BEFORE INSERT OR UPDATE FOR EACH ROW, i.e. exactly 1+2+4+16=23 — no other
+  -- bit set. Requiring the exact value (not just "these four bits present")
+  -- also rejects an OR DELETE addition or any other bit drift, not only a
+  -- narrower firing shape.
+  if v_tgtype <> 23 then
     raise exception
-      'ATTR-1 preflight P-1: the F-15 admission trigger is not '
-      'BEFORE INSERT OR UPDATE FOR EACH ROW (tgtype=%). Its firing shape has '
-      'drifted from the reviewed design. STOP.', v_tgtype;
+      'ATTR-1 preflight P-1: the F-15 admission trigger tgtype=% — expected '
+      'exactly 23 (ROW|BEFORE|INSERT|UPDATE). Its firing shape has drifted '
+      'from the reviewed design. STOP.', v_tgtype;
   end if;
 
   if v_fn_schema is distinct from 'public'
@@ -349,10 +367,29 @@ begin
       'trusting this channel.';
   end if;
 
+  -- FINAL WALL: pin the exact trigger and function definitions against the
+  -- fingerprints read-only verified against live production during
+  -- independent review. Everything above (name, binding, tgenabled, tgtype,
+  -- security shape, prosrc substrings) is deliberately kept as human-readable
+  -- structural context — none of it, even combined, proves the definition is
+  -- byte-for-byte the reviewed one. This does.
+  if v_trigger_md5 is distinct from v_expected_trigger_md5
+     or v_function_md5 is distinct from v_expected_function_md5 then
+    raise exception
+      'ATTR-1 preflight P-1: the F-15 admission trigger/function definition '
+      'no longer matches the exact reviewed production fingerprint (trigger '
+      'md5=%, expected %; function md5=%, expected %). Every structural '
+      'check above can pass while the definition itself was quietly '
+      'redefined — this exact fingerprint is the authoritative final wall. '
+      'STOP and re-review before trusting this channel.',
+      v_trigger_md5, v_expected_trigger_md5, v_function_md5, v_expected_function_md5;
+  end if;
+
   raise notice
-    'ATTR-1 preflight P-1: F-15 admission trigger is enabled, correctly '
-    'shaped, bound to the reviewed function, and its load-bearing resolver '
-    'semantics are intact.';
+    'ATTR-1 preflight P-1: F-15 admission trigger is enabled (tgenabled=O), '
+    'exactly shaped (tgtype=23), bound to the reviewed function, its '
+    'load-bearing resolver semantics are intact, and its exact definition '
+    'fingerprint matches the reviewed production object.';
 
   -- cards_effective must be reading artist_id_override through the F-15 CASE,
   -- not the pre-F-15 raw passthrough — otherwise this migration's writes would

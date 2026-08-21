@@ -22,6 +22,7 @@ approval gate. Catalog sync: still paused.**
 | Catalog sync | **remains paused** — not resumed, not triggered |
 | Authored | 2026-08-21 |
 | Corrected | 2026-08-21 — independent review HOLD on `217bfe7` addressed; see §12 |
+| Corrected (2) | 2026-08-21 — independent review HOLD on `0fb192c` addressed; see §13 |
 
 ---
 
@@ -46,15 +47,15 @@ interactive tool approval that was not available in this authoring session
 ## 2. The migration SHA-256 — and why it is verifiable
 
 ```
-d15127c36b99369e294bb177efab2df195146777c8d613d6a9b00ee01295542f  docs/sql/attr-1-confirmed-attribution-repairs.sql
+dc1087155823c34a129a40be43f24dc18317b574faa8d2bc70d25cebaf03fb76  docs/sql/attr-1-confirmed-attribution-repairs.sql
 2f6e75d1c50b65eeedd97e521d3ddb211e1485b1e6739408f715a2ecd13b9968  docs/sql/attr-1-confirmed-attribution-repairs-validation.sql
-df6b8e8ecc48460db5f73c31aa9b312a697620802800ea1eeb874d77ea359761  docs/sql/attr-1-confirmed-attribution-repairs-rollback.sql
+ed73fa23193ba47e1f4b03e2dbb9d88479f8070e3cef9a0e622942835164d7b1  docs/sql/attr-1-confirmed-attribution-repairs-rollback.sql
 ```
 
-**Updated 2026-08-21** in the correction round addressing the P-4 TOCTOU
-overwrite gap, the P-1 trigger-enabled/pinned-semantics guard, and the
-rollback postflight fix (see §12). The validation file's checksum is
-unchanged — that file was not touched by this round.
+**Updated 2026-08-21** in the second correction round, pinning the F-15
+admission trigger/function to the exact live-production fingerprint and
+closing the two residual rollback fail-closed gaps (see §13). The validation
+file's checksum is unchanged — that file was not touched by either round.
 
 A checksum whose only purpose is to be re-derived by a reviewer before
 authorising a production run is worthless if it depends on the platform doing
@@ -173,7 +174,7 @@ validation shape F-15 established, scoped narrowly to data repair only.
 
 | Gate | Checks | STOPs if |
 |---|---|---|
-| P-1 | The F-15 channel exists: all 4 columns, all 4 constraints (`card_extras_artist_id_override_fk`, `..._all_or_nothing`, `..._approved_by_nonempty`, `..._requires_illustrator`), the `card_extras_admit_attribution_override` trigger — **enabled**, firing `BEFORE INSERT OR UPDATE FOR EACH ROW`, bound to `public.card_extras_admit_attribution_override()` via `tgfoid` (not by name alone), that function still `SECURITY INVOKER` plpgsql with its load-bearing resolver semantics intact (aliases-only lookup, fail-closed-on-ambiguity, zero-match-requires-NULL) — `cards_effective` reads `artist_id_override` via a CASE, and the CAT-3B/F-15 column ACL still has no table-level grant for anon/authenticated | F-15 has drifted from its deployed shape, including a disabled trigger or same-name-drifted admission logic |
+| P-1 | The F-15 channel exists: all 4 columns, all 4 constraints (`card_extras_artist_id_override_fk`, `..._all_or_nothing`, `..._approved_by_nonempty`, `..._requires_illustrator`), the `card_extras_admit_attribution_override` trigger — `tgenabled` **exactly** `'O'` (origin-session enabled; `D`/`R`/`A` all rejected), `tgtype` **exactly** `23` (`ROW\|BEFORE\|INSERT\|UPDATE`), bound to `public.card_extras_admit_attribution_override()` via `tgfoid` (not by name alone), that function still `SECURITY INVOKER` plpgsql with its load-bearing resolver semantics intact (aliases-only lookup, fail-closed-on-ambiguity, zero-match-requires-NULL) — and, as the final wall, the trigger/function definitions' exact `md5(pg_get_triggerdef(...))`/`md5(pg_get_functiondef(...))` pinned against the live-production fingerprint verified during independent review (`cbae7726ba19f228954cc51895525a26` / `0831dd22d8e63840501b324e4f3ba3e5`) — `cards_effective` reads `artist_id_override` via a CASE, and the CAT-3B/F-15 column ACL still has no table-level grant for anon/authenticated | F-15 has drifted from its deployed shape in tgenabled/tgtype/binding/semantics, or its exact definition no longer matches the reviewed fingerprint |
 | P-2 | Exactly the 12 target IDs are live in `cards_effective` | any target is missing, or the count is not exactly 12 |
 | P-3 | Each target's current effective `(illustrator, artist_id)` matches the canonical pre-repair reading in `f15-repair-impact.csv` | anything has changed since the evidence was captured |
 | P-4 | No target already carries any attribution bundle field at this statement's snapshot. The `ON CONFLICT DO UPDATE SET` in §1 additionally re-checks this at write time (`WHERE` all five fields still `NULL`), closing the TOCTOU gap between P-4's snapshot and the upsert | a prior correction (verified or not) would be silently overwritten |
@@ -260,12 +261,17 @@ properties above:
    exception` path.
 7. Raw-attribution and unrelated-field preservation postconditions exist
    (V-7, V-8, V-9), plus the membership postconditions (V-4, V-5, V-6).
-8. The rollback is scoped to the exact 12 IDs, checks a provenance fingerprint
-   (`derivation` + `approved_by` + expected illustrator name) before touching
-   any row, never writes `public.cards`, and its postflight proves — not just
-   asserts — the reversal: all five attribution fields cleared on every
-   target, plus `xyp-XY67a`'s effective membership confirmed restored to
-   `sui` (or an explicit `STOP` if that is not safely assertable).
+8. The rollback is scoped to the exact 12 IDs; Guard A checks every
+   load-bearing attribution/provenance field on a present bundle (not just
+   `derivation` + `approved_by` + illustrator name — also `artist_id_override
+   IS NULL` and every evidence-payload field) before touching any row; Guard B
+   verifies raw `public.cards` for all 12 has not drifted from the canonical
+   pre-ATTR-1 reading before promising a restoration; the rollback never
+   writes `public.cards`; and its postflight proves — not just asserts — the
+   reversal for all 12 targets: all five attribution fields cleared, and all
+   12 effective `(illustrator, artist_id)` tuples confirmed restored to their
+   canonical pre-ATTR-1 reading (including `xyp-XY67a` → `sui`), or an
+   explicit `STOP` if that is not safely assertable.
 9. Structural sanity: balanced `BEGIN`/`COMMIT`, balanced `$$` dollar-quoting,
    nothing executable after the final `COMMIT`.
 
@@ -427,3 +433,74 @@ DELETE=8, UPDATE=16` per `pg_trigger.tgtype`/`trigger.h`) — an earlier draft
 of this fix used `8` for `UPDATE`, which is `DELETE`'s bit, and was caught
 and corrected before commit. **Please run the static harness on this head
 before treating the implementation gate as approved**, exactly as requested.
+
+---
+
+## 13. Second independent review correction round (2026-08-21)
+
+Independent review on head `0fb192c` — after a live read-only production
+compatibility probe confirming the deployed F-15 trigger/function matched the
+round-1 assumptions (`tgenabled=O`, `tgtype=23`, bound to
+`public.card_extras_admit_attribution_override()`, `SECURITY INVOKER`
+plpgsql, all prosrc semantic probes present) — returned two residual
+fail-closed gaps, with exact fingerprints supplied for the first:
+
+1. **P-1 did not pin the reviewed trigger/function exactly.** `tgenabled <>
+   'D'` admitted `R` (replica-only, which would not fire for a normal
+   origin-session migration); the `tgtype` check required only the four
+   expected bits rather than the exact value; and the `prosrc` substring
+   probes could all remain present while load-bearing logic was altered
+   around them — same-name semantic drift was pinned less strongly than
+   claimed. Fixed: P-1 now requires `tgenabled = 'O'` exactly (rejecting `D`,
+   `R`, and `A`), `tgtype = 23` exactly, and — as the final wall — computes
+   `md5(pg_get_triggerdef(t.oid, true))` and `md5(pg_get_functiondef(p.oid))`
+   live and compares them against the exact fingerprint read-only verified
+   against production during review: trigger `cbae7726ba19f228954cc51895525a26`,
+   function `0831dd22d8e63840501b324e4f3ba3e5`. The prior structural checks
+   (name, binding, `tgenabled`/`tgtype`, security shape, `prosrc` substrings)
+   are kept as human-readable context; the exact fingerprint is now
+   authoritative.
+2. **Rollback did not guard/restore the exact ATTR-1 bundle and pre-state.**
+   The pre-clear guard checked only `derivation`, `approved_by`, and
+   `illustrator_override` — a later edit to `artist_id_override`, an
+   evidence-payload field, or `approved_at` could still have been silently
+   erased. And the postflight mechanically checked only `xyp-XY67a`'s
+   membership, while the rollback claims all 12 effective tuples return to
+   their pre-ATTR-1 reading. Fixed with two new guards and a widened
+   postflight in the rollback file:
+   - **Guard A** (pre-clear): for every target that still carries an
+     override, requires an exact match on `illustrator_override`,
+     `artist_id_override IS NULL`, and every load-bearing
+     `attribution_override_evidence` field (`derivation`, `gate`, `verified`,
+     `verified_illustrator`, `primary_source`, `secondary_source`,
+     `evidence_artifact`, `evidence_artifact_sha256`, `design_doc`) plus
+     `approved_by` — a mismatch on any one field STOPs rather than guessing.
+   - **Guard B** (pre-clear): verifies raw `public.cards` for all 12 targets
+     still matches the canonical pre-ATTR-1 reading (transcribed into a new
+     `attr1_rollback_targets` temp table, duplicated verbatim from the
+     migration's `attr1_targets` since the two files are deliberately kept
+     separate) — if raw attribution has drifted since ATTR-1 ran (e.g. a
+     resumed catalog sync), the rollback refuses to promise a restoration it
+     can no longer prove.
+   - **Postflight**, widened from `xyp-XY67a` alone to all 12: after
+     clear/delete, joins `attr1_rollback_targets` against
+     `cards_effective` and requires every target's effective
+     `(illustrator, artist_id)` to match its canonical pre-ATTR-1 reading,
+     STOPping with the exact mismatched card IDs if not.
+
+The static harness was updated to assert all of this: exact `tgenabled='O'`/
+`tgtype=23` checks, both fingerprint constants, Guard A's full-field-set
+check, Guard B's raw-pre-state check, presence of the rollback's own
+canonical target table, and the postflight's all-12 (not `xyp-XY67a`-only)
+comparison. The three SQL checksums in §2 were regenerated (migration and
+rollback changed; validation did not).
+
+**Still not executed; node harness still not run in this session** for the
+same `node`/`npm` interactive-approval restriction as both prior rounds.
+`BEGIN`/`COMMIT` and `do $$ … end $$` block counts were independently
+re-verified balanced in both SQL files (8 blocks / 16 `$$` in the migration,
+4 blocks / 8 `$$` in the rollback), and the single-quote count in both files
+was confirmed even after stripping comment-only lines, matching the
+harness's own balance check. **Please run
+`node scripts/attr1-attribution-repairs.test.mjs` on this head before
+marking the implementation gate approved.**
