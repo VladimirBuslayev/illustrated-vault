@@ -1,6 +1,6 @@
 Illustrated Vault — Current State
 
-Last updated: 2026-08-20
+Last updated: 2026-08-21
 
 Production
 
@@ -147,6 +147,12 @@ CAT-3B.1
 Approved alias image activation — 192 overrides written into the CAT-3B channel
 
 ✓ EXECUTED / VALIDATED 2026-08-20 (PR #21, head 304c69d). Closes broad catalog image remediation.
+
+F-15
+
+Durable attribution correction channel (artist_id_override on card_extras; shipped with 0 ATTR-1 repairs)
+
+✓ EXECUTED / VALIDATED 2026-08-21 (PR #26, head 856250c, migration 20260821132512_f15_durable_attribution_correction). Builds the channel; repairs nothing. Next: ATTR-1.
 
 Full Gate 2 phase history (5A–5O) lives in CHANGELOG.md. No Gate 2 rollback or deferred cleanup remains.
 
@@ -1432,7 +1438,23 @@ Baseline discrepancy, recorded not reconciled. CAT-3A recorded the active-owned 
 
 Broad catalog image remediation is CLOSED. CAT-3B.1 activated the only population ever authorized — the 192 approved same-printing alias pairs. The remaining 1,448 effective image gaps are explicitly NOT authorized for another repair phase: CAT-3A established T1 = 0 of 1,640, so not one has an image available at TCGdex today and there is no known admissible source. Reopening image work requires new evidence, not a new slice.
 
-Next slice is NAV-1, not started. The near-term order is NAV-1 → SEC-0 → AUTH-1 → BETA-0. The scheduled catalog sync remains PAUSED.
+F-15 — Durable Attribution Correction (the channel)
+
+Status: ✓ EXECUTED / VALIDATED, 2026-08-21. PR #26, head 856250c4cc472ce38afc443a8c99b6a390037215, migration `20260821132512_f15_durable_attribution_correction`, reviewed SHA-256 `9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0`. Design: `docs/F-15_DURABLE_ATTRIBUTION_CORRECTION_DESIGN.md` (PR #25, merged). Full account: `docs/F-15_IMPLEMENTATION.md`.
+
+What exists now. The same durable, provenance-aware channel pattern CAT-3B established for images, applied to artist attribution. `card_extras` gained `artist_id_override` (FK → `artists(id)`, ON DELETE RESTRICT) plus three provenance columns (`attribution_override_evidence`, `attribution_override_approved_by`, `attribution_override_approved_at`), admitted all-or-nothing by a new BEFORE INSERT OR UPDATE trigger that is aliases-only — byte-for-byte the same resolver contract `sync/sync-cards.mjs :: resolveArtistId()` uses, never `artists.id`, never fuzzy, never substring.
+
+The one semantic change in cards_effective. Exactly one expression changed: `c.artist_id` became a `CASE` — not a `COALESCE` — on `illustrator_override`. `coalesce(ce.artist_id_override, c.artist_id)` cannot express "deliberately no artist": a NULL override falls through to the known-wrong raw value. All twelve ATTR-1 targets need NULL as their correct artist, so CASE is what makes the twelve repairs even representable. All 14 view columns, their order, `security_invoker = true`, the `card_extras` join and the CAT-2D.1 alias exclusion are otherwise preserved byte-for-byte — proved by an exact pinned-hash pre/post view-definition diff (V-11b), not a substring check.
+
+Legacy provenance, backfilled honestly. Five rows already carrying `illustrator_override` with no provenance (from prior seed-era FK fixes) were backfilled through the same aliases-only resolver, with `derivation: "f15-legacy-backfill"` and `verified: false` — an honest record that the value preserves pre-existing behavior, not a claim of new external verification.
+
+Zero effective change during F-15 itself. V-1 proved a symmetric `EXCEPT ALL` diff of `(id, illustrator, artist_id)` across the whole effective catalog is empty; V-14 proved the same for raw `public.cards`. Post-execution reading confirms it: 0 rows differ, `shinji-kanda`/`asako-ito`/`akira-egawa`/`sui` FK counts unchanged at 28/38/106/224, and `xyp-XY67a` is still filed under `sui`.
+
+Review held the implementation three times on genuine fail-closed gaps before approving execution — an incomplete pre/post `cards_effective` shape assertion, a postflight proof that wrongly assumed `pg_get_viewdef()` ends at the final SELECT projection, and an unanchored containment check that a wrapper expression could have passed while silently reintroducing the raw-fallback defect F-15 exists to remove. All three were corrected before execution; none weakened what the migration mutates. Full correction history in `docs/F-15_IMPLEMENTATION.md` §16–§18.
+
+What F-15 did not do. Zero ATTR-1 rows corrected — the twelve confirmed attribution defects remain exactly as CAT-0/ATTR-0 found them. No artist created, no alias added or edited, no raw `public.cards` write, no image-channel change, no frontend or runtime change (`src/**` and `sync/**` untouched). Catalog sync remains PAUSED. The PR is not merged; merge is a separate gate from execution.
+
+Next slice is ATTR-1 — twelve confirmed attribution repairs through the F-15 channel, `artist_id_override` NULL on all twelve, full external provenance, its own review and its own separate execution approval. Expected visible effect: twelve corrected illustrators and exactly one membership change (`sui` 224 → 223). Not started. After ATTR-1, the near-term order continues: the bounded `xya` duplicate-identity decision and any needed Yellow-A coverage follow-up, then IMG-0 (narrow, evidence-backed image follow-up), then the Catalog Trust Exit Gate, then NAV-1 → SEC-0 → AUTH-1 → BETA-0. The scheduled catalog sync remains PAUSED.
 
 Deferred by CAT-0: Pokémon TCG API fallback Probe B · image remediation (now CLOSED — the only authorized population was activated by CAT-3B.1; the remaining 1,448 gaps are not authorized for another repair phase) · illustrator enrichment · artist FK repair · OL-0D p_artist_id filter semantics (latent; no user-facing Owned Library artist-filter workflow established) · add_artist_to_archive duplicate-identity risk · index hygiene · pricing.
 

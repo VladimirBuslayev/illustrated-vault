@@ -1,6 +1,6 @@
 Illustrated Vault — Roadmap
 
-Last updated: 2026-08-19
+Last updated: 2026-08-21
 
 Completed
 
@@ -96,7 +96,13 @@ CAT-3A itself selected no repair slice. It did identify 192 approved same-printi
 
 CAT-3B (Durable Approved Image Override Channel) is ✓ CLOSED / DEPLOYED / VALIDATED / MERGED 2026-08-19 — PR #17, merge commit 5d741372cf4f1ac89ce5386c069835f947b11f07. The durability / image-override prerequisite that CAT-3A recommended now exists and is no longer a future prerequisite. public.cards remains raw provider history; cards_effective is the rendering chokepoint via an image_url_override COALESCE; admission is restricted to approved alias relationships with the source image matched at admission; provenance is withheld from anon and authenticated. The channel is EMPTY — zero override rows, zero rendered pixels changed. Creating any override, including the 192 CAT-3A-measured pairs, requires its own separately approved slice. Sync remains PAUSED. See /docs/CAT-3B_DURABLE_IMAGE_OVERRIDE.md.
 
-The next slice after CAT-3B is UNDECIDED, pending strategy/review. CAT-3C is deliberately not named here, and populating the 192 pairs is deliberately not authorized as next. The near-term order after catalog work is unchanged.
+CAT-3B.1 (Approved Alias Image Activation) is ✓ EXECUTED / VALIDATED 2026-08-20 — PR #21, head 304c69d. The 192 approved same-printing alias pairs are activated (190 inserts + 2 updates), closing 45 of the 117 active-owned image gaps. Broad catalog image remediation is CLOSED: T1 = 0 of 1,640, so no remaining gap has an image available upstream today.
+
+F-15 (Durable Attribution Correction — the channel) is ✓ EXECUTED / VALIDATED 2026-08-21 — PR #26, head 856250c, migration `20260821132512_f15_durable_attribution_correction`. Same pattern as CAT-3B applied to artist attribution: `card_extras` gained `artist_id_override` plus provenance, admission is aliases-only (mirroring `sync-cards.mjs :: resolveArtistId()`), and `cards_effective`'s `artist_id` now uses `CASE` — not `COALESCE` — so an intentional NULL correction is representable. Effective attribution changed on **0** rows during F-15 itself; the channel exists but is not yet used for a single ATTR-1 repair. See /docs/F-15_IMPLEMENTATION.md.
+
+ATTR-1 (twelve confirmed attribution repairs through the F-15 channel) is the immediate next slice — authored, not started. `artist_id_override` NULL on all twelve, full external provenance, its own review and its own separate execution approval. Expected visible effect: twelve corrected illustrators and exactly one membership change (sui 224 → 223).
+
+After ATTR-1: the bounded xya duplicate-identity decision, Yellow-A coverage follow-up as needed, and IMG-0 (narrow, evidence-backed image follow-up) close out the remaining named Catalog Trust work, followed by the Catalog Trust Exit Gate.
 
 2. NAV-1 — Product Architecture & Durable Navigation
 
@@ -106,7 +112,7 @@ The next slice after CAT-3B is UNDECIDED, pending strategy/review. CAT-3C is del
 
 5. BETA-0 — Small Collector Beta
 
-This order is a guardrail: do not pull later slices forward without an explicit decision.
+This order is a guardrail: do not pull later slices forward without an explicit decision. ATTR-1 is inside CAT-2 (Catalog Trust), ahead of NAV-1 — it is not a new step pulled forward, it is CAT-2's own remaining work.
 
 Paused
 

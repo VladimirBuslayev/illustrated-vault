@@ -1,5 +1,96 @@
 Illustrated Vault — Decision Log
 
+2026-08-21 — F-15: durable attribution correction channel — EXECUTED, ATTR-1 still pending
+
+Decision:
+
+`illustrator_override` alone could not durably repair the twelve confirmed
+ATTR-1 attribution defects: correcting the display string left the raw
+`artist_id` foreign key wrong, and `coalesce(ce.artist_id_override,
+c.artist_id)` cannot express "deliberately no artist" — a NULL override falls
+through to the known-wrong raw value. F-15 built the durable correction
+channel and executed it; it deliberately repairs nothing.
+
+`card_extras` gained four columns — `artist_id_override` plus three
+attribution provenance fields (`attribution_override_evidence`,
+`attribution_override_approved_by`, `attribution_override_approved_at`) — an
+FK to `artists(id)` ON DELETE RESTRICT, and an aliases-only admission trigger
+mirroring `sync/sync-cards.mjs :: resolveArtistId()` exactly: never
+`artists.id`, never fuzzy, never substring. `cards_effective` had exactly one
+expression changed:
+
+```sql
+case
+  when ce.illustrator_override is not null then ce.artist_id_override
+  else c.artist_id
+end as artist_id
+```
+
+**CASE, not COALESCE — the entire point of the slice.** On all twelve ATTR-1
+targets the correct artist is NULL; COALESCE would have retained the raw,
+known-wrong `artist_id` on every one of them (for `xyp-XY67a`, leaving it
+filed under `sui` — the exact defect F-15 exists to remove). The discriminator
+is `illustrator_override`, not `artist_id_override`: the presence of an
+illustrator correction is what makes the raw FK untrustworthy, and keying on
+`artist_id_override` would make an intentional NULL unrepresentable again.
+
+Five legacy rows already carrying `illustrator_override` with no provenance
+were backfilled through the same aliases-only resolver, with honest
+provenance (`derivation: "f15-legacy-backfill"`, `verified: false`) rather
+than a false claim of external verification. `public.cards` was never
+written — raw provider history stays raw, exactly as CAT-2D.2 and CAT-3B
+established for identity and image provenance respectively.
+
+Independent review held the implementation three times before approving it,
+each time on a genuine fail-closed gap rather than a style preference: (1)
+the preflight did not assert the *exact* pre-migration shape of
+`cards_effective`, `card_extras`' ACL, RLS policy, or trigger set, so an
+unrelated production drift between review and execution could have been
+silently overwritten; (2) the postflight proof that the view's raw
+`c.artist_id` projection was replaced assumed `pg_get_viewdef()` ends at the
+final SELECT-list projection, which is false — the `FROM`/`JOIN`/`WHERE`
+clauses follow it, and the assumption would have failed a correct migration
+every time; (3) even after isolating the replaced projection, the check that
+it equalled the approved CASE was an unanchored containment regex, which a
+wrapper like `COALESCE(CASE ... END, c.artist_id)` could have passed while
+silently reintroducing the exact raw-fallback defect F-15 removes. All three
+were corrected in the migration's §0 preflight / §9 validation before
+execution; none weakened what the migration mutates.
+
+Execution was explicitly authorized as a gate separate from review, and merge
+remains a further separate gate, not granted by this decision.
+
+Reason:
+
+A durable correction needs the same properties CAT-2D.2 (identity) and CAT-3B
+(images) already established for their respective corrections: raw
+provider-synced data stays untouched and re-syncable, the override lives in
+`card_extras` beside it, provenance is mandatory and honest rather than
+retrofitted, and admission is restricted to the same resolver sync itself
+trusts so the two can never disagree about what a name means. F-15 is that
+same pattern applied to artist attribution, and — like CAT-3B — it shipped
+its correction data separately from building the channel, so each step is
+independently reviewable and revertible.
+
+Status:
+
+Accepted and EXECUTED 2026-08-21. Migration
+`docs/sql/f15-durable-attribution-correction.sql`, reviewed SHA-256
+`9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0`, applied
+from PR #26 head `856250c4cc472ce38afc443a8c99b6a390037215`; Supabase
+migration history `20260821132512_f15_durable_attribution_correction`.
+Effective attribution changed on **0** rows during F-15 itself (V-1 held);
+five legacy rows backfilled, resolver-consistent 5/5; C1/C2/C3 violations
+0/0/0; `card_extras` ACL/RLS/trigger set match the pinned pre-review baseline
+exactly. **ATTR-1 — the twelve confirmed repairs — is untouched and remains a
+separate, unstarted, separately-approved slice**; `sui` stays at 224 until it
+runs. Part B negative admission tests and V-8 sync durability remain
+deferred, unchanged from the design (no mutation-safe or non-production
+environment exists). The scheduled catalog sync remains PAUSED. PR #26 is
+**not merged**; merge is a further separate authorization. Full account in
+`docs/F-15_IMPLEMENTATION.md`; design in
+`docs/F-15_DURABLE_ATTRIBUTION_CORRECTION_DESIGN.md` (PR #25).
+
 2026-08-20 — CAT-3B.1: approved alias image activation — EXECUTED, and catalog image remediation closed
 
 Decision:

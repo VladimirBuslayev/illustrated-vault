@@ -1,40 +1,45 @@
 # F-15 — Durable Attribution Correction: Implementation
 
-**Status: AUTHORED, REVIEWED-READY — NOT EXECUTED.**
-**Production mutations: none. ATTR-1 repairs: none. Catalog sync: still paused.**
+**Status: DEPLOYED / VALIDATED — production execution complete.**
+**Production mutations: the reviewed migration only (2026-08-21). ATTR-1 repairs: none — still a separate, unstarted slice. Catalog sync: still paused.**
 
 | | |
 |---|---|
 | Slice | F-15 implementation — the durable attribution correction channel |
-| Type | Schema prerequisite. **Creates a channel. Repairs nothing.** |
+| Type | Schema prerequisite. **Built the channel. Repairs nothing — ATTR-1 is separate.** |
 | Branch | `implement/f15-durable-attribution-correction` |
 | Base | `main` @ `9f233de3405e1aba26358bc54a0b4156b9b09df8` |
 | Design (authoritative) | `docs/F-15_DURABLE_ATTRIBUTION_CORRECTION_DESIGN.md` (PR #25, merged) |
-| Migration | `docs/sql/f15-durable-attribution-correction.sql` — **NOT EXECUTED** |
-| Migration SHA-256 | `9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0` |
-| Validation | `docs/sql/f15-durable-attribution-correction-validation.sql` — **NOT EXECUTED** |
-| Rollback | `docs/sql/f15-durable-attribution-correction-rollback.sql` — **NOT EXECUTED** |
-| Static harness | `scripts/f15-attribution-correction.test.mjs` — **executed 2026-08-21 after the three PR #26 review corrections: 175 assertions, 0 failures.** The run surfaced one stale assertion (a bare-name test for `card_extras_set_updated_at`, which review-added preflight P-10 legitimately reads as a guard); it was tightened to test that no DDL targets that trigger. See §11. |
-| Production reads | read-only introspection only (Supabase MCP is read-only) |
-| Production writes | **none** |
-| Production execution | **a separate, explicitly-approved gate. Not granted here.** |
+| Migration | `docs/sql/f15-durable-attribution-correction.sql` — **EXECUTED 2026-08-21** |
+| Migration SHA-256 | `9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0` (unchanged since the last correction; verified against the executed artifact) |
+| Supabase migration history | `20260821132512_f15_durable_attribution_correction` |
+| Validation | `docs/sql/f15-durable-attribution-correction-validation.sql` — **Part A executed 2026-08-21 (E-1 = 0, E-2 = 0). Part B negative admission tests remain NOT EXECUTED — see §10.** |
+| Rollback | `docs/sql/f15-durable-attribution-correction-rollback.sql` — **NOT EXECUTED** (no rollback was needed; retained for future use) |
+| Static harness | `scripts/f15-attribution-correction.test.mjs` — executed 2026-08-21 on exact head `856250c`: **175 assertions, 0 failures.** The exact-head run surfaced one stale assertion (a bare-name test for `card_extras_set_updated_at`), corrected in `856250c`. See §11. |
+| Production reads | read-only introspection, plus the migration's own embedded reads (B-2 gate, preflight, validation) |
+| Production writes | **the reviewed migration — executed exactly once, 2026-08-21.** No other production write. |
+| Production execution | **complete.** See §19. |
 | Runtime changes | **none** — `src/**` and `sync/**` are untouched |
 | Authored | 2026-08-21 |
+| Executed | 2026-08-21 |
 
 ---
 
 ## 1. What this PR means, and what it does not
 
-**It means:** the F-15 implementation is authored, statically validated, and
-ready for an independent review that ends in a separate decision about whether
-to run it.
+**It means:** the F-15 implementation was authored, statically validated,
+independently reviewed through four correction rounds, and — on explicit
+separate authorization recorded in the PR thread — executed against
+production on 2026-08-21. See §19 for the executed result.
 
-**It does not mean F-15 is deployed.** Nothing has been executed. `card_extras`
-has ten columns in production today, exactly as it did before this branch.
+**It does not mean the PR is merged.** Execution and merge are still two
+separate gates in this workflow; the PR remains open pending merge
+authorization.
 
 **It does not mean ATTR-1 is repaired.** The twelve confirmed attribution
-defects are untouched, and the migration asserts that twice — once in its
-preflight (P-6) and once before it commits (V-13).
+defects are still untouched, and the migration asserted that twice before
+committing — once in its preflight (P-6) and once before COMMIT (V-13) — and
+§19 confirms the post-execution reading agrees: 0 of 12 corrected.
 
 ---
 
@@ -59,13 +64,16 @@ you is not the file that was reviewed.
 
 ---
 
-## 3. Execution boundary
+## 3. Execution boundary (pre-execution reading — historical)
 
-**This slice carries no production mutation authorization.** The Supabase access
-used while authoring was read-only, and every figure quoted below came from a
-`SELECT`.
+**At authoring time this slice carried no production mutation authorization.**
+The Supabase access used while authoring was read-only, and every figure
+quoted below came from a `SELECT`. This section is retained as the
+pre-execution baseline; §19 records the post-execution result, and the two
+should be read together. Production mutation authorization was granted
+separately, later the same day, and execution is recorded in §19.
 
-What was read, on 2026-08-21 against `main` @ `9f233de`:
+What was read, on 2026-08-21 against `main` @ `9f233de`, before execution:
 
 | Check | Reading |
 |---|---|
@@ -78,8 +86,9 @@ What was read, on 2026-08-21 against `main` @ `9f233de`:
 | — of which resolve to NULL / to an artist | **2 / 3** |
 | `cards.artist_id`, `artists.id`, `card_extras.illustrator_override` types | all `text` — the view rebuild is type-compatible |
 
-**Execution is a separate gate.** When it is granted, run the whole file as one
-script (see §8), then run the validation file, then record the result.
+**Execution was a separate gate**, granted later on 2026-08-21. The whole file
+was run as one script (§8), the validation file's Part A was run, and the
+result is recorded in §19.
 
 ---
 
@@ -203,26 +212,30 @@ ATTR-1 correction by reading `.derivation` and `.verified` — not by the
 
 ---
 
-## 8. How to execute, when approved
+## 8. How execution was carried out (2026-08-21)
+
+This section originally described the planned execution procedure. It is now
+a record of what was actually done — see §19 for the result.
 
 1. Re-read `docs/sql/f15-attribution-correction-design-audit.sql` A-1…A-5 and
-   confirm production still matches design §5.
-2. Verify the migration's SHA-256 against §2.
-3. **Execute the whole file as one script.** Running it statement-by-statement
-   in a console that autocommits each one discards exactly the atomicity every
-   ordering guarantee depends on.
-4. Read the `NOTICE` output. Expect, in order: `§0 preflight: PASS`,
+   confirmed production still matched design §5.
+2. Verified the migration's SHA-256 against §2.
+3. **Executed the whole file as one script.** Running it statement-by-statement
+   in a console that autocommits each one would have discarded exactly the
+   atomicity every ordering guarantee depends on.
+4. Read the `NOTICE` output, confirming, in order: `§0 preflight: PASS`,
    `§0 P-7: PASS`, `§0 P-8/P-9/P-10: PASS`,
    `§0 snapshot: N effective rows, M raw rows`,
    `§2 B-2 gate: PASS (override_rows=5, would_change_membership=0, ambiguous_rows=0)`,
    `§4 backfill verified`, `§9 validation: ALL PASS`.
-5. Run `docs/sql/f15-durable-attribution-correction-validation.sql` Part A and
-   record the output. Part B is **not** run (§10).
-6. Only then consider ATTR-1 — a separate slice, separately approved.
+5. Ran `docs/sql/f15-durable-attribution-correction-validation.sql` Part A and
+   recorded the output (§19). Part B was **not** run — still deferred (§10).
+6. ATTR-1 was **not** started. It remains a separate slice, requiring its own
+   separate approval.
 
-**If any gate raises, nothing applied.** §0–§9 are one transaction, all three
-snapshots drop automatically, and the database is left in the complete pre-F-15
-state. Fix the cause and re-run the whole file.
+**If any gate had raised, nothing would have applied.** §0–§9 are one
+transaction, all three snapshots drop automatically, and a raise leaves the
+database in the complete pre-F-15 state. No gate raised.
 
 ---
 
@@ -242,19 +255,21 @@ comparing the actual snapshot to actual post-migration state.
 **V-14** does the same for raw `public.cards`, proving I-1 mechanically rather
 than by assertion in prose.
 
-Expected post-execution readings (validation Part A):
+Expected post-execution readings (validation Part A) — **all confirmed by the
+actual 2026-08-21 execution; see §19 for the executed figures, which match
+every row of this table exactly:**
 
-| | Expected |
-|---|---|
-| Effective diff vs. snapshot | **0 rows** |
-| Raw `cards` diff vs. snapshot | **0 rows** |
-| Legacy rows backfilled | **5**, all resolver-consistent, all fully provenanced |
-| `shinji-kanda` / `asako-ito` / `akira-egawa` / `sui` FK counts | **28 / 38 / 106 / 224** — unchanged |
-| ATTR-1 rows with a correction | **0** |
-| `sui` after F-15 | **still 224.** It becomes 223 only when ATTR-1 runs. |
-| Public column SELECT on `card_extras` (anon *and* authenticated) | exactly `artist_id_override, card_id, illustrator_override, image_url_override` |
-| Table-level grants for anon/authenticated | **0** |
-| Triggers on `card_extras` | **3** (F-15 admission, CAT-3B admission, `updated_at`) |
+| | Expected | Actual (§19) |
+|---|---|---|
+| Effective diff vs. snapshot | **0 rows** | 0 |
+| Raw `cards` diff vs. snapshot | **0 rows** | 0 |
+| Legacy rows backfilled | **5**, all resolver-consistent, all fully provenanced | 5, confirmed |
+| `shinji-kanda` / `asako-ito` / `akira-egawa` / `sui` FK counts | **28 / 38 / 106 / 224** — unchanged | 28 / 38 / 106 / 224 |
+| ATTR-1 rows with a correction | **0** | 0 |
+| `sui` after F-15 | **still 224.** It becomes 223 only when ATTR-1 runs. | still 224 |
+| Public column SELECT on `card_extras` (anon *and* authenticated) | exactly `artist_id_override, card_id, illustrator_override, image_url_override` | confirmed exact |
+| Table-level grants for anon/authenticated | **0** | 0 |
+| Triggers on `card_extras` | **3** (F-15 admission, CAT-3B admission, `updated_at`) | 3, confirmed |
 
 ---
 
@@ -354,9 +369,9 @@ untouched, to prove the runtime is genuinely unaffected.
 | File | Purpose |
 |---|---|
 | `docs/F-15_IMPLEMENTATION.md` | this document |
-| `docs/sql/f15-durable-attribution-correction.sql` | the migration — **NOT EXECUTED** |
-| `docs/sql/f15-durable-attribution-correction-validation.sql` | Part A read-only validation; Part B negative tests, not executed |
-| `docs/sql/f15-durable-attribution-correction-rollback.sql` | Level 1 + Level 2 — **NOT EXECUTED** |
+| `docs/sql/f15-durable-attribution-correction.sql` | the migration — **EXECUTED 2026-08-21** (§19) |
+| `docs/sql/f15-durable-attribution-correction-validation.sql` | Part A executed 2026-08-21; Part B negative tests, not executed |
+| `docs/sql/f15-durable-attribution-correction-rollback.sql` | Level 1 + Level 2 — **NOT EXECUTED** (not needed; retained) |
 | `scripts/f15-attribution-correction.test.mjs` | static containment harness |
 
 **Changed**
@@ -368,26 +383,33 @@ untouched, to prove the runtime is genuinely unaffected.
 **Explicitly unchanged:** `src/**` (zero files) · `sync/**` (zero files) ·
 `public.cards` · `public.artists` · artist aliases · CAT-3B's image override
 channel, its admission trigger and the `updated_at` trigger · every RLS policy ·
-the merged PR #25 design and audit artifacts · `docs/CURRENT_STATE.md`,
-`docs/ARCHITECTURE.md`, `docs/DECISION_LOG.md`, `docs/ROADMAP.md` (closeout
-documents — updated after successful production execution, not before).
+the merged PR #25 design and audit artifacts. `docs/CURRENT_STATE.md`,
+`docs/ARCHITECTURE.md`, `docs/DECISION_LOG.md`, `docs/ROADMAP.md` were closeout
+documents deliberately left unchanged through authoring and review, updated
+now in the same commit as this section, after successful production execution
+(§19).
 
 ---
 
 ## 13. Non-goals
 
-- **No production DDL or DML executed.** No `apply_migration` path was called.
+These held through authoring and review, and continue to hold after the
+2026-08-21 execution recorded in §19:
+
 - The 12 ATTR-1 rows are **not repaired**; no `illustrator_override` or
-  `artist_id_override` was written for any of them.
+  `artist_id_override` was written for any of them — confirmed post-execution
+  (§19: 0 of 12 corrected).
 - No artist created; no alias added or edited.
-- No raw `public.cards` attribution changed.
+- No raw `public.cards` attribution changed — confirmed post-execution (V-14,
+  §19).
 - `sync/sync-cards.mjs` unchanged; **catalog sync remains paused** — not
   resumed, not triggered.
 - No `xya` deduplication; F-16 not solved; the 79-vs-37 coverage question not
   investigated.
 - RLS not redesigned; no anon/authenticated write policy added.
 - No frontend or runtime change. IMG-0 not started. NAV-1 not started.
-- **The PR is not merged and the migration is not run.**
+- **The PR is still not merged.** Execution (§19) and merge remain two
+  separate gates.
 
 ---
 
@@ -419,18 +441,18 @@ documents — updated after successful production execution, not before).
 
 ---
 
-## 15. Recommended next
+## 15. Recommended next (original plan — see §19 for what actually happened)
 
-1. **Review this implementation** — particularly the ordering (§4), the CASE
-   (§5), the aliases-only resolver (§6), the legacy provenance (§7), and the
-   deferred validation (§10).
-2. **Approve production execution as a separate gate.** Expect zero visible
-   change (§9).
-3. Record the execution result, then update the closeout documents.
-4. **Only then ATTR-1** — twelve rows through this channel,
-   `artist_id_override` NULL on all twelve, full external provenance,
-   separately reviewed and separately approved. Expected visible effect: twelve
-   corrected illustrators and exactly one membership change (`sui` 224 → 223).
+1. ~~Review this implementation~~ — done, across four review/correction
+   rounds (§16–§18).
+2. ~~Approve production execution as a separate gate. Expect zero visible
+   change (§9)~~ — done; execution matched §9's expectation exactly (§19).
+3. ~~Record the execution result, then update the closeout documents~~ — done;
+   this is that update.
+4. **Now: ATTR-1** — twelve rows through this channel, `artist_id_override`
+   NULL on all twelve, full external provenance, separately reviewed and
+   separately approved. Expected visible effect: twelve corrected illustrators
+   and exactly one membership change (`sui` 224 → 223). Not started.
 
 ---
 
@@ -619,3 +641,72 @@ were touched. Sync remains paused. The migration SHA-256 (§2) was
 regenerated for the new migration file text:
 `9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0`. The
 validation and rollback file checksums are unchanged.
+
+---
+
+## 19. Production execution — PASS (2026-08-21)
+
+Independent review approved the implementation gate on exact head
+`856250c4cc472ce38afc443a8c99b6a390037215` — the first exact-head harness run
+surfaced one stale assertion (the bare-name `card_extras_set_updated_at`
+check; narrowed to detect actual DDL/redefinition of that trigger, since
+review-added P-10 now legitimately reads its name as a preflight guard), the
+rerun passed **175 assertions / 0 failures**, `npm.cmd run build` passed, and
+`git diff --check` was clean. An independent final-delta review confirmed
+`856250c` touched only the test harness and this document, and that the
+migration/validation/rollback SQL were untouched since `d1008e3`.
+
+Production execution was then explicitly separately approved and completed
+successfully the same day.
+
+**Executed artifact**
+
+- PR head at execution: `856250c4cc472ce38afc443a8c99b6a390037215`
+- Migration: `docs/sql/f15-durable-attribution-correction.sql`
+- Reviewed SHA-256: `9d1a654bd1c6cda3b1ab669a99b22058278348d7f25f2b7e0c50579c91befff0`
+- Supabase migration history entry: `20260821132512_f15_durable_attribution_correction`
+
+**Result**
+
+- Migration applied successfully inside its single transaction; every
+  embedded fail-closed gate and V-1…V-14 completed and committed.
+- Four `card_extras` columns now exist with the designed types:
+  `artist_id_override` text, `attribution_override_evidence` jsonb,
+  `attribution_override_approved_by` text,
+  `attribution_override_approved_at` timestamptz.
+- Five legacy `illustrator_override` rows fully backfilled with
+  `system:f15-migration` provenance, resolver-consistent 5/5 (2 resolve
+  NULL, 3 resolve to their existing artist — matching the pre-execution B-2
+  reading in §3 exactly).
+- Effective artist membership changed on **0** legacy rows — V-1 held.
+- C1/C2/C3 violations: **0 / 0 / 0**. Ambiguous admitted overrides: **0**.
+- `cards_effective` retains its 14-column shape, `security_invoker = true`,
+  the CAT-2D.1 alias exclusion, the CAT-3B image override, and now uses the
+  approved `CASE` (not `COALESCE`) for effective `artist_id` — V-11b held.
+- anon/authenticated ACL on `card_extras` is exactly: `artist_id_override`,
+  `card_id`, `illustrator_override`, `image_url_override`. No table-level
+  grant. Attribution/image provenance columns remain private — P-8/V-12 held.
+- RLS/policy unchanged from the pinned P-9 baseline: enabled, not forced,
+  one permissive SELECT policy `card_extras_public_select`, roles exactly
+  `{anon, authenticated}`, `USING true`, no `WITH CHECK`.
+- Triggers on `card_extras` now exactly three, coexisting as designed: the
+  new F-15 attribution admission trigger, the pre-existing CAT-3B image
+  admission trigger, and the pre-existing `updated_at` trigger.
+- The F-15 admission function is `SECURITY INVOKER` (`prosecdef = false`),
+  matching the reviewed design.
+- ATTR-1 corrected rows: **0** — all 12 remain deliberately unrepaired by
+  this slice. `xyp-XY67a` is still filed under `sui`, and `sui` remains 224.
+- Validation Part A: E-1 = **0**, E-2 = **0**; curated FK counts unchanged —
+  Akira Egawa 106 / Asako Ito 38 / Shinji Kanda 28 / sui 224.
+
+No ATTR-1 write was performed. No catalog sync was resumed or triggered.
+The PR is **not merged** — merge remains a separate, explicit authorization,
+unaffected by execution.
+
+**What this closes out.** F-15 is now DEPLOYED and VALIDATED: the durable
+attribution correction channel exists in production, is structurally sound
+(§4–§7, §16–§18), and produced the expected zero-visible-change result on
+execution (§9). What remains open is unchanged from the design: ATTR-1 (the
+twelve confirmed repairs), Part B negative admission tests (§10, still no
+mutation-safe environment), and V-8 sync durability (§10, still deferred, no
+non-production environment).

@@ -1,6 +1,6 @@
 # Illustrated Vault — Architecture
 
-Last updated: 2026-07-03
+Last updated: 2026-08-21
 
 ## Production architecture
 
@@ -251,6 +251,60 @@ card is override-only until a separately validated canonical mapping exists.
 Live as of CAT-2D.2: 192 aliases; `cards` 23,780; `cards_effective` 23,588.
 See `CURRENT_STATE.md` and `CAT-2D.2_FAMILY_A_RECONCILIATION.md`.
 
+## Durable override channels (`card_extras`)
+
+`public.cards` stays raw, sync-owned provider history and must remain
+re-syncable without losing curated corrections. Two independent,
+provenance-aware override channels live beside it on `card_extras` — never
+inside `cards` — and both are merged into the frontend read model only by
+`cards_effective`, the single rendering chokepoint:
+
+| Channel | Columns on `card_extras` | `cards_effective` expression | Shipped by |
+|---|---|---|---|
+| Image override | `image_url_override`, `image_override_source_card_id` (FK → `cards(id)`, `ON DELETE RESTRICT`), `image_override_evidence`, `image_override_approved_by`, `image_override_approved_at` | `coalesce(ce.image_url_override, c.image_url)` | CAT-3B (channel, 2026-08-19) / CAT-3B.1 (192 rows, 2026-08-20) |
+| Attribution override | `illustrator_override` (pre-existing), `artist_id_override` (FK → `artists(id)`, `ON DELETE RESTRICT`), `attribution_override_evidence`, `attribution_override_approved_by`, `attribution_override_approved_at` | `case when ce.illustrator_override is not null then ce.artist_id_override else c.artist_id end as artist_id` | F-15 (channel, 2026-08-21) |
+
+**Attribution uses `CASE`, not `COALESCE` — deliberately.**
+`coalesce(ce.artist_id_override, c.artist_id)` cannot express "deliberately no
+artist": a NULL override falls through to the raw, possibly-wrong `artist_id`.
+The image channel's COALESCE is correct for images (there is no
+"deliberately no image" case); attribution needs the stronger CASE because a
+future correction may need to set `artist_id_override` to NULL on purpose.
+The discriminator is `illustrator_override`, not `artist_id_override` —
+presence of an illustrator correction is what makes the raw FK untrustworthy.
+
+**Admission is restricted and channel-specific**, each via its own `BEFORE
+INSERT OR UPDATE`, `SECURITY INVOKER` trigger on `card_extras`:
+
+- Image admission (CAT-3B) admits only where the source is an approved
+  `card_identity_aliases` relationship of the target card and the proposed
+  value equals that source card's current `image_url`.
+- Attribution admission (F-15) admits only through the same aliases-only
+  resolver contract `sync/sync-cards.mjs :: resolveArtistId()` uses — never
+  `artists.id`, never fuzzy, never substring — so sync and admission can
+  never disagree about what a name means.
+
+Both are idempotence-guarded (`IS NOT DISTINCT FROM`, never `=`): an update
+that changes none of a channel's fields is not re-admitted, so unrelated
+edits (e.g. `source_note`) never trigger revalidation.
+
+`card_extras` currently has three triggers total, coexisting: the CAT-3B
+image admission trigger, the F-15 attribution admission trigger, and the
+pre-existing `updated_at` trigger. Provenance columns for both channels are
+withheld from `anon`/`authenticated`; the public column-level `SELECT` grant
+on `card_extras` is exactly `card_id`, `illustrator_override`,
+`image_url_override`, `artist_id_override` — no table-level grant, no
+provenance exposure. RLS is enabled, not forced, with exactly one permissive
+policy (`card_extras_public_select`, roles `{anon, authenticated}`, `USING
+true`, no `WITH CHECK`).
+
+Both channels shipped their schema **empty** and were populated (or, for
+attribution, remain unpopulated) by a separate, later, separately-approved
+slice: CAT-3B.1 wrote the 192 approved image overrides; F-15's own execution
+wrote zero attribution corrections — ATTR-1 (twelve confirmed repairs) is the
+channel's first intended use and has not run. See `CURRENT_STATE.md`,
+`CAT-3B_DURABLE_IMAGE_OVERRIDE.md` and `F-15_IMPLEMENTATION.md`.
+
 ## Data flow — hunt intent
 
 ```
@@ -348,11 +402,12 @@ migration.
 User-scoped tables: `user_collection`, `card_overrides`, `price_history`,
 `card_favorites` (via `collectionService.js`), `user_card_intent` (via
 `intentService.js`) and `user_tracked_artists` (via `artistService.js`) — all
-RLS `user_id = auth.uid()`. Editorial enrichment lives in `card_extras`,
-merged into `cards_effective`; the normalized `artists` table (with alias
-arrays) backs FK artist identity and is formalized as global artist identity
-(20 rows today). `illustrator_directory` is the read-only discovery view
-(illustrator + card count) backing the future Find Illustrator flow.
+RLS `user_id = auth.uid()`. Editorial enrichment lives in `card_extras` —
+image and attribution override channels, see "Durable override channels"
+above — merged into `cards_effective`; the normalized `artists` table (with
+alias arrays) backs FK artist identity and is formalized as global artist
+identity (20 rows today). `illustrator_directory` is the read-only discovery
+view (illustrator + card count) backing the future Find Illustrator flow.
 
 ## Backend RPC dependencies — unchanged
 
