@@ -15,3 +15,10 @@ docs/cat-2d2-evidence/*.csv text eol=lf
 # pinning LF keeps the working-tree bytes identical to the committed bytes, so a
 # reviewer hashing the file by hand gets the manifest value.
 docs/attr-0-evidence/*.csv text eol=lf
+
+# F-15: the durable attribution correction migration is checksummed in
+# docs/F-15_IMPLEMENTATION.md and in the PR that proposes it for execution.
+# The whole point of that checksum is that a reviewer can hash the file by hand
+# and get the same value before authorising a production run, so the
+# working-tree bytes must equal the committed bytes on every platform.
+docs/sql/f15-durable-attribution-correction*.sql text eol=lf
