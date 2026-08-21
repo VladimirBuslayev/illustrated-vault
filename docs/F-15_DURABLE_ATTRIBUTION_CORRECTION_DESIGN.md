@@ -18,6 +18,7 @@
 | Repair performed | **none** — the 12 confirmed rows are untouched |
 | Artifacts | `docs/sql/f15-attribution-correction-design-audit.sql` (SELECT-only) · `docs/attr-0-evidence/f15-repair-impact.csv` |
 | Measured at | 2026-08-20 |
+| Corrections (2026-08-21, PR #25 review) | (1) admission resolver corrected to aliases-only, matching `sync-cards.mjs` exactly — §12, §6.3; (2) legacy-row provenance grandfathering replaced with a concrete, unconditional representation — §6.4, §12.2 C1, §13.4 |
 
 ---
 
@@ -274,19 +275,46 @@ ambiguous_rows          = 0
 **If either is non-zero, HOLD.** A non-zero `would_change_membership` means the
 backfill would alter an existing membership and each such row needs an explicit
 evidence-backed decision; a non-zero `ambiguous_rows` means R4 cannot decide.
-Today both are 0, so implementation may proceed — but the gate must be re-run
+Today both are 0 **under the corrected, aliases-only resolver** (§12 —
+`docs/sql/f15-attribution-correction-design-audit.sql` B-1/B-2 no longer test
+`artists.id`), so implementation may proceed — but the gate must be re-run
 against production immediately before the migration, not trusted from this
-document.
+document. Narrowing the resolver to aliases-only can only ever turn a match
+into a non-match, never the reverse, so it cannot introduce a new
+`would_change_membership` or `ambiguous_rows` hit that the broader two-clause
+formula didn't already have — but the three matched legacy rows (§6.1) must
+still be re-measured under the corrected query rather than assumed, since the
+figures recorded here were captured before this correction.
 
-### 6.4 Grandfathering provenance
+### 6.4 Provenance for the five legacy rows
 
-The five legacy rows carry a `source_note` and none of the proposed provenance
-fields. They must **not** be forced to invent one. §13.4 defines the
-grandfathering rule: the all-or-nothing provenance constraint applies to
-`artist_id_override`, which legacy rows acquire only through the backfill — so
-the constraint is written to exempt a backfilled row that carries no attribution
-evidence, and the backfill stamps a fixed, honest marker recording that the
-value was *derived*, not *verified*.
+**Correction, from review.** An earlier draft had the backfill leave the three
+provenance columns NULL on the five legacy rows and carved out a CHECK
+exemption for "a row whose `artist_id_override` arrived through the
+backfill." That is not enforceable: a declarative CHECK sees only a row's
+current column values, never *how* they got there, so nothing could
+distinguish a legitimately-exempt backfilled row from a future write that
+simply omits provenance and claims the same exemption. That would have made
+C1 (§12.2) a loophole, not a constraint.
+
+**The backfill instead writes a complete, honest provenance bundle to all
+five rows — there is no exemption, and C1 stays unconditional.**
+`attribution_override_evidence` is stamped with a structured `jsonb` value
+that says plainly what happened:
+`{"derivation": "f15-legacy-backfill", "basis": "artist_id_override computed from the pre-existing illustrator_override via the aliases-only resolver (§12) to preserve pre-F-15 effective behaviour", "verified": false}` —
+explicitly *not* an external-verification claim, which is the one thing that
+would be dishonest to assert for these rows. `attribution_override_approved_by`
+is set to the fixed literal `'system:f15-migration'` (non-empty, satisfies
+C2, and self-evidently not a human reviewer). `attribution_override_approved_at`
+is the migration's execution timestamp, not backdated.
+
+This keeps §12.2's C1 a single all-or-nothing rule with **zero exceptions**,
+applied identically to every row forever: legacy backfill, ATTR-1 repair, and
+any future correction all satisfy the same constraint the same way. A future
+maintainer distinguishes a legacy derivation from an externally-verified
+correction by reading `attribution_override_evidence.derivation` /
+`.verified`, not by the *absence* of provenance — because absence of
+provenance is no longer a state any row can be in.
 
 ### 6.5 A latent hazard found in passing — recorded, not fixed
 
@@ -330,7 +358,12 @@ the id set must equal Gate 2's 11 `CONFIRMED_WRONG` plus `xyp-XY67a`).
 
 All twelve are live in `cards_effective`; none currently has a `card_extras`
 override. **Ambiguous targets: 0. Targets resolving to a known artist: 0.
-Targets requiring intentional NULL: 12.**
+Targets requiring intentional NULL: 12.** These zeros hold a fortiori under
+the §12 resolver correction: dropping the `artists.id` match arm can only
+turn a match into a non-match, never manufacture a new one, so a target that
+resolved to 0 artists under the broader two-clause formula still resolves to
+0 under the corrected aliases-only one. No re-measurement is required for
+this section specifically.
 
 ### 7.2 Membership consequence
 
@@ -470,14 +503,26 @@ CAT-2D.1 alias exclusion. Exactly one expression changes.
 ## 12. Admission and fail-closed rules
 
 Admission is enforced by a `BEFORE INSERT OR UPDATE` trigger, **SECURITY
-INVOKER**, alongside declarative CHECKs. The resolver is the same normalised
-exact-match rule the sync uses (`lower(btrim(...))` against `artists.id` and
-`artists.aliases`) — deliberately identical so admission and sync can never
-disagree about what a name means.
+INVOKER**, alongside declarative CHECKs. **Correction, from review**: an
+earlier draft of this design and its audit SQL described the resolver as
+matching `lower(btrim(...))` against `artists.id` **or** `artists.aliases`.
+That is not what the sync does. `loadArtistAliasMap()`
+(`sync/sync-cards.mjs:217-227`) builds its lookup map **exclusively** from
+`artists.aliases`; `resolveArtistId()` (`:229-232`) consults only that map and
+never reads `artists.id`. `artists.id` is a hyphenated slug (e.g.
+`shinji-kanda`), not a display string, so it would rarely coincide with a
+normalised illustrator name anyway — but "rarely" is exactly the fail-open
+gap R4 exists to close (§5.4), and admission must not use a broader
+matching contract than sync uses. **The admission resolver is therefore
+aliases-only, byte-for-byte identical to `resolveArtistId()`**: exact match of
+`lower(btrim(illustrator_override))` against `lower(btrim(alias))` for
+`alias` in `artists.aliases`, nothing else. This is deliberate, not a
+divergence to be justified — admission and sync now share one definition and
+can never disagree about what a name means.
 
 | | Rule | Behaviour |
 |---|---|---|
-| **R1** | Determining the expected artist | Resolve `illustrator_override` via the normalised exact-match resolver. Never fuzzy, never substring. |
+| **R1** | Determining the expected artist | Resolve `illustrator_override` via the normalised exact-match resolver against `artists.aliases` only — never `artists.id`, never fuzzy, never substring. |
 | **R2** | Exactly **one** match | `artist_id_override` **must equal** that artist's id. Any other value → **reject**. (I-5) |
 | **R3** | **Zero** matches | `artist_id_override` **must be NULL**. A non-NULL value → **reject**. (I-4) |
 | **R4** | **More than one** match | **Reject — fail closed.** Never pick. (I-6) |
@@ -516,9 +561,14 @@ rather than coupling.
 
 ### 12.2 Declarative constraints
 
-- **C1 — all-or-nothing provenance.** Either `illustrator_override` +
-  `attribution_override_{evidence,approved_by,approved_at}` are all present, or
-  all three provenance fields are absent (§13.4 grandfathering).
+- **C1 — all-or-nothing provenance, no exceptions.** Either `illustrator_override`
+  + `attribution_override_{evidence,approved_by,approved_at}` are all present, or
+  all three provenance fields are absent. This holds unconditionally for every
+  row, including the five legacy overrides: the backfill supplies a real
+  (system-authored, explicitly-labeled-as-derived) provenance bundle for them
+  rather than being exempted from C1 (§6.4, §13.4). A declarative CHECK cannot
+  see how a value arrived, so C1 must not depend on that — it can only depend
+  on what is present in the row today.
 - **C2 — non-empty `approved_by`.**
 - **C3 — R5.** `artist_id_override IS NOT NULL` requires
   `illustrator_override IS NOT NULL`.
@@ -578,17 +628,25 @@ are the honest mechanism (CAT-2D.1 §3, CAT-3B §4.3b).
 `service_role` keeps table-level access and needs it to author corrections. No
 privilege is widened.
 
-### 13.4 Grandfathering the five legacy rows
+### 13.4 Provenance for the five legacy rows — concrete representation
 
-The legacy rows have no attribution provenance and must not be forced to invent
-one. C1 is therefore written so that **provenance is required when a correction
-is authored, and not required for a row whose `artist_id_override` arrived
-through the §6.2 backfill**. The backfill stamps a fixed, honest marker —
-`derived_by: 'F-15 backfill'`, recording that the value was *computed from the
-existing override string to preserve current behaviour*, not *externally
-verified*. A future maintainer can then distinguish, at a glance, three classes:
-an ATTR-1 verified correction, an F-15 backfilled legacy row, and an
-unexplained manual edit (which C1 makes unwritable going forward).
+**Correction, from review.** §6.4 explains why a C1 exemption for
+backfilled rows is not enforceable (a stateless CHECK cannot see *how* a
+value arrived) and would leave a permanent no-provenance loophole a future
+unprovenanced write could claim. The chosen shape instead gives all five
+legacy rows real provenance, so C1 (§12.2) needs no exemption at all:
+
+| Field | Legacy-row value written by the §6.2/§18 backfill |
+|---|---|
+| `attribution_override_evidence` | `{"derivation": "f15-legacy-backfill", "basis": "artist_id_override computed from the pre-existing illustrator_override via the aliases-only resolver (§12) to preserve pre-F-15 effective behaviour", "verified": false}` |
+| `attribution_override_approved_by` | fixed literal `'system:f15-migration'` — non-empty (C2), unambiguously not a human reviewer |
+| `attribution_override_approved_at` | the migration's execution timestamp |
+
+A future maintainer distinguishes the three classes of row that can now
+exist — an ATTR-1 externally-verified correction, an F-15 legacy-backfilled
+row, and (going forward, unwritable) an unprovenanced manual edit — by
+reading `attribution_override_evidence.derivation` and `.verified`, never by
+whether provenance is present, because C1 guarantees it always is.
 
 ---
 
@@ -751,8 +809,8 @@ exists; this is the shape a future approved slice should take.
 |---|---|---|
 | 0 | Re-run the ACL/shape preflight (audit **A-1…A-5**) | Production must match §5 |
 | 1 | Add the four columns, nullable, no default; add FK + C1–C4 | Additive, idempotent |
-| 2 | **Backfill `artist_id_override` for the 5 existing rows** (§6.2) | **B-2 must read 0 / 0 — else HOLD** |
-| 3 | Verify: 5 rows backfilled; expected effective `artist_id` unchanged for all 5 | Row-for-row equality vs. a pre-migration snapshot |
+| 2 | **Backfill `artist_id_override` plus the full provenance bundle for the 5 existing rows** (§6.2, §6.4/§13.4 — no C1 exemption) | **B-2 must read 0 / 0 — else HOLD** |
+| 3 | Verify: 5 rows backfilled with `artist_id_override` **and** all three provenance fields set; expected effective `artist_id` unchanged for all 5 | Row-for-row equality vs. a pre-migration snapshot; C1 satisfied on all 5 |
 | 4 | Add the admission trigger (R1–R7) | SECURITY INVOKER |
 | 5 | Rebuild `cards_effective` from the **live** definition, changing exactly one expression | 14 columns, order preserved, `security_invoker`, alias exclusion intact |
 | 6 | Extend the column ACL with `artist_id_override`; withhold provenance (§13.3) | anon/authenticated read the view successfully; provenance unreadable |

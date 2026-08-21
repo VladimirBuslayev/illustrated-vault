@@ -18,6 +18,14 @@
 -- Base: main @ 039662d338b15a38b7ec89be3a87fd73886ac873
 -- Measured: 2026-08-20. Expected values recorded inline are that measurement.
 -- Re-run before any implementation; if a figure has moved, STOP and re-derive.
+--
+-- Corrected 2026-08-21 (PR #25 review): every resolver query below matches
+-- ONLY against unnest(artists.aliases). An earlier draft also matched
+-- lower(artists.id), which sync/sync-cards.mjs's resolveArtistId() /
+-- loadArtistAliasMap() never do (they build their lookup map from
+-- artists.aliases exclusively). The B-1/B-2/C-1/E-1/E-2 queries below now
+-- match the sync resolver exactly, so admission and sync cannot disagree
+-- about what a name resolves to.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -107,13 +115,11 @@ select
   ce.illustrator_override                as override,
   c.artist_id                            as raw_artist_id_today,
   (select a.id from public.artists a
-    where lower(a.id) = lower(btrim(ce.illustrator_override))
-       or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+    where exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
                   where lower(btrim(al)) = lower(btrim(ce.illustrator_override)))
     limit 1)                             as resolver_would_give,
   (select count(*) from public.artists a
-    where lower(a.id) = lower(btrim(ce.illustrator_override))
-       or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+    where exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
                   where lower(btrim(al)) = lower(btrim(ce.illustrator_override))))
                                          as match_count,
   ce.source_note
@@ -135,13 +141,11 @@ with r as (
     ce.card_id,
     c.artist_id as raw_artist_id,
     (select a.id from public.artists a
-      where lower(a.id) = lower(btrim(ce.illustrator_override))
-         or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+      where exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
                     where lower(btrim(al)) = lower(btrim(ce.illustrator_override)))
       limit 1) as resolved,
     (select count(*) from public.artists a
-      where lower(a.id) = lower(btrim(ce.illustrator_override))
-         or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+      where exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
                     where lower(btrim(al)) = lower(btrim(ce.illustrator_override)))) as match_count
   from public.card_extras ce
   join public.cards c on c.id = ce.card_id
@@ -185,13 +189,11 @@ select
   ce.artist_id                          as current_effective_artist_id,
   t.verified_illustrator,
   (select count(*) from public.artists a
-    where lower(a.id) = lower(btrim(t.verified_illustrator))
-       or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+    where exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
                   where lower(btrim(al)) = lower(btrim(t.verified_illustrator))))
                                         as verified_artist_match_count,
   (select a.id from public.artists a
-    where lower(a.id) = lower(btrim(t.verified_illustrator))
-       or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+    where exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
                   where lower(btrim(al)) = lower(btrim(t.verified_illustrator)))
     limit 1)                            as expected_artist_id_override,
   (ce.id is not null)                   as live_in_effective
@@ -301,16 +303,14 @@ where a.id = 'sui';
 --
 --   select ce.card_id, ce.illustrator_override, ce.artist_id_override,
 --          (select a.id from public.artists a
---             where lower(a.id) = lower(btrim(ce.illustrator_override))
---                or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+--             where exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
 --                           where lower(btrim(al)) = lower(btrim(ce.illustrator_override)))
 --             limit 1) as resolver_would_now_give
 --   from public.card_extras ce
 --   where ce.illustrator_override is not null
 --     and ce.artist_id_override is null
 --     and exists (select 1 from public.artists a
---                 where lower(a.id) = lower(btrim(ce.illustrator_override))
---                    or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+--                 where exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
 --                               where lower(btrim(al)) = lower(btrim(ce.illustrator_override))));
 --
 -- E-2  the invariant that must ALWAYS hold: no correction row may point at an
@@ -324,7 +324,6 @@ where a.id = 'sui';
 --      or (ce.artist_id_override is not null and not exists (
 --            select 1 from public.artists a
 --            where a.id = ce.artist_id_override
---              and (lower(a.id) = lower(btrim(ce.illustrator_override))
---                or exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
---                           where lower(btrim(al)) = lower(btrim(ce.illustrator_override))))));
+--              and exists (select 1 from unnest(coalesce(a.aliases, array[]::text[])) al
+--                          where lower(btrim(al)) = lower(btrim(ce.illustrator_override)))));
 -- ═══════════════════════════════════════════════════════════════════════════
